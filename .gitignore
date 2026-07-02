@@ -6,4 +6,4 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 .superpowers/
-notebooks/minio_test.ipynb
+.env
