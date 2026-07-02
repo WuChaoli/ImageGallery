@@ -71,5 +71,5 @@ class FileSystemStorage(Storage):
     def contains_image_uri(self, image_uri: str) -> bool:
         return is_file_image_uri_under_root(self.root, image_uri)
 
-    def validate_output_uri(self, output_uri: str) -> Path:
-        return require_file_image_uri_under_root(self.root, output_uri)
+    def validate_output_path(self, output_path: str) -> Path:
+        return require_file_image_uri_under_root(self.root, output_path)
