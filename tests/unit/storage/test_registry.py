@@ -48,3 +48,17 @@ def test_registry_rejects_unsupported_storage_type() -> None:
 
     with pytest.raises(UnsupportedStorageTypeError):
         registry.connect("remote")
+
+
+def test_registry_rejects_minio_until_backend_is_implemented() -> None:
+    registry = StorageRegistry.from_config(
+        {
+            "default_storage": "remote",
+            "storages": [
+                {"name": "remote", "type": "minio", "bucket": "images"},
+            ],
+        }
+    )
+
+    with pytest.raises(UnsupportedStorageTypeError):
+        registry.connect("remote")

@@ -13,11 +13,7 @@ class MinioStorage(Storage):
     config: dict[str, Any]
 
     def connect(self) -> "MinioStorage":
-        try:
-            import minio  # noqa: F401
-        except ImportError as exc:
-            raise UnsupportedStorageTypeError("minio extra is not installed") from exc
-        return self
+        raise UnsupportedStorageTypeError("MinIO storage boundary exists but read/write is not implemented yet")
 
     def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         raise NotImplementedError("MinIO write_bytes is outside the filesystem acceptance path")

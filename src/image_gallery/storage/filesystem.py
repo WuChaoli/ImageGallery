@@ -4,7 +4,12 @@ from pathlib import Path
 
 from image_gallery.storage.base import Storage
 from image_gallery.storage.errors import ObjectAlreadyExistsError, ObjectNotFoundError
-from image_gallery.storage.uri import make_file_image_uri, resolve_object_path
+from image_gallery.storage.uri import (
+    is_file_image_uri_under_root,
+    make_file_image_uri,
+    require_file_image_uri_under_root,
+    resolve_object_path,
+)
 
 
 @dataclass
@@ -62,3 +67,9 @@ class FileSystemStorage(Storage):
 
     def make_image_uri(self, object_path: str) -> str:
         return make_file_image_uri(self.root, object_path)
+
+    def contains_image_uri(self, image_uri: str) -> bool:
+        return is_file_image_uri_under_root(self.root, image_uri)
+
+    def validate_output_uri(self, output_uri: str) -> Path:
+        return require_file_image_uri_under_root(self.root, output_uri)

@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from image_gallery.dataset import Dataset
 
@@ -30,3 +31,27 @@ def test_dataset_from_uri_reads_existing_file(tmp_path: Path) -> None:
     dataset = Dataset.from_uri(output_uri)
 
     assert dataset.count() == 1
+
+
+def test_dataset_scan_selects_columns_and_filters_rows(tmp_path: Path) -> None:
+    output_uri = str(tmp_path / "raw.parquet")
+    Dataset.write(
+        pd.DataFrame(
+            [
+                {"image_id": "img-1", "image_uri": "/tmp/a.jpg", "import_status": "imported"},
+                {"image_id": "img-2", "image_uri": "/tmp/b.jpg", "import_status": "failed"},
+            ]
+        ),
+        output_uri,
+    )
+
+    frame = Dataset.from_uri(output_uri).scan(columns=["image_id"], filters={"import_status": "imported"})
+
+    assert frame.to_dict("records") == [{"image_id": "img-1"}]
+
+
+def test_dataset_validate_readable_rejects_missing_file(tmp_path: Path) -> None:
+    missing = Dataset.from_uri(str(tmp_path / "missing.parquet"))
+
+    with pytest.raises(FileNotFoundError):
+        missing.validate_readable()

@@ -50,3 +50,15 @@ def test_filesystem_storage_raises_for_missing_object(tmp_path: Path) -> None:
 
     with pytest.raises(ObjectNotFoundError):
         storage.read_bytes("missing.jpg")
+
+
+def test_filesystem_storage_validates_managed_output_uri(tmp_path: Path) -> None:
+    storage = FileSystemStorage(storage_name="local_main", root=tmp_path).connect()
+    managed = tmp_path / "datasets" / "raw.parquet"
+    unmanaged = tmp_path.parent / "raw.parquet"
+
+    assert storage.validate_output_uri(str(managed)) == managed
+    assert storage.contains_image_uri(managed.as_uri()) is True
+
+    with pytest.raises(UnsafeStoragePathError):
+        storage.validate_output_uri(str(unmanaged))

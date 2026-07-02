@@ -22,4 +22,5 @@ class RawDatasetSchema:
         "color_mode",
         "import_status",
         "imported_at",
+        "schema_version",
     )

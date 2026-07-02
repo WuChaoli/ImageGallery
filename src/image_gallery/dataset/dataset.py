@@ -38,11 +38,27 @@ class Dataset:
             return frame[columns]
         return frame
 
+    def scan(self, columns: list[str] | None = None, filters: dict[str, object] | None = None) -> pd.DataFrame:
+        """读取数据集并按等值条件过滤，供后续模块做轻量扫描。"""
+        frame = self.to_frame()
+        if filters:
+            for column, value in filters.items():
+                frame = frame[frame[column] == value]
+        if columns is not None:
+            return frame[columns]
+        return frame
+
     def preview(self, limit: int = 100) -> pd.DataFrame:
         return self.to_frame().head(limit)
 
     def count(self) -> int:
         return len(self.to_frame())
+
+    def validate_readable(self) -> None:
+        """确认数据集文件存在且能被当前格式读取。"""
+        if not Path(self.dataset_uri).exists():
+            raise FileNotFoundError(self.dataset_uri)
+        self.preview(limit=1)
 
     def fingerprint(self) -> str:
         return dataframe_fingerprint(self.to_frame())

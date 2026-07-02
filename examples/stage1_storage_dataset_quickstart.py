@@ -40,6 +40,7 @@ def main() -> None:
                 "color_mode": "RGB",
                 "import_status": "imported",
                 "imported_at": "2026-07-02T00:00:00Z",
+                "schema_version": "raw.v1",
             }
         ]
     )
