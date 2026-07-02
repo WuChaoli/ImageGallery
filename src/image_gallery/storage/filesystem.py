@@ -1,9 +1,10 @@
 import shutil
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from image_gallery.storage.base import Storage
-from image_gallery.storage.errors import ObjectAlreadyExistsError, ObjectNotFoundError
+from image_gallery.storage.errors import ObjectAlreadyExistsError, ObjectNotFoundError, StorageConnectionError
 from image_gallery.storage.uri import (
     is_file_image_uri_under_root,
     make_file_image_uri,
@@ -17,14 +18,41 @@ class FileSystemStorage(Storage):
     """本地或挂载文件系统 storage。"""
 
     storage_name: str
-    root: str | Path
+    root: str | Path | None = None
+    _connected_root: Path | None = field(default=None, init=False, repr=False)
 
-    def connect(self) -> "FileSystemStorage":
-        Path(self.root).expanduser().resolve().mkdir(parents=True, exist_ok=True)
+    def connect(self, root: str | Path | None = None) -> "FileSystemStorage":
+        root = root or self.root
+        if root is None:
+            raise StorageConnectionError("filesystem storage requires root")
+        if not isinstance(root, (str, Path)):
+            raise StorageConnectionError("filesystem root must be a string or Path")
+
+        root_path = Path(root).expanduser().resolve()
+        if root_path.exists() and not root_path.is_dir():
+            raise StorageConnectionError(f"storage root is not a directory: {root_path}")
+
+        try:
+            root_path.mkdir(parents=True, exist_ok=True)
+            probe_path = root_path / f".image_gallery_probe_{uuid.uuid4().hex}"
+            probe_path.write_bytes(b"ok")
+            if probe_path.read_bytes() != b"ok":
+                raise StorageConnectionError(f"storage root read/write probe failed: {root_path}")
+            probe_path.unlink()
+        except OSError as exc:
+            raise StorageConnectionError(f"storage root is not readable and writable: {root_path}") from exc
+
+        self.root = root_path
+        self._connected_root = root_path
         return self
 
     def _path(self, object_path: str) -> Path:
-        return resolve_object_path(self.root, object_path)
+        return resolve_object_path(self._require_connected_root(), object_path)
+
+    def _require_connected_root(self) -> Path:
+        if self._connected_root is None:
+            raise StorageConnectionError(f"storage is not connected: {self.storage_name}")
+        return self._connected_root
 
     def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         path = self._path(object_path)
@@ -66,10 +94,10 @@ class FileSystemStorage(Storage):
         return image_uri
 
     def make_image_uri(self, object_path: str) -> str:
-        return make_file_image_uri(self.root, object_path)
+        return make_file_image_uri(self._require_connected_root(), object_path)
 
     def contains_image_uri(self, image_uri: str) -> bool:
-        return is_file_image_uri_under_root(self.root, image_uri)
+        return is_file_image_uri_under_root(self._require_connected_root(), image_uri)
 
     def validate_output_path(self, output_path: str) -> Path:
-        return require_file_image_uri_under_root(self.root, output_path)
+        return require_file_image_uri_under_root(self._require_connected_root(), output_path)

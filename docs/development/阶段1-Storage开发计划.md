@@ -14,8 +14,8 @@
 
 Storage 模块第一版要提供稳定、可测试、可被后续模块复用的存储访问底座：
 
-1. 支持具名存储库注册。
-2. 支持单个 Storage 实例连接单个后端库，并允许调用方按名称选择存储库。
+1. 支持直接创建特化 Storage 实例。
+2. 支持单个 Storage 实例通过具体后端的显式 `connect(...)` 参数连接并校验单个后端库。
 3. 支持本地文件系统存储库。
 4. 为 MinIO 存储库预留 MinioStorage 边界，并按依赖可用性实现最小读写能力。
 5. 支持 object_path 规范化和受管输出路径校验。
@@ -40,9 +40,9 @@ Storage 对上层模块提供统一对象访问能力。上层模块传入 stora
 
 Storage 负责：
 
-1. 管理 `storage_name` 到单个后端存储库实例的映射。
+1. 通过特化 Storage 实例保存单个后端存储库连接态。
 2. 根据 storage_name 和 object_path 生成 image_uri。
-3. 通过 `StorageRegistry.connect(storage_name)` 返回已连接的 Storage 实例。
+3. 通过特化 Storage 的 `connect(...)` 返回已连接的 Storage 实例。
 4. 通过 Storage 实例方法读写对象。
 5. 解析当前运行环境下可访问的 image_uri。
 6. 校验 object_path 和 output URI 是否属于受管范围。
@@ -62,7 +62,6 @@ src/image_gallery/storage/
   __init__.py
   config.py
   uri.py
-  registry.py
   base.py
   filesystem.py
   minio.py
@@ -99,17 +98,16 @@ root 或 endpoint/bucket
 
 其中 name 就是调用方使用的 storage_name。每个实例只连接一个文件系统根目录或一个 MinIO bucket。
 
-### 6.2 StorageRegistry
+### 6.2 特化 Storage 连接入口
 
-负责注册和查找具名存储库。
+负责让具体 Storage 实例建立并保存自己的后端连接。
 
 最小能力：
 
-1. 根据 `storage_name` 查找 storage 配置。
-2. 返回默认 storage。
-3. 校验 storage 是否存在。
-4. 从 Python dict 创建 registry。
-5. 通过 `connect(storage_name=None)` 返回已连接的 Storage 实例。
+1. 调用方直接创建 `FileSystemStorage` 或 `MinioStorage`。
+2. `connect(...)` 使用显式参数接收连接地址、凭证、bucket 或本地 root。
+3. `connect` 必须校验后端可用，并保存活跃连接对象。
+4. 未连接时读写必须抛出明确连接错误。
 
 ### 6.3 ImageUri
 
@@ -136,7 +134,8 @@ file:///data/image_gallery/project_a/storage/images/a.jpg
 最小能力：
 
 ```text
-connect() -> Storage
+FileSystemStorage.connect(root) -> FileSystemStorage
+MinioStorage.connect(endpoint, access_key, secret_key, bucket, secure=False) -> MinioStorage
 write_bytes(object_path, data, overwrite=False) -> image_uri
 read_bytes(object_path) -> bytes
 exists(object_path) -> bool
@@ -185,7 +184,7 @@ MinIO 后端。
 4. 复制和移动对象。
 5. 生成当前环境可访问的 image_uri 或 presigned URL。
 
-如果开发环境暂时没有 MinIO 依赖，先保留 MinioStorage 边界和跳过式集成测试，不阻塞文件系统后端验收。
+MinIO SDK 是核心依赖。单元测试使用 fake client 验证 SDK 调用契约，真实服务集成测试后续按环境补充。
 
 ## 7. 开发顺序
 
@@ -228,18 +227,16 @@ MinIO 后端。
 2. 批量操作会逐项调用单对象方法。
 3. 批量操作中单项失败不会中断整批结果汇总。
 
-### 步骤 4：StorageRegistry
+### 步骤 4：特化 Storage 连接入口
 
-实现具名 storage 注册、配置查找和连接入口。
+实现特化 Storage 的统一方法名和显式参数连接入口。
 
 验证：
 
-1. 可以从 dict 配置创建 registry。
-2. 可以获取默认 storage。
-3. 未注册 storage 会被明确拒绝。
-4. 不支持的 storage type 会被明确拒绝。
-5. `connect(storage_name)` 会根据 storage type 返回已连接的具体 Storage 实例。
-6. `connect()` 未传 storage_name 时使用 default_storage。
+1. `FileSystemStorage(storage_name).connect(root=...)` 会创建并校验本地 root。
+2. `MinioStorage(storage_name).connect(endpoint=..., access_key=..., secret_key=..., bucket=..., secure=False)` 会创建 SDK client 并检查 bucket。
+3. 连接参数缺失或连接校验失败会被明确拒绝。
+4. 未连接 Storage 直接读写会被明确拒绝。
 
 ### 步骤 5：FileSystemStorage
 
@@ -271,26 +268,26 @@ MinIO 后端。
 
 示例应覆盖：
 
-1. 注册本地 storage。
-2. 通过 `registry.connect("local_main")` 获取 Storage 实例。
+1. 创建 `FileSystemStorage(storage_name="local_main")`。
+2. 通过 `connect(root=...)` 获取已连接 Storage 实例。
 3. 写入对象并得到 image_uri。
 4. 通过 Storage 实例读取对象。
-5. 指定不同 storage_name 写入不同后端库。
+5. 创建 `MinioStorage(storage_name="minio_main")` 并通过 `connect(...)` 连接 MinIO。
 
 ## 8. 验收标准
 
 Storage 模块完成时应满足：
 
-1. 可以注册 `local_main` 文件系统 storage。
-2. 可以通过 `StorageRegistry.connect(storage_name)` 选择不同后端存储库。
+1. 可以创建并连接 `local_main` 文件系统 storage。
+2. 可以通过特化 Storage 实例选择不同后端存储库。
 3. 可以写入、读取、判断存在和删除对象。
 4. 可以复制和移动对象。
 5. 可以执行批量读写、批量存在性判断和批量删除，并保留逐项结果。
 6. 可以生成当前环境下可直接访问的 image_uri。
-7. 可以拒绝未注册 storage。
+7. 可以拒绝未连接或连接校验失败的 storage。
 8. 可以拒绝路径逃逸和非受管输出路径。
 9. 可以保证默认不覆盖已有对象。
-10. 单元测试覆盖 URI、registry、Storage 抽象、filesystem storage 和安全路径校验。
+10. 单元测试覆盖 URI、Storage 抽象、filesystem storage、MinIO storage 和安全路径校验。
 11. 不包含 Dataset、清洗平台、artifact manifest 或 SQLite state 的实现。
 
 ## 9. 后续衔接

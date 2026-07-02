@@ -4,21 +4,12 @@ import pandas as pd
 
 from image_gallery.dataset import Dataset
 from image_gallery.schemas import validate_raw_dataset
-from image_gallery.storage import StorageRegistry
+from image_gallery.storage import FileSystemStorage
 
 
 def main() -> None:
     work_dir = Path("examples/.stage1_work").resolve()
-    registry = StorageRegistry.from_config(
-        {
-            "default_storage": "local_main",
-            "storages": [
-                {"name": "local_main", "type": "filesystem", "root": str(work_dir / "storage")},
-            ],
-        }
-    )
-
-    storage = registry.connect()
+    storage = FileSystemStorage(storage_name="local_main").connect(root=work_dir / "storage")
     image_bytes = b"demo-image-bytes"
     image_uri = storage.write_bytes("images/a.jpg", image_bytes, overwrite=True)
 

@@ -19,10 +19,6 @@ class Storage(ABC):
     storage_name: str
 
     @abstractmethod
-    def connect(self) -> "Storage":
-        raise NotImplementedError
-
-    @abstractmethod
     def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         raise NotImplementedError
 
@@ -50,7 +46,10 @@ class Storage(ABC):
     def make_image_uri(self, object_path: str) -> str:
         raise NotImplementedError
 
-    def write_many(self, items: Iterable[tuple[str, bytes]], overwrite: bool = False) -> list[StorageBatchResult]:
+    def batch_write_bytes(
+        self, items: Iterable[tuple[str, bytes]], overwrite: bool = False
+    ) -> list[StorageBatchResult]:
+        """批量写入 bytes，逐项返回成功值或错误信息。"""
         results: list[StorageBatchResult] = []
         for object_path, data in items:
             try:
@@ -59,7 +58,8 @@ class Storage(ABC):
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results
 
-    def read_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+    def batch_read_bytes(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+        """批量读取 bytes，单个对象失败不影响其他对象。"""
         results: list[StorageBatchResult] = []
         for object_path in object_paths:
             try:
@@ -67,6 +67,14 @@ class Storage(ABC):
             except Exception as exc:
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results
+
+    def write_many(self, items: Iterable[tuple[str, bytes]], overwrite: bool = False) -> list[StorageBatchResult]:
+        """兼容旧命名；新代码优先使用 batch_write_bytes。"""
+        return self.batch_write_bytes(items, overwrite)
+
+    def read_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+        """兼容旧命名；新代码优先使用 batch_read_bytes。"""
+        return self.batch_read_bytes(object_paths)
 
     def exists_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
         results: list[StorageBatchResult] = []

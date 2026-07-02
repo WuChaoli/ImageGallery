@@ -14,6 +14,10 @@ class UnsupportedStorageTypeError(StorageError):
     """storage type 当前版本不支持。"""
 
 
+class StorageConnectionError(StorageError):
+    """Storage 未连接或连接校验失败。"""
+
+
 class UnsafeStoragePathError(StorageError):
     """object_path 试图逃逸受管 storage root。"""
 
