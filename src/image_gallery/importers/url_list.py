@@ -6,7 +6,6 @@ import requests
 
 from image_gallery.importers.config import SourceRecord
 
-
 SUPPORTED_URL_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 IMAGE_MAGIC_PREFIXES = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"RIFF")
 

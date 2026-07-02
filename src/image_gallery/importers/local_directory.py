@@ -2,7 +2,6 @@ from pathlib import Path
 
 from image_gallery.importers.config import SourceRecord
 
-
 SUPPORTED_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
 

@@ -62,7 +62,8 @@ def show_image_grid(
         from IPython.display import HTML
     except ImportError:
         return html
-    return HTML(html)
+    html_view: Any = HTML
+    return html_view(html)
 
 
 def _source_to_frame(source: FrameSource) -> pd.DataFrame:
