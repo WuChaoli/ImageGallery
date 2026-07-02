@@ -23,4 +23,5 @@ class RawDatasetSchema:
         "import_status",
         "imported_at",
         "schema_version",
+        "tags",
     )

@@ -24,6 +24,7 @@ def test_validate_raw_dataset_accepts_minimal_fields() -> None:
                 "import_status": "imported",
                 "imported_at": "2026-07-02T00:00:00Z",
                 "schema_version": "raw.v1",
+                "tags": ["scene/indoor", "scene/kitchen/cook", "quality/blur"],
             }
         ]
     )
@@ -66,4 +67,73 @@ def test_validate_raw_dataset_requires_schema_version_column() -> None:
     )
 
     with pytest.raises(ValueError, match="schema_version"):
+        validate_raw_dataset(frame)
+
+
+def test_validate_raw_dataset_accepts_empty_tags() -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "image_id": "img-1",
+                "source_uri": "/external/a.jpg",
+                "source_type": "local_directory",
+                "source_file_name": "a.jpg",
+                "storage_name": "local_main",
+                "image_uri": "/managed/a.jpg",
+                "file_size_bytes": 3,
+                "checksum": "sha256:abc",
+                "image_format": "JPEG",
+                "width": 10,
+                "height": 20,
+                "channels": 3,
+                "color_mode": "RGB",
+                "import_status": "imported",
+                "imported_at": "2026-07-02T00:00:00Z",
+                "schema_version": "raw.v1",
+                "tags": [],
+            }
+        ]
+    )
+
+    validate_raw_dataset(frame)
+
+
+@pytest.mark.parametrize(
+    "tags",
+    [
+        None,
+        "scene/indoor",
+        [123],
+        [""],
+        ["/scene"],
+        ["scene/"],
+        ["scene//indoor"],
+    ],
+)
+def test_validate_raw_dataset_rejects_invalid_tags(tags: object) -> None:
+    frame = pd.DataFrame(
+        [
+            {
+                "image_id": "img-1",
+                "source_uri": "/external/a.jpg",
+                "source_type": "local_directory",
+                "source_file_name": "a.jpg",
+                "storage_name": "local_main",
+                "image_uri": "/managed/a.jpg",
+                "file_size_bytes": 3,
+                "checksum": "sha256:abc",
+                "image_format": "JPEG",
+                "width": 10,
+                "height": 20,
+                "channels": 3,
+                "color_mode": "RGB",
+                "import_status": "imported",
+                "imported_at": "2026-07-02T00:00:00Z",
+                "schema_version": "raw.v1",
+                "tags": tags,
+            }
+        ]
+    )
+
+    with pytest.raises(ValueError, match="invalid raw dataset tags"):
         validate_raw_dataset(frame)
