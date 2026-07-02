@@ -54,7 +54,7 @@ class FileSystemStorage(Storage):
             raise StorageConnectionError(f"storage is not connected: {self.storage_name}")
         return self._connected_root
 
-    def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+    def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         path = self._path(object_path)
         if path.exists() and not overwrite:
             raise ObjectAlreadyExistsError(f"object already exists: {object_path}")
@@ -62,7 +62,7 @@ class FileSystemStorage(Storage):
         path.write_bytes(data)
         return self.make_image_uri(object_path)
 
-    def read_bytes(self, object_path: str) -> bytes:
+    def _read_bytes(self, object_path: str) -> bytes:
         path = self._path(object_path)
         if not path.exists():
             raise ObjectNotFoundError(f"object not found: {object_path}")

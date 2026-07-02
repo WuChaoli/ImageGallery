@@ -10,11 +10,11 @@ class MemoryStorage(Storage):
     def __init__(self) -> None:
         self.objects: dict[str, bytes] = {}
 
-    def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+    def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         self.objects[object_path] = data
         return self.make_image_uri(object_path)
 
-    def read_bytes(self, object_path: str) -> bytes:
+    def _read_bytes(self, object_path: str) -> bytes:
         if object_path not in self.objects:
             raise ObjectNotFoundError(f"object not found: {object_path}")
         return self.objects[object_path]
@@ -43,7 +43,7 @@ class MemoryStorage(Storage):
 def test_storage_batch_write_bytes_returns_per_object_results() -> None:
     storage = MemoryStorage()
 
-    results = storage.batch_write_bytes([("images/a.jpg", b"a"), ("images/b.jpg", b"b")])
+    results = storage.write_bytes(["images/a.jpg", "images/b.jpg"], [b"a", b"b"])
 
     assert results == [
         StorageBatchResult("images/a.jpg", True, "memory://images/a.jpg"),
@@ -56,10 +56,20 @@ def test_storage_batch_read_bytes_returns_success_and_failure_results() -> None:
     storage = MemoryStorage()
     storage.write_bytes("images/a.jpg", b"a")
 
-    results = storage.batch_read_bytes(["images/a.jpg", "images/missing.jpg"])
+    results = storage.read_bytes(["images/a.jpg", "images/missing.jpg"])
 
     assert results[0] == StorageBatchResult("images/a.jpg", True, b"a")
     assert results[1].object_path == "images/missing.jpg"
     assert results[1].ok is False
     assert results[1].value is None
     assert "object not found" in str(results[1].error)
+
+
+def test_storage_batch_write_bytes_rejects_mismatched_data_count() -> None:
+    storage = MemoryStorage()
+
+    results = storage.write_bytes(["images/a.jpg", "images/b.jpg"], [b"a"])
+
+    assert results[0].object_path == "images/a.jpg"
+    assert results[0].ok is False
+    assert "same length" in str(results[0].error)

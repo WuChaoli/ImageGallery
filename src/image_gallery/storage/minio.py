@@ -44,14 +44,14 @@ class MinioStorage(Storage):
         self.bucket = bucket
         return self
 
-    def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+    def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
         client, bucket = self._require_connected()
         if self.exists(object_path) and not overwrite:
             raise ObjectAlreadyExistsError(f"object already exists: {object_path}")
         client.put_object(bucket, object_path, BytesIO(data), length=len(data))
         return self.make_image_uri(object_path)
 
-    def read_bytes(self, object_path: str) -> bytes:
+    def _read_bytes(self, object_path: str) -> bytes:
         client, bucket = self._require_connected()
         response = None
         try:
