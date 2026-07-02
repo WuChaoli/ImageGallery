@@ -22,14 +22,19 @@ class ImportPipeline:
         storage: Storage,
         output_dir: str | Path,
         global_tags: Iterable[str] | None = None,
+        max_shard_size: int = 10000,
     ) -> None:
         self.storage = storage
         self.output_dir = Path(output_dir)
         self.global_tags = _unique_tags(global_tags or [])
+        if max_shard_size <= 0:
+            raise ValueError("max_shard_size must be greater than 0")
+        self.max_shard_size = max_shard_size
 
     def run(self, records: Iterable[SourceRecord]) -> ImportResult:
         """执行 copy 模式导入，并写出 raw Dataset、报告和失败清单。"""
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        import_date = datetime.now().date().isoformat()
         imported_rows: list[dict[str, object]] = []
         failures: list[dict[str, object]] = []
 
@@ -42,7 +47,8 @@ class ImportPipeline:
                 error_stage = "metadata"
                 metadata = extract_basic_metadata(record.local_path)
                 image_id = str(uuid.uuid4())
-                object_path = f"images/raw/{image_id}/{record.source_file_name}"
+                shard_index = len(imported_rows) // self.max_shard_size + 1
+                object_path = _build_raw_object_path(import_date, shard_index, image_id, record.source_file_name)
                 error_stage = "storage"
                 image_uri = self.storage.write_bytes(object_path, record.local_path.read_bytes(), overwrite=False)
                 imported_rows.append(
@@ -103,3 +109,9 @@ def _unique_tags(tags: Iterable[str]) -> list[str]:
             seen.add(tag)
             result.append(tag)
     return result
+
+
+def _build_raw_object_path(import_date: str, shard_index: int, image_id: str, source_file_name: str) -> str:
+    """生成 raw 图片在受管 storage 中的日期分片路径。"""
+    extension = Path(source_file_name).suffix.lower()
+    return f"images/raw/{import_date}/shard_{shard_index:03d}/{image_id}{extension}"
