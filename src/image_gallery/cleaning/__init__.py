@@ -1,0 +1,1 @@
+"""Cleaning namespace for ImageGallery."""

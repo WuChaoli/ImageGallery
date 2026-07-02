@@ -1,0 +1,64 @@
+<h2>架构图生成方案选择</h2>
+<p class="subtitle">先锁定“用 GPT 生成架构图”的落地形态。点击你倾向的方案，或者直接在终端里说明偏好。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. Prompt 包</div>
+        <div class="mockup-body">
+          <div class="placeholder">总体架构文档 + 模块摘要</div>
+          <div style="text-align:center;margin:10px 0;">↓ GPT 提示词</div>
+          <div class="placeholder">Mermaid / PlantUML 代码</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>手工 Prompt 包</h3>
+      <p>整理一组可复制给 GPT 的提示词，让 GPT 生成 Mermaid 架构图。最快，适合先出图，但维护性一般。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 文档化图源</div>
+        <div class="mockup-body">
+          <div class="placeholder">docs/architecture/diagrams/prompts</div>
+          <div style="text-align:center;margin:10px 0;">↓ GPT 生成 / 人工校订</div>
+          <div class="placeholder">docs/architecture/diagrams/*.mmd</div>
+          <div style="text-align:center;margin:10px 0;">↓ 嵌入总架构与模块文档</div>
+          <div class="placeholder">README / 总体架构 / 模块文档</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>Prompt + Mermaid 图源入库</h3>
+      <p>把提示词、图源和嵌入位置标准化。适合当前文档型项目，可复用、可审查、不会引入 API 自动化复杂度。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 自动生成流水线</div>
+        <div class="mockup-body">
+          <div class="placeholder">文档扫描脚本</div>
+          <div style="text-align:center;margin:10px 0;">↓ OpenAI API</div>
+          <div class="placeholder">Mermaid / SVG / PNG</div>
+          <div style="text-align:center;margin:10px 0;">↓ 校验与渲染</div>
+          <div class="placeholder">CI 或本地命令</div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>自动化生成脚本</h3>
+      <p>本地命令读取文档、调用 GPT、产出图源和图片。长期自动化最好，但第一版会引入 API Key、渲染和质量校验成本。</p>
+    </div>
+  </div>
+</div>
+
+<div class="section">
+  <h3>我的建议</h3>
+  <p>优先选 B：把 GPT 当“图源草稿生成器”，但最终把 Mermaid 源文件作为架构资产入库。这样既能利用 GPT，又能让架构图像代码一样可审查、可维护。</p>
+</div>
