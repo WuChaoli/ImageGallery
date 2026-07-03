@@ -10,8 +10,8 @@ SUPPORTED_URL_IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"
 IMAGE_MAGIC_PREFIXES = (b"\xff\xd8\xff", b"\x89PNG\r\n\x1a\n", b"GIF87a", b"GIF89a", b"RIFF")
 
 
-class UrlListReader:
-    """基础 URL 清单 reader，执行安全校验并可下载到本地临时文件。"""
+class UrlPathParser:
+    """解析 URL 清单文件，执行安全校验并可下载到本地临时文件。"""
 
     def __init__(
         self,
@@ -27,7 +27,7 @@ class UrlListReader:
         self.timeout_seconds = timeout_seconds
         self.max_file_bytes = max_file_bytes
 
-    def read(self) -> list[SourceRecord]:
+    def parse(self) -> list[SourceRecord]:
         """读取 URL 清单；download=False 时只生成外部来源记录。"""
         records: list[SourceRecord] = []
         for line in self.url_list_path.read_text(encoding="utf-8").splitlines():
@@ -42,7 +42,7 @@ class UrlListReader:
             records.append(
                 SourceRecord(
                     source_uri=url,
-                    source_type="url_list",
+                    source_type="url_path",
                     source_file_name=file_name,
                     source_relative_path=file_name,
                     local_path=local_path,

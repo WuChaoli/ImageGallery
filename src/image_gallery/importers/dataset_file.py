@@ -1,30 +1,57 @@
 from pathlib import Path
 
+import pandas as pd
+
 from image_gallery.dataset import Dataset
 from image_gallery.importers.config import SourceRecord
 
 
-class DatasetFileReader:
-    """从已有 Dataset 文件读取待导入图片清单。"""
+class DatasetParser:
+    """从已有 Dataset 文件解析待导入图片清单。"""
 
-    def __init__(self, dataset_path: str) -> None:
-        self.dataset_path = dataset_path
+    def __init__(
+        self,
+        dataset_path: str | Path,
+        image_uri_column: str = "image_uri",
+        source_uri_column: str = "source_uri",
+    ) -> None:
+        self.dataset_path = str(dataset_path)
+        self.image_uri_column = image_uri_column
+        self.source_uri_column = source_uri_column
 
-    def read(self) -> list[SourceRecord]:
-        """从 image_uri 列生成 SourceRecord，source_uri 缺失时回退为 image_uri。"""
+    def parse(self) -> list[SourceRecord]:
+        """从指定图片地址列生成 SourceRecord。"""
+        if not self.image_uri_column:
+            raise ValueError("image_uri_column must not be empty")
+        if not self.source_uri_column:
+            raise ValueError("source_uri_column must not be empty")
+
         frame = Dataset.from_path(self.dataset_path).to_frame()
+        if self.image_uri_column not in frame.columns:
+            raise ValueError(f"missing image uri column: {self.image_uri_column}")
+
         records: list[SourceRecord] = []
         for row in frame.to_dict("records"):
-            image_uri = str(row["image_uri"])
-            source_uri = str(row.get("source_uri") or image_uri)
+            image_uri = str(row[self.image_uri_column])
+            source_value = row.get(self.source_uri_column)
+            source_uri = image_uri if _is_empty_value(source_value) else str(source_value)
             path = Path(image_uri)
             records.append(
                 SourceRecord(
                     source_uri=source_uri,
-                    source_type="dataset_file",
+                    source_type="dataset",
                     source_file_name=path.name,
                     source_relative_path=path.name,
-                    local_path=path if path.exists() or path.is_absolute() else None,
+                    local_path=path if path.is_absolute() else None,
                 )
             )
         return records
+
+
+def _is_empty_value(value: object) -> bool:
+    """判断 Dataset 单元格是否应视为缺失。"""
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return value == ""
+    return bool(pd.isna(value))

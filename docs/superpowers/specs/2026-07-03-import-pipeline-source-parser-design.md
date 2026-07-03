@@ -178,6 +178,7 @@ class ImportPipeline:
         output_dir: str | Path,
         global_tags: Iterable[str] | None = None,
         max_shard_size: int = 10000,
+        prefix: str = "images/raw",
     ) -> None:
         ...
 ```
@@ -188,6 +189,8 @@ class ImportPipeline:
 2. `source` 是 `str | Path` 时，统一包装为 `LocalPathParser(source)`。
 3. 其他类型抛出 `TypeError`。
 4. `max_shard_size <= 0` 仍然抛出 `ValueError`。
+5. `prefix` 控制受管 raw 图片 object path 前缀，默认 `images/raw`。
+6. `prefix` 会去除首尾 `/`；允许为空字符串。为空时 object path 从 `<import_date>/shard_xxx/...` 开始。
 
 新 `run()`：
 

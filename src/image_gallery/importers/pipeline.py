@@ -7,7 +7,8 @@ from pathlib import Path
 import pandas as pd
 
 from image_gallery.dataset import Dataset
-from image_gallery.importers.config import SourceRecord
+from image_gallery.importers.config import SourceParser
+from image_gallery.importers.local_path import LocalPathParser
 from image_gallery.importers.metadata import extract_basic_metadata
 from image_gallery.importers.report import ImportResult
 from image_gallery.schemas import RawDatasetSchema, validate_raw_dataset
@@ -15,25 +16,30 @@ from image_gallery.storage import Storage
 
 
 class ImportPipeline:
-    """把 SourceRecord 转换为受管 storage 中的 raw Dataset。"""
+    """把外部图片来源导入受管 storage 并生成 raw Dataset。"""
 
     def __init__(
         self,
+        source: SourceParser | str | Path,
         storage: Storage,
         output_dir: str | Path,
         global_tags: Iterable[str] | None = None,
         max_shard_size: int = 10000,
+        prefix: str = "images/raw",
     ) -> None:
+        self.source_parser = _normalize_source_parser(source)
         self.storage = storage
         self.output_dir = Path(output_dir)
         self.global_tags = _unique_tags(global_tags or [])
         if max_shard_size <= 0:
             raise ValueError("max_shard_size must be greater than 0")
         self.max_shard_size = max_shard_size
+        self.prefix = _normalize_prefix(prefix)
 
-    def run(self, records: Iterable[SourceRecord]) -> ImportResult:
+    def run(self) -> ImportResult:
         """执行 copy 模式导入，并写出 raw Dataset、报告和失败清单。"""
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        records = self.source_parser.parse()
         import_date = datetime.now().date().isoformat()
         imported_rows: list[dict[str, object]] = []
         failures: list[dict[str, object]] = []
@@ -48,7 +54,13 @@ class ImportPipeline:
                 metadata = extract_basic_metadata(record.local_path)
                 image_id = str(uuid.uuid4())
                 shard_index = len(imported_rows) // self.max_shard_size + 1
-                object_path = _build_raw_object_path(import_date, shard_index, image_id, record.source_file_name)
+                object_path = _build_raw_object_path(
+                    self.prefix,
+                    import_date,
+                    shard_index,
+                    image_id,
+                    record.source_file_name,
+                )
                 error_stage = "storage"
                 image_uri = self.storage.write_bytes(object_path, record.local_path.read_bytes(), overwrite=False)
                 imported_rows.append(
@@ -100,6 +112,15 @@ class ImportPipeline:
         )
 
 
+def _normalize_source_parser(source: SourceParser | str | Path) -> SourceParser:
+    """把用户输入归一化为 SourceParser。"""
+    if isinstance(source, (str, Path)):
+        return LocalPathParser(source)
+    if isinstance(source, SourceParser):
+        return source
+    raise TypeError("source must be a SourceParser or local path")
+
+
 def _unique_tags(tags: Iterable[str]) -> list[str]:
     """按输入顺序去重 global_tags。"""
     seen: set[str] = set()
@@ -111,7 +132,21 @@ def _unique_tags(tags: Iterable[str]) -> list[str]:
     return result
 
 
-def _build_raw_object_path(import_date: str, shard_index: int, image_id: str, source_file_name: str) -> str:
+def _normalize_prefix(prefix: str) -> str:
+    """规范化 raw 图片写入前缀。"""
+    return prefix.strip("/")
+
+
+def _build_raw_object_path(
+    prefix: str,
+    import_date: str,
+    shard_index: int,
+    image_id: str,
+    source_file_name: str,
+) -> str:
     """生成 raw 图片在受管 storage 中的日期分片路径。"""
     extension = Path(source_file_name).suffix.lower()
-    return f"images/raw/{import_date}/shard_{shard_index:03d}/{image_id}{extension}"
+    object_name = f"{import_date}/shard_{shard_index:03d}/{image_id}{extension}"
+    if not prefix:
+        return object_name
+    return f"{prefix}/{object_name}"
