@@ -60,7 +60,7 @@ result = ImportPipeline(
 
 ```python
 result = ImportPipeline(
-    source=DatasetParser("source.parquet"),
+    source=DatasetParser("source.parquet", image_uri_column="image_uri"),
     storage=storage,
     output_dir=output_dir,
 ).run()
@@ -138,16 +138,32 @@ Parser 只负责把外部 source 解析为 `SourceRecord` 列表，不负责写 
 职责：
 
 1. 接收已有 dataset 文件路径。
-2. 读取 `image_uri` 列生成 `SourceRecord`。
-3. `source_uri` 缺失时回退为 `image_uri`。
-4. 如果 `image_uri` 是本地绝对路径，则设置 `local_path`。
+2. 默认读取 `image_uri` 列生成 `SourceRecord`。
+3. 允许用户通过 `image_uri_column` 手动指定图片地址字段。
+4. 允许用户通过 `source_uri_column` 手动指定原始来源字段，默认值为 `source_uri`。
+5. `source_uri_column` 不存在或对应值为空时，回退为图片地址字段的值。
+6. 如果图片地址字段是本地绝对路径，则设置 `local_path`。
+
+构造器：
+
+```python
+class DatasetParser:
+    def __init__(
+        self,
+        dataset_path: str | Path,
+        image_uri_column: str = "image_uri",
+        source_uri_column: str = "source_uri",
+    ) -> None:
+        ...
+```
 
 错误：
 
 1. dataset 文件不存在时抛出 `FileNotFoundError`。
-2. 缺少 `image_uri` 列时抛出 `ValueError`。
+2. 缺少 `image_uri_column` 指定的列时抛出 `ValueError`。
+3. `image_uri_column` 或 `source_uri_column` 为空字符串时抛出 `ValueError`。
 
-非本地或不可读的 `image_uri` 可以生成 `local_path=None`，后续 pipeline 在图片级处理阶段记录到 `failure_manifest`。
+非本地或不可读的图片地址可以生成 `local_path=None`，后续 pipeline 在图片级处理阶段记录到 `failure_manifest`。
 
 ### `ImportPipeline`
 
@@ -248,9 +264,11 @@ __all__ = [
    - `download=False` 生成 `local_path=None` 的记录。
    - `download=True` 下载图片到 `download_dir`。
 3. `DatasetParser`：
-   - 读取 dataset 文件中的 `image_uri` 和 `source_uri`。
-   - `source_uri` 缺失时回退为 `image_uri`。
-   - 缺少 `image_uri` 列抛出 `ValueError`。
+   - 默认读取 dataset 文件中的 `image_uri` 和 `source_uri`。
+   - 可通过 `image_uri_column` 指定图片地址字段。
+   - 可通过 `source_uri_column` 指定原始来源字段。
+   - `source_uri_column` 缺失或值为空时回退为图片地址字段。
+   - 缺少 `image_uri_column` 指定列时抛出 `ValueError`。
 4. `ImportPipeline`：
    - `source=tmp_path` 快捷输入可导入目录。
    - `source=LocalPathParser(file_path)` 可导入单文件。
