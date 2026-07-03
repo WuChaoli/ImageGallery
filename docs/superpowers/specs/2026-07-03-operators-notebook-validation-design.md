@@ -22,7 +22,7 @@ notebooks/.operators_test_library/
 3. 不测试 `duplicate.near_duplicate_check` 的 fastdup 真实能力。
 4. 不测试 Notebook 图片网格或静态 HTML 报告。
 5. 不把输出写入项目根目录。
-6. 不要求阶段 4 后端直接读取 `s3://` URI；MinIO 图片会先通过 `MinioStorage.read_bytes()` 读取并 materialize 到 notebook 本地 cache，再进入算子处理。
+6. 不在 Notebook 中手写 MinIO 图片 materialize 逻辑；MinIO raw Dataset 应通过绑定 `MinioStorage` 的 `Dataset` 进入算子处理。
 
 ## Notebook 文件
 
@@ -42,7 +42,6 @@ notebooks/operators_builtin_test.ipynb
 LOCAL_RAW_DATASET_PATH = notebooks/.importers_test_library/outputs/raw.parquet
 MINIO_RAW_DATASET_PATH = notebooks/.importers_test_library/minio_outputs/raw.parquet
 OUTPUT_DIR = notebooks/.operators_test_library/outputs
-MINIO_CACHE_DIR = notebooks/.operators_test_library/minio_cache
 ```
 
 如果任一 raw Dataset 不存在，单元格应直接抛出明确错误，提示先运行对应导入测试 Notebook 或导入示例。
@@ -62,9 +61,9 @@ image_id
 image_uri
 ```
 
-### 3. 读取并 materialize MinIO raw Dataset
+### 3. 读取 MinIO raw Dataset
 
-使用 `Dataset.from_path()` 加载 MinIO raw Dataset，并断言至少包含：
+使用 `Dataset.from_path(..., storage=minio_storage)` 加载 MinIO raw Dataset，并断言至少包含：
 
 ```text
 image_id
@@ -80,22 +79,18 @@ IMAGE_GALLERY_MINIO_SECRET_KEY
 IMAGE_GALLERY_MINIO_BUCKET
 ```
 
-Notebook 使用 `MinioStorage` 连接 MinIO，然后对 MinIO raw Dataset 中的每个 `s3://{bucket}/{object_path}`：
+Notebook 使用 `MinioStorage` 连接 MinIO，然后把连接后的 storage 绑定给 Dataset：
 
-1. 解析出 `object_path`。
-2. 调用 `storage.read_bytes(object_path)` 读取对象内容。
-3. 写入 `MINIO_CACHE_DIR/{image_id}{extension}`。
-4. 构造一个用于算子处理的 materialized DataFrame：
-   - `image_id` 保持不变。
-   - `image_uri` 指向本地 cache 文件路径。
-   - `minio_image_uri` 保留原始 `s3://` URI。
-   - 其他 raw Dataset 字段尽量保留。
+```python
+minio_storage = MinioStorage(storage_name="operator_validation_minio").connect(...)
+minio_dataset = Dataset.from_path(str(MINIO_RAW_DATASET_PATH), storage=minio_storage)
+```
 
 这一段同时验收：
 
-1. MinIO raw Dataset 中的 URI 可解析。
-2. MinIO 对象可读取。
-3. MinIO 图片内容可以进入阶段 4 算子处理链路。
+1. MinIO raw Dataset 中的 `s3://...` URI 可被 Dataset 解析。
+2. MinIO 对象可通过 Dataset 图片读取 API 读取。
+3. MinIO 图片内容可以直接进入阶段 4 算子处理链路。
 
 ### 4. 分别运行 BasicCleaner
 
@@ -121,7 +116,7 @@ duplicate.near_duplicate_check
 Notebook 应分别对以下两个输入运行同一套 `BasicCleaner` 配置：
 
 1. 本地 raw Dataset。
-2. MinIO materialized Dataset。
+2. MinIO Dataset。
 
 两个 run 的输出应放在不同目录：
 
