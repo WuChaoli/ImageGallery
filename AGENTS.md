@@ -39,3 +39,7 @@ Pull Request 应说明变更范围，列出已运行的验证命令，链接相�
 ## 架构说明
 
 保持 V1 边界清晰：Parquet 存数据集，SQLite 存运行状态，Storage 存图片。导入后 `image_uri` 是图片主引用；`source_uri` 用于追溯。clean、dropped 和 full 数据集必须通过 merge policy 基于逻辑算子结果生成。
+
+## 重构说明
+
+当前处于开发阶段，任何开发方向的改变都是有可能的，不要保留历史兼容性，快速向未来转向，确保接口和实现干净
