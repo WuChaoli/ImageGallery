@@ -1,0 +1,56 @@
+from pathlib import Path
+
+from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore, OperatorRunState, build_state_frame
+
+
+def _state() -> CleanerRunState:
+    return CleanerRunState(
+        run_id="run-1",
+        dataset_fingerprint="fp",
+        cleaner_type="basic",
+        enabled_operator_configs=[{"quality.demo_check": {"action": "review"}}],
+        operator_config_hashes={"quality.demo_check": "abc"},
+        parameter_table_path="parameter_table.parquet",
+        evaluation_table_path="evaluation_table.parquet",
+        operator_outputs_path="operator_outputs.yaml",
+        artifact_paths={"quality.demo_check": "artifacts/demo"},
+        status="completed",
+        operator_states=[
+            OperatorRunState(
+                operator_name="quality.demo_check",
+                config_hash="abc",
+                status="completed",
+                parameter_columns=["demo_score"],
+                evaluation_columns=["demo_action", "demo_reason"],
+                processed_count=1,
+                skipped_count=0,
+                failed_count=0,
+            )
+        ],
+    )
+
+
+def test_json_run_state_store_round_trips_state(tmp_path: Path) -> None:
+    store = JsonRunStateStore()
+    path = tmp_path / "state.json"
+
+    store.save(_state(), path)
+    loaded = store.load(path)
+
+    assert loaded == _state()
+    assert not (tmp_path / "state.json.tmp").exists()
+
+
+def test_build_state_frame_returns_operator_matrix() -> None:
+    frame = build_state_frame(_state())
+
+    assert frame.to_dict(orient="records") == [
+        {
+            "operator_name": "quality.demo_check",
+            "status": "completed",
+            "processed_count": 1,
+            "skipped_count": 0,
+            "failed_count": 0,
+            "message": None,
+        }
+    ]
