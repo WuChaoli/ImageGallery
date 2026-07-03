@@ -1,9 +1,64 @@
-from dataclasses import dataclass
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass, field
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import unquote, urlparse
 
 import pandas as pd
+from PIL import Image
 
 from image_gallery.dataset.fingerprint import dataframe_fingerprint
+from image_gallery.storage.base import Storage
+from image_gallery.storage.uri import file_image_uri_to_path
+
+
+@dataclass(frozen=True)
+class DatasetImageBytesReadResult:
+    """图片 bytes 批量读取结果，单张失败不影响整批。"""
+
+    image_uri: str
+    ok: bool
+    data: bytes | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class DatasetImageReadResult:
+    """图片对象批量读取结果，单张失败不影响整批。"""
+
+    image_uri: str
+    ok: bool
+    image: Image.Image | None = None
+    error: str | None = None
+
+
+@dataclass(frozen=True)
+class ParsedImageUri:
+    """Dataset 内部使用的图片地址解析结果。"""
+
+    kind: str
+    image_uri: str
+    local_path: Path | None = None
+    bucket: str | None = None
+    object_path: str | None = None
+
+
+@dataclass(frozen=True)
+class DatasetImage:
+    """Dataset 中按行枚举出的图片对象。"""
+
+    image_id: str
+    image_uri: str
+    row: dict[str, object]
+    dataset: "Dataset"
+
+    def read_bytes(self) -> bytes:
+        """读取当前图片 bytes。"""
+        return self.dataset.read_image_bytes(self.image_uri)
+
+    def read_image(self) -> Image.Image:
+        """读取当前图片为 Pillow Image。"""
+        return self.dataset.read_image(self.image_uri)
 
 
 @dataclass(frozen=True)
@@ -14,14 +69,16 @@ class Dataset:
     dataset_path: str
     # format 是由文件扩展名推导出的数据集格式，用于选择 Pandas 读写方法。
     format: str = "parquet"
+    # storage 是可选图片对象读取依赖；本地路径不需要 storage。
+    storage: Storage | None = field(default=None, compare=False, repr=False)
 
     @classmethod
-    def from_path(cls, dataset_path: str) -> "Dataset":
+    def from_path(cls, dataset_path: str, storage: Storage | None = None) -> "Dataset":
         """从已有数据集路径创建 Dataset 对象，不立即读取文件内容。"""
-        return cls(dataset_path=dataset_path, format=_format_from_path(dataset_path))
+        return cls(dataset_path=dataset_path, format=_format_from_path(dataset_path), storage=storage)
 
     @classmethod
-    def write(cls, data: pd.DataFrame, output_path: str) -> "Dataset":
+    def write(cls, data: pd.DataFrame, output_path: str, storage: Storage | None = None) -> "Dataset":
         """把 DataFrame 写出为数据集文件，并返回对应 Dataset 对象。"""
         # resolved_output_path 是实际写入位置；父目录不存在时自动创建。
         resolved_output_path = Path(output_path)
@@ -36,7 +93,7 @@ class Dataset:
             data.to_json(resolved_output_path, orient="records", lines=True, force_ascii=False)
         else:
             raise ValueError(f"unsupported dataset format: {file_format}")
-        return cls(dataset_path=output_path, format=file_format)
+        return cls(dataset_path=output_path, format=file_format, storage=storage)
 
     def to_frame(self, columns: list[str] | None = None) -> pd.DataFrame:
         """读取完整数据集；传入 columns 时只返回指定列。"""
@@ -45,6 +102,65 @@ class Dataset:
         if columns is not None:
             return frame[columns]
         return frame
+
+    def read_image_bytes(self, image_uri: str) -> bytes:
+        """根据 image_uri 读取图片 bytes。"""
+        parsed = _parse_image_uri(image_uri)
+        if parsed.kind == "local":
+            if parsed.local_path is None:
+                raise ValueError(f"local image_uri parsed without path: {image_uri}")
+            return parsed.local_path.read_bytes()
+        if parsed.kind == "s3":
+            if self.storage is None:
+                raise ValueError(f"storage is required for s3 image_uri: {image_uri}")
+            if parsed.object_path is None:
+                raise ValueError(f"s3 image_uri parsed without object_path: {image_uri}")
+            return self.storage.read_bytes(parsed.object_path)
+        raise ValueError(f"unsupported image_uri kind: {parsed.kind}")
+
+    def read_image(self, image_uri: str) -> Image.Image:
+        """根据 image_uri 读取图片并解码为 Pillow Image。"""
+        data = self.read_image_bytes(image_uri)
+        with Image.open(BytesIO(data)) as image:
+            image.load()
+            loaded = image.copy()
+            loaded.format = image.format
+            return loaded
+
+    def read_image_bytes_batch(self, image_uris: Iterable[str]) -> list[DatasetImageBytesReadResult]:
+        """批量读取图片 bytes，逐项返回成功值或错误信息。"""
+        results: list[DatasetImageBytesReadResult] = []
+        for image_uri in image_uris:
+            try:
+                data = self.read_image_bytes(image_uri)
+                results.append(DatasetImageBytesReadResult(image_uri=image_uri, ok=True, data=data))
+            except Exception as exc:
+                results.append(DatasetImageBytesReadResult(image_uri=image_uri, ok=False, error=str(exc)))
+        return results
+
+    def read_image_batch(self, image_uris: Iterable[str]) -> list[DatasetImageReadResult]:
+        """批量读取图片对象，逐项返回成功值或错误信息。"""
+        results: list[DatasetImageReadResult] = []
+        for image_uri in image_uris:
+            try:
+                image = self.read_image(image_uri)
+                results.append(DatasetImageReadResult(image_uri=image_uri, ok=True, image=image))
+            except Exception as exc:
+                results.append(DatasetImageReadResult(image_uri=image_uri, ok=False, error=str(exc)))
+        return results
+
+    def iter_images(self, columns: list[str] | None = None) -> Iterator[DatasetImage]:
+        """按 Dataset 当前行顺序枚举图片对象。"""
+        required_columns = ["image_id", "image_uri"]
+        selected_columns = required_columns if columns is None else [*required_columns, *columns]
+        frame = self.to_frame(columns=_dedupe_columns(selected_columns))
+        for row in frame.to_dict(orient="records"):
+            yield DatasetImage(
+                image_id=str(row["image_id"]),
+                image_uri=str(row["image_uri"]),
+                row=row,
+                dataset=self,
+            )
 
     def scan(self, columns: list[str] | None = None, filters: dict[str, object] | None = None) -> pd.DataFrame:
         """读取数据集并按等值条件过滤，供后续模块做轻量扫描。"""
@@ -140,6 +256,33 @@ def _read_frame(dataset_path: str, file_format: str) -> pd.DataFrame:
     if file_format == "jsonl":
         return pd.read_json(dataset_path, lines=True)
     raise ValueError(f"unsupported dataset format: {file_format}")
+
+
+def _parse_image_uri(image_uri: str) -> ParsedImageUri:
+    """解析 Dataset 支持的图片地址类型。"""
+    parsed = urlparse(image_uri)
+    if parsed.scheme == "s3":
+        object_path = parsed.path.lstrip("/")
+        if not parsed.netloc or not object_path:
+            raise ValueError(f"invalid s3 image_uri: {image_uri}")
+        return ParsedImageUri(
+            kind="s3",
+            image_uri=image_uri,
+            bucket=parsed.netloc,
+            object_path=unquote(object_path),
+        )
+    if parsed.scheme in {"", "file"}:
+        return ParsedImageUri(kind="local", image_uri=image_uri, local_path=file_image_uri_to_path(image_uri))
+    raise ValueError(f"unsupported image_uri scheme: {parsed.scheme}")
+
+
+def _dedupe_columns(columns: list[str]) -> list[str]:
+    """保持顺序去重，避免用户 columns 重复包含 image_id 或 image_uri。"""
+    deduped: list[str] = []
+    for column in columns:
+        if column not in deduped:
+            deduped.append(column)
+    return deduped
 
 
 def _sort_frame(frame: pd.DataFrame, sort: dict[str, str] | None) -> pd.DataFrame:
