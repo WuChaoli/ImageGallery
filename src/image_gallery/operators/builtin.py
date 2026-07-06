@@ -2,6 +2,7 @@ import pandas as pd
 
 from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
+from image_gallery.operators.computers.quality import ImageQualityComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
 
@@ -11,6 +12,7 @@ def create_default_registry() -> OperatorRegistry:
     registry = OperatorRegistry()
     registry.register_parameter_computer(ImageMetadataComputer())
     registry.register_parameter_computer(TableDerivedComputer())
+    registry.register_parameter_computer(ImageQualityComputer())
     for spec in _builtin_specs():
         registry.register_operator(spec)
     return registry
@@ -58,6 +60,46 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="megapixel_action",
             reason_column="megapixel_reason",
             evaluator=evaluate_megapixel_check,
+        ),
+        OperatorSpec(
+            name="quality.blur_check",
+            category="quality",
+            required_parameters=["blur_score"],
+            evaluation_columns=["blur_score", "blur_action", "blur_reason"],
+            default_config={"min_score": 100.0, "action": "review"},
+            action_column="blur_action",
+            reason_column="blur_reason",
+            evaluator=evaluate_blur_check,
+        ),
+        OperatorSpec(
+            name="quality.brightness_check",
+            category="quality",
+            required_parameters=["brightness_score"],
+            evaluation_columns=["brightness_score", "brightness_action", "brightness_reason"],
+            default_config={"min_score": 30.0, "max_score": 225.0, "action": "review"},
+            action_column="brightness_action",
+            reason_column="brightness_reason",
+            evaluator=evaluate_brightness_check,
+        ),
+        OperatorSpec(
+            name="quality.contrast_check",
+            category="quality",
+            required_parameters=["contrast_score"],
+            evaluation_columns=["contrast_score", "contrast_action", "contrast_reason"],
+            default_config={"min_score": 10.0, "action": "review"},
+            action_column="contrast_action",
+            reason_column="contrast_reason",
+            evaluator=evaluate_contrast_check,
+        ),
+        OperatorSpec(
+            name="content.blank_image_check",
+            category="content",
+            required_parameters=["blank_score"],
+            evaluation_columns=["blank_score", "blank_action", "blank_reason"],
+            default_config={"threshold": 0.98, "action": "drop"},
+            action_column="blank_action",
+            reason_column="blank_reason",
+            evaluator=evaluate_blank_image_check,
         ),
     ]
 
@@ -127,6 +169,73 @@ def evaluate_megapixel_check(parameter_table: pd.DataFrame, config: dict[str, ob
             "megapixels": megapixels,
             "megapixel_action": failed.map(lambda value: action if value else "keep"),
             "megapixel_reason": failed.map(lambda value: "megapixels outside configured range" if value else ""),
+        }
+    )
+
+
+def evaluate_blur_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 blur_score 生成模糊检查结果。"""
+    min_score = float(config.get("min_score", 100.0))
+    action = str(config.get("action", "review"))
+    scores = pd.to_numeric(parameter_table["blur_score"], errors="coerce")
+    failed = scores.notna() & (scores < min_score)
+    return _score_threshold_frame(parameter_table["image_id"], scores, failed, "blur", action, f"blur score below {min_score}")
+
+
+def evaluate_brightness_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 brightness_score 生成亮度检查结果。"""
+    min_score = float(config.get("min_score", 30.0))
+    max_score = float(config.get("max_score", 225.0))
+    action = str(config.get("action", "review"))
+    scores = pd.to_numeric(parameter_table["brightness_score"], errors="coerce")
+    failed = scores.notna() & ((scores < min_score) | (scores > max_score))
+    return _score_threshold_frame(
+        parameter_table["image_id"],
+        scores,
+        failed,
+        "brightness",
+        action,
+        f"brightness outside {min_score}..{max_score}",
+    )
+
+
+def evaluate_contrast_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 contrast_score 生成对比度检查结果。"""
+    min_score = float(config.get("min_score", 10.0))
+    action = str(config.get("action", "review"))
+    scores = pd.to_numeric(parameter_table["contrast_score"], errors="coerce")
+    failed = scores.notna() & (scores < min_score)
+    return _score_threshold_frame(
+        parameter_table["image_id"], scores, failed, "contrast", action, f"contrast score below {min_score}"
+    )
+
+
+def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 blank_score 生成空白图检查结果。"""
+    threshold = float(config.get("threshold", 0.98))
+    action = str(config.get("action", "drop"))
+    scores = pd.to_numeric(parameter_table["blank_score"], errors="coerce")
+    failed = scores.notna() & (scores >= threshold)
+    return _score_threshold_frame(
+        parameter_table["image_id"], scores, failed, "blank", action, f"blank score at least {threshold}"
+    )
+
+
+def _score_threshold_frame(
+    image_ids: pd.Series,
+    scores: pd.Series,
+    failed: pd.Series,
+    prefix: str,
+    action: str,
+    reason: str,
+) -> pd.DataFrame:
+    """构造分数阈值类算子的评估结果。"""
+    return pd.DataFrame(
+        {
+            "image_id": image_ids,
+            f"{prefix}_score": scores,
+            f"{prefix}_action": failed.map(lambda value: action if value else "keep"),
+            f"{prefix}_reason": failed.map(lambda value: reason if value else ""),
         }
     )
 
