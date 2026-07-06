@@ -155,8 +155,8 @@ def evaluate_dimension_check(parameter_table: pd.DataFrame, config: dict[str, ob
 
 def evaluate_aspect_ratio_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 aspect_ratio 生成宽高比检查结果。"""
-    min_ratio = float(config.get("min_ratio", 0.2))
-    max_ratio = float(config.get("max_ratio", 5.0))
+    min_ratio = _as_float(config.get("min_ratio", 0.2))
+    max_ratio = _as_float(config.get("max_ratio", 5.0))
     action = str(config.get("action", "review"))
     ratios = pd.to_numeric(parameter_table["aspect_ratio"], errors="coerce")
     failed = ratios.notna() & ((ratios < min_ratio) | (ratios > max_ratio))
@@ -174,9 +174,9 @@ def evaluate_aspect_ratio_check(parameter_table: pd.DataFrame, config: dict[str,
 
 def evaluate_megapixel_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 megapixels 生成像素量检查结果。"""
-    min_megapixels = float(config.get("min_megapixels", 0.01))
+    min_megapixels = _as_float(config.get("min_megapixels", 0.01))
     max_value = config.get("max_megapixels")
-    max_megapixels = None if max_value is None else float(max_value)
+    max_megapixels = None if max_value is None else _as_float(max_value)
     action = str(config.get("action", "review"))
     megapixels = pd.to_numeric(parameter_table["megapixels"], errors="coerce")
     failed = megapixels.notna() & (megapixels < min_megapixels)
@@ -194,17 +194,19 @@ def evaluate_megapixel_check(parameter_table: pd.DataFrame, config: dict[str, ob
 
 def evaluate_blur_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 blur_score 生成模糊检查结果。"""
-    min_score = float(config.get("min_score", 100.0))
+    min_score = _as_float(config.get("min_score", 100.0))
     action = str(config.get("action", "review"))
     scores = pd.to_numeric(parameter_table["blur_score"], errors="coerce")
     failed = scores.notna() & (scores < min_score)
-    return _score_threshold_frame(parameter_table["image_id"], scores, failed, "blur", action, f"blur score below {min_score}")
+    return _score_threshold_frame(
+        parameter_table["image_id"], scores, failed, "blur", action, f"blur score below {min_score}"
+    )
 
 
 def evaluate_brightness_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 brightness_score 生成亮度检查结果。"""
-    min_score = float(config.get("min_score", 30.0))
-    max_score = float(config.get("max_score", 225.0))
+    min_score = _as_float(config.get("min_score", 30.0))
+    max_score = _as_float(config.get("max_score", 225.0))
     action = str(config.get("action", "review"))
     scores = pd.to_numeric(parameter_table["brightness_score"], errors="coerce")
     failed = scores.notna() & ((scores < min_score) | (scores > max_score))
@@ -220,7 +222,7 @@ def evaluate_brightness_check(parameter_table: pd.DataFrame, config: dict[str, o
 
 def evaluate_contrast_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 contrast_score 生成对比度检查结果。"""
-    min_score = float(config.get("min_score", 10.0))
+    min_score = _as_float(config.get("min_score", 10.0))
     action = str(config.get("action", "review"))
     scores = pd.to_numeric(parameter_table["contrast_score"], errors="coerce")
     failed = scores.notna() & (scores < min_score)
@@ -231,7 +233,7 @@ def evaluate_contrast_check(parameter_table: pd.DataFrame, config: dict[str, obj
 
 def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 blank_score 生成空白图检查结果。"""
-    threshold = float(config.get("threshold", 0.98))
+    threshold = _as_float(config.get("threshold", 0.98))
     action = str(config.get("action", "drop"))
     scores = pd.to_numeric(parameter_table["blank_score"], errors="coerce")
     failed = scores.notna() & (scores >= threshold)
@@ -300,3 +302,10 @@ def _as_int(value: object) -> int:
     if isinstance(value, (str, bytes, int, float)):
         return int(value)
     raise TypeError(f"expected int-compatible config value, got {type(value).__name__}")
+
+
+def _as_float(value: object) -> float:
+    """把配置值转换为 float。"""
+    if isinstance(value, (str, bytes, int, float)):
+        return float(value)
+    raise TypeError(f"expected float-compatible config value, got {type(value).__name__}")

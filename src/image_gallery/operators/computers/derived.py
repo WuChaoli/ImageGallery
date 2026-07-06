@@ -24,7 +24,7 @@ class TableDerivedComputer(ParameterComputer):
         if "megapixels" in produced:
             updates["megapixels"] = ((width * height) / 1_000_000).where(valid, pd.NA)
 
-        manifest = {
+        manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
                 "stage": self.stage.value,

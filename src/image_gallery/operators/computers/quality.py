@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from numpy.typing import NDArray
 
 from image_gallery.operators.computers.base import (
     ComputeStage,
@@ -32,7 +33,7 @@ class ImageQualityComputer(ParameterComputer):
                 row[parameter] = values[parameter]
             rows.append(row)
 
-        manifest = {
+        manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
                 "stage": self.stage.value,
@@ -71,7 +72,7 @@ class ImageQualityComputer(ParameterComputer):
         }
 
 
-def _laplacian_variance(array: np.ndarray) -> float:
+def _laplacian_variance(array: NDArray[np.float64]) -> float:
     """使用轻量 numpy 卷积近似拉普拉斯方差。"""
     if array.shape[0] < 3 or array.shape[1] < 3:
         return 0.0

@@ -255,7 +255,7 @@ class BasicCleaner(Cleaner):
         for stage in (ComputeStage.IMAGE_BATCH, ComputeStage.TABLE_DERIVED, ComputeStage.DATASET_GLOBAL):
             for computer in [item for item in computers if item.stage == stage]:
                 result = self._run_parameter_computer(computer, required_parameters, image_batch)
-                _, tables, _ = self._require_run(allow_missing_state=True)
+                context, tables, _ = self._require_run(allow_missing_state=True)
                 self._tables = CleaningTables(
                     parameter_table=update_parameter_columns(tables.parameter_table, result.parameter_updates),
                     evaluation_table=tables.evaluation_table,
@@ -263,7 +263,7 @@ class BasicCleaner(Cleaner):
                     parameter_manifest={**tables.parameter_manifest, **result.parameter_manifest},
                 )
                 artifact_paths.update(result.artifact_refs)
-                relation_paths.update(write_relation_tables(result.relation_updates, self._context.paths))
+                relation_paths.update(write_relation_tables(result.relation_updates, context.paths))
         return artifact_paths, relation_paths
 
     def _run_parameter_computer(
