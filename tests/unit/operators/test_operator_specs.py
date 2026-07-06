@@ -22,8 +22,7 @@ def test_operator_spec_evaluate_returns_declared_columns() -> None:
     spec = OperatorSpec(
         name="quality.demo_check",
         category="quality",
-        backend_name="demo_backend",
-        parameter_columns=["demo_score"],
+        required_parameters=["demo_score"],
         evaluation_columns=["demo_action", "demo_reason"],
         default_config={"action": "review"},
         action_column="demo_action",
@@ -42,8 +41,7 @@ def test_operator_spec_rejects_missing_declared_output_columns() -> None:
     spec = OperatorSpec(
         name="quality.demo_check",
         category="quality",
-        backend_name="demo_backend",
-        parameter_columns=["demo_score"],
+        required_parameters=["demo_score"],
         evaluation_columns=["demo_action", "demo_reason"],
         default_config={"action": "review"},
         action_column="demo_action",
@@ -53,3 +51,19 @@ def test_operator_spec_rejects_missing_declared_output_columns() -> None:
 
     with pytest.raises(ValueError, match="missing evaluation columns"):
         spec.evaluate(pd.DataFrame({"image_id": ["img-1"], "demo_score": [1.0]}), {"action": "drop"})
+
+
+def test_operator_spec_rejects_missing_required_parameters() -> None:
+    spec = OperatorSpec(
+        name="quality.demo_check",
+        category="quality",
+        required_parameters=["demo_score"],
+        evaluation_columns=["demo_action", "demo_reason"],
+        default_config={"action": "review"},
+        action_column="demo_action",
+        reason_column="demo_reason",
+        evaluator=_evaluate_ok,
+    )
+
+    with pytest.raises(ValueError, match="missing required parameters"):
+        spec.evaluate(pd.DataFrame({"image_id": ["img-1"]}), {"action": "drop"})

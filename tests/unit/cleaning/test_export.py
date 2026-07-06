@@ -24,6 +24,7 @@ def _tables() -> CleaningTables:
             }
         ),
         operator_outputs={},
+        parameter_manifest={},
     )
 
 

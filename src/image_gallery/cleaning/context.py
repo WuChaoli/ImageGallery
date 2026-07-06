@@ -15,6 +15,7 @@ class CleanerRunPaths:
     parameter_table_path: Path
     evaluation_table_path: Path
     operator_outputs_path: Path
+    parameter_manifest_path: Path
     relations_dir: Path
     artifacts_dir: Path
     state_path: Path
@@ -59,6 +60,7 @@ def build_run_paths(run_dir: Path) -> CleanerRunPaths:
         parameter_table_path=run_dir / "parameter_table.parquet",
         evaluation_table_path=run_dir / "evaluation_table.parquet",
         operator_outputs_path=run_dir / "operator_outputs.yaml",
+        parameter_manifest_path=run_dir / "parameter_manifest.json",
         relations_dir=run_dir / "relations",
         artifacts_dir=run_dir / "artifacts",
         state_path=run_dir / "state.json",

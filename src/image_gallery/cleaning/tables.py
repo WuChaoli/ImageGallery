@@ -9,11 +9,12 @@ from image_gallery.dataset import Dataset
 
 @dataclass(frozen=True)
 class CleaningTables:
-    """一次清洗运行的两张主表和算子输出列 manifest。"""
+    """一次清洗运行的两张主表、算子输出列和参数 manifest。"""
 
     parameter_table: pd.DataFrame
     evaluation_table: pd.DataFrame
     operator_outputs: dict[str, list[str]]
+    parameter_manifest: dict[str, dict[str, object]]
 
 
 def initialize_parameter_table(dataset: Dataset) -> pd.DataFrame:
@@ -38,17 +39,19 @@ def initialize_evaluation_table(parameter_table: pd.DataFrame) -> pd.DataFrame:
 
 
 def read_tables(paths: CleanerRunPaths) -> CleaningTables:
-    """从磁盘读取 parameter_table、evaluation_table 和 operator_outputs。"""
+    """从磁盘读取 parameter_table、evaluation_table 和 manifest。"""
     operator_outputs = json.loads(paths.operator_outputs_path.read_text(encoding="utf-8"))
+    parameter_manifest = json.loads(paths.parameter_manifest_path.read_text(encoding="utf-8"))
     return CleaningTables(
         parameter_table=pd.read_parquet(paths.parameter_table_path),
         evaluation_table=pd.read_parquet(paths.evaluation_table_path),
         operator_outputs={key: list(value) for key, value in operator_outputs.items()},
+        parameter_manifest={key: dict(value) for key, value in parameter_manifest.items()},
     )
 
 
 def write_tables(tables: CleaningTables, paths: CleanerRunPaths) -> None:
-    """把两张主表和 operator_outputs manifest 写入磁盘。"""
+    """把两张主表、operator_outputs 和 parameter_manifest 写入磁盘。"""
     paths.run_dir.mkdir(parents=True, exist_ok=True)
     paths.relations_dir.mkdir(parents=True, exist_ok=True)
     paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
@@ -56,6 +59,10 @@ def write_tables(tables: CleaningTables, paths: CleanerRunPaths) -> None:
     tables.evaluation_table.to_parquet(paths.evaluation_table_path, index=False)
     paths.operator_outputs_path.write_text(
         json.dumps(tables.operator_outputs, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+    paths.parameter_manifest_path.write_text(
+        json.dumps(tables.parameter_manifest, ensure_ascii=False, indent=2, sort_keys=True),
         encoding="utf-8",
     )
 

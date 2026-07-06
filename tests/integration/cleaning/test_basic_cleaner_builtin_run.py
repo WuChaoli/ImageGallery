@@ -11,7 +11,7 @@ def _write_image(path: Path, size: tuple[int, int] = (20, 20)) -> None:
     Image.new("RGB", size, color=(100, 120, 140)).save(path)
 
 
-def test_basic_cleaner_runs_builtin_pillow_operators(tmp_path: Path) -> None:
+def test_basic_cleaner_runs_builtin_v3_decode_and_dimension_operators(tmp_path: Path) -> None:
     ok_path = tmp_path / "ok.png"
     small_path = tmp_path / "small.png"
     broken_path = tmp_path / "broken.jpg"
@@ -21,7 +21,7 @@ def test_basic_cleaner_runs_builtin_pillow_operators(tmp_path: Path) -> None:
     dataset = Dataset.write(
         pd.DataFrame(
             {
-                "image_id": ["img-1", "img-2", "img-3"],
+                "image_id": ["ok", "small", "bad"],
                 "image_uri": [str(ok_path), str(small_path), str(broken_path)],
             }
         ),
@@ -36,7 +36,12 @@ def test_basic_cleaner_runs_builtin_pillow_operators(tmp_path: Path) -> None:
     )
     cleaner.run(dataset, output_dir=tmp_path / "cleaning")
 
-    assert cleaner.preview().dropped_count == 1
+    rows = cleaner.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
+    assert rows.loc["ok", "final_action"] == "keep"
+    assert rows.loc["small", "final_action"] == "review"
+    assert rows.loc["bad", "final_action"] == "drop"
+    assert cleaner.preview().total_count == 3
     assert cleaner.preview().review_count == 1
+    assert cleaner.preview().dropped_count == 1
     assert cleaner.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep", "drop"]
     assert cleaner.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review", "review"]

@@ -2,25 +2,27 @@ import pandas as pd
 import pytest
 
 from image_gallery.cleaning.errors import UnknownOperatorError
-from image_gallery.operators.backends.base import BackendAdapter, BackendOperatorRequest, BackendResult
+from image_gallery.operators.computers.base import (
+    ComputeStage,
+    ParameterComputer,
+    ParameterRequest,
+    ParameterResult,
+)
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
 
 
-class DemoBackend(BackendAdapter):
-    name = "demo_backend"
+class DemoComputer(ParameterComputer):
+    name = "demo_computer"
+    stage = ComputeStage.IMAGE_BATCH
+    produced_parameters = frozenset({"demo_score"})
 
-    def compute_parameters(
-        self,
-        dataset: object,
-        parameter_table: pd.DataFrame,
-        requests: list[BackendOperatorRequest],
-        artifacts_dir: str,
-    ) -> BackendResult:
-        return BackendResult(
-            parameter_updates=pd.DataFrame({"image_id": parameter_table["image_id"], "demo_score": [1.0]}),
+    def compute(self, request: ParameterRequest) -> ParameterResult:
+        return ParameterResult(
+            parameter_updates=pd.DataFrame({"image_id": request.parameter_table["image_id"], "demo_score": [1.0]}),
             relation_updates={},
             artifact_refs={},
+            parameter_manifest={},
         )
 
 
@@ -34,14 +36,13 @@ def _evaluate(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.Da
     )
 
 
-def test_registry_resolves_operator_and_backend() -> None:
+def test_registry_resolves_operator_and_parameter_computer() -> None:
     registry = OperatorRegistry()
-    backend = DemoBackend()
+    computer = DemoComputer()
     spec = OperatorSpec(
         name="quality.demo_check",
         category="quality",
-        backend_name=backend.name,
-        parameter_columns=["demo_score"],
+        required_parameters=["demo_score"],
         evaluation_columns=["demo_action", "demo_reason"],
         default_config={"action": "review"},
         action_column="demo_action",
@@ -49,12 +50,12 @@ def test_registry_resolves_operator_and_backend() -> None:
         evaluator=_evaluate,
     )
 
-    registry.register_backend(backend)
+    registry.register_parameter_computer(computer)
     registry.register_operator(spec)
 
     assert registry.get_operator("quality.demo_check") is spec
-    assert registry.get_backend("demo_backend") is backend
-    assert registry.resolve("quality.demo_check") == (spec, backend)
+    assert registry.get_parameter_computer("demo_computer") is computer
+    assert registry.find_computers_for_parameters({"demo_score"}) == [computer]
     assert registry.list_operators() == ["quality.demo_check"]
 
 
@@ -65,20 +66,8 @@ def test_registry_rejects_unknown_operator() -> None:
         registry.get_operator("missing.operator")
 
 
-def test_registry_rejects_operator_with_missing_backend() -> None:
+def test_registry_rejects_missing_parameter_producer() -> None:
     registry = OperatorRegistry()
-    spec = OperatorSpec(
-        name="quality.demo_check",
-        category="quality",
-        backend_name="missing_backend",
-        parameter_columns=["demo_score"],
-        evaluation_columns=["demo_action", "demo_reason"],
-        default_config={"action": "review"},
-        action_column="demo_action",
-        reason_column="demo_reason",
-        evaluator=_evaluate,
-    )
-    registry.register_operator(spec)
 
-    with pytest.raises(UnknownOperatorError):
-        registry.resolve("quality.demo_check")
+    with pytest.raises(UnknownOperatorError, match="missing parameter producers"):
+        registry.find_computers_for_parameters({"missing_score"})

@@ -7,12 +7,12 @@ from image_gallery.cleaning.errors import OperatorConfigError
 def test_parse_operator_configs_accepts_single_operator_items() -> None:
     parsed = parse_operator_configs(
         [
-            {"quality.blur_check": {"threshold": 80, "action": "drop"}},
+            {"quality.demo_check": {"threshold": 80, "action": "drop"}},
             {"size.dimension_check": {}},
         ]
     )
 
-    assert [item.operator_name for item in parsed] == ["quality.blur_check", "size.dimension_check"]
+    assert [item.operator_name for item in parsed] == ["quality.demo_check", "size.dimension_check"]
     assert parsed[0].config == {"threshold": 80, "action": "drop"}
     assert parsed[1].config == {}
     assert len(parsed[0].config_hash) == 64
@@ -23,8 +23,8 @@ def test_parse_operator_configs_rejects_invalid_shapes() -> None:
         [],
         [{"a": {}, "b": {}}],
         [{"": {}}],
-        [{"quality.blur_check": None}],
-        [{"quality.blur_check": {}}, {"quality.blur_check": {}}],
+        [{"quality.demo_check": None}],
+        [{"quality.demo_check": {}}, {"quality.demo_check": {}}],
     ]
 
     for invalid_input in invalid_inputs:

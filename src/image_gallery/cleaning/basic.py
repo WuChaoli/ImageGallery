@@ -1,7 +1,9 @@
 from dataclasses import dataclass, replace
+from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+from PIL import Image
 
 from image_gallery.cleaning.cleaner import Cleaner
 from image_gallery.cleaning.config import (
@@ -25,19 +27,25 @@ from image_gallery.cleaning.tables import (
     write_tables,
 )
 from image_gallery.dataset import Dataset
-from image_gallery.operators.backends.base import BackendAdapter, BackendOperatorRequest, BackendResult
 from image_gallery.operators.builtin import create_default_registry
+from image_gallery.operators.computers.base import (
+    ComputeStage,
+    ImageBatch,
+    ImageBatchItem,
+    ParameterComputer,
+    ParameterRequest,
+    ParameterResult,
+)
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
 
 
 @dataclass(frozen=True)
 class ResolvedOperatorRun:
-    """一次运行中已绑定 spec、backend 和配置的逻辑算子。"""
+    """一次运行中已绑定 spec 和配置的逻辑算子。"""
 
     parsed_config: ParsedOperatorConfig
     spec: OperatorSpec
-    backend: BackendAdapter
     merged_config: dict[str, object]
 
 
@@ -71,23 +79,19 @@ class BasicCleaner(Cleaner):
 
         parameter_table = initialize_parameter_table(dataset)
         evaluation_table = initialize_evaluation_table(parameter_table)
-        tables = CleaningTables(parameter_table=parameter_table, evaluation_table=evaluation_table, operator_outputs={})
+        tables = CleaningTables(
+            parameter_table=parameter_table,
+            evaluation_table=evaluation_table,
+            operator_outputs={},
+            parameter_manifest={},
+        )
         self._context = context
         self._tables = tables
 
         resolved_runs = self._resolve_operator_configs(self._operator_configs)
-        artifact_paths: dict[str, str] = {}
         operator_states: list[OperatorRunState] = []
 
-        for backend, backend_runs in self._group_by_backend(resolved_runs).values():
-            backend_result = self._run_backend_group(backend, backend_runs)
-            tables = CleaningTables(
-                parameter_table=update_parameter_columns(tables.parameter_table, backend_result.parameter_updates),
-                evaluation_table=tables.evaluation_table,
-                operator_outputs=tables.operator_outputs,
-            )
-            artifact_paths.update(backend_result.artifact_refs)
-            self._tables = tables
+        artifact_paths = self._run_parameter_computers(resolved_runs)
 
         for resolved_run in resolved_runs:
             operator_states.append(self._evaluate_operator(resolved_run))
@@ -97,6 +101,7 @@ class BasicCleaner(Cleaner):
             parameter_table=tables.parameter_table,
             evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
             operator_outputs=tables.operator_outputs,
+            parameter_manifest=tables.parameter_manifest,
         )
         self._tables = tables
         state = self._build_state(context, resolved_runs, operator_states, artifact_paths, "completed")
@@ -148,19 +153,7 @@ class BasicCleaner(Cleaner):
         parsed_configs = parse_operator_configs(operator_configs)
         self._operator_configs = self._replace_operator_configs(parsed_configs)
         resolved_runs = self._resolve_operator_configs(parsed_configs)
-        artifact_paths: dict[str, str] = {}
         operator_states: list[OperatorRunState] = []
-
-        backend_runs_to_execute = self._runs_requiring_parameters(resolved_runs)
-        for backend, backend_runs in self._group_by_backend(backend_runs_to_execute).values():
-            backend_result = self._run_backend_group(backend, backend_runs)
-            _, tables, _ = self._require_run()
-            self._tables = CleaningTables(
-                parameter_table=update_parameter_columns(tables.parameter_table, backend_result.parameter_updates),
-                evaluation_table=tables.evaluation_table,
-                operator_outputs=tables.operator_outputs,
-            )
-            artifact_paths.update(backend_result.artifact_refs)
 
         for resolved_run in resolved_runs:
             operator_states.append(self._evaluate_operator(resolved_run))
@@ -184,6 +177,7 @@ class BasicCleaner(Cleaner):
             parameter_table=tables.parameter_table,
             evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
             operator_outputs=tables.operator_outputs,
+            parameter_manifest=tables.parameter_manifest,
         )
         self._tables = tables
         operator_config_hashes = dict(state.operator_config_hashes)
@@ -193,7 +187,7 @@ class BasicCleaner(Cleaner):
             state,
             enabled_operator_configs=self._enabled_operator_configs_from_current(),
             operator_config_hashes=operator_config_hashes,
-            artifact_paths={**state.artifact_paths, **artifact_paths},
+            artifact_paths=state.artifact_paths,
             status="completed",
             operator_states=ordered_states,
         )
@@ -217,51 +211,103 @@ class BasicCleaner(Cleaner):
         self,
         parsed_configs: list[ParsedOperatorConfig],
     ) -> list[ResolvedOperatorRun]:
-        """解析算子配置，绑定 OperatorSpec、BackendAdapter 和合并后配置。"""
+        """解析算子配置，绑定 OperatorSpec 和合并后配置。"""
         resolved: list[ResolvedOperatorRun] = []
         for parsed_config in parsed_configs:
-            spec, backend = self._registry.resolve(parsed_config.operator_name)
-            merged_config = merge_default_config(parsed_config, spec.default_config)
+            spec = self._registry.get_operator(parsed_config.operator_name)
+            merged = merge_default_config(parsed_config, spec.default_config)
             resolved.append(
                 ResolvedOperatorRun(
-                    parsed_config=merged_config,
+                    parsed_config=merged,
                     spec=spec,
-                    backend=backend,
-                    merged_config=merged_config.config,
+                    merged_config=merged.config,
                 )
             )
         return resolved
 
-    def _group_by_backend(
-        self,
-        runs: list[ResolvedOperatorRun],
-    ) -> dict[str, tuple[BackendAdapter, list[ResolvedOperatorRun]]]:
-        """把已解析算子按 backend_name 分组。"""
-        grouped: dict[str, tuple[BackendAdapter, list[ResolvedOperatorRun]]] = {}
-        for run in runs:
-            if run.backend.name not in grouped:
-                grouped[run.backend.name] = (run.backend, [])
-            grouped[run.backend.name][1].append(run)
-        return grouped
+    def _required_parameters(self, runs: list[ResolvedOperatorRun]) -> set[str]:
+        """收集本次运行需要的全部参数字段。"""
+        return {parameter for run in runs for parameter in run.spec.required_parameters}
 
-    def _run_backend_group(self, backend: BackendAdapter, runs: list[ResolvedOperatorRun]) -> BackendResult:
-        """一次执行同一后端下的多个逻辑算子参数计算。"""
+    def _run_parameter_computers(self, runs: list[ResolvedOperatorRun]) -> dict[str, str]:
+        """按 compute stage 执行参数计算单元并更新 parameter_table。"""
+        required_parameters = self._required_parameters(runs)
+        computers = self._registry.find_computers_for_parameters(required_parameters)
+        artifact_paths: dict[str, str] = {}
+
+        image_batch: ImageBatch | None = None
+        if any(computer.stage == ComputeStage.IMAGE_BATCH for computer in computers):
+            _, tables, _ = self._require_run(allow_missing_state=True)
+            image_batch = self._build_image_batch(tables.parameter_table)
+
+        for stage in (ComputeStage.IMAGE_BATCH, ComputeStage.TABLE_DERIVED, ComputeStage.DATASET_GLOBAL):
+            for computer in [item for item in computers if item.stage == stage]:
+                result = self._run_parameter_computer(computer, required_parameters, image_batch)
+                _, tables, _ = self._require_run(allow_missing_state=True)
+                self._tables = CleaningTables(
+                    parameter_table=update_parameter_columns(tables.parameter_table, result.parameter_updates),
+                    evaluation_table=tables.evaluation_table,
+                    operator_outputs=tables.operator_outputs,
+                    parameter_manifest={**tables.parameter_manifest, **result.parameter_manifest},
+                )
+                artifact_paths.update(result.artifact_refs)
+        return artifact_paths
+
+    def _run_parameter_computer(
+        self,
+        computer: ParameterComputer,
+        required_parameters: set[str],
+        image_batch: ImageBatch | None,
+    ) -> ParameterResult:
+        """执行单个参数计算单元。"""
         context, tables, _ = self._require_run(allow_missing_state=True)
-        requests = [
-            BackendOperatorRequest(
-                operator_name=run.spec.name,
-                parameter_columns=run.spec.parameter_columns,
-                config=run.merged_config,
-                config_hash=run.parsed_config.config_hash,
+        requested_parameters = frozenset(required_parameters & set(computer.produced_parameters))
+        return computer.compute(
+            ParameterRequest(
+                parameter_table=tables.parameter_table,
+                requested_parameters=requested_parameters,
+                config={},
+                config_hash="default",
+                artifacts_dir=context.paths.artifacts_dir,
+                image_batch=image_batch if computer.stage == ComputeStage.IMAGE_BATCH else None,
             )
-            for run in runs
-        ]
-        return backend.compute_parameters(
-            context.dataset,
-            tables.parameter_table,
-            requests,
-            context.paths.artifacts_dir,
         )
+
+    def _build_image_batch(self, parameter_table: pd.DataFrame) -> ImageBatch:
+        """统一读取和解码当前 parameter_table 中的图片。"""
+        context, _, _ = self._require_run(allow_missing_state=True)
+        items: list[ImageBatchItem] = []
+        for row in parameter_table.to_dict(orient="records"):
+            image_id = str(row["image_id"])
+            image_uri = str(row["image_uri"])
+            try:
+                data = context.dataset.read_image_bytes(image_uri)
+                with Image.open(BytesIO(data)) as opened:
+                    opened.load()
+                    image = opened.copy()
+                    image.format = opened.format
+                items.append(
+                    ImageBatchItem(
+                        image_id=image_id,
+                        image_uri=image_uri,
+                        row=row,
+                        data=data,
+                        image=image,
+                        error=None,
+                    )
+                )
+            except Exception as exc:
+                items.append(
+                    ImageBatchItem(
+                        image_id=image_id,
+                        image_uri=image_uri,
+                        row=row,
+                        data=None,
+                        image=None,
+                        error=str(exc),
+                    )
+                )
+        return ImageBatch(items=items)
 
     def _evaluate_operator(self, run: ResolvedOperatorRun) -> OperatorRunState:
         """基于参数表执行单个逻辑算子的评估，并更新 evaluation_table 和 manifest。"""
@@ -277,12 +323,13 @@ class BasicCleaner(Cleaner):
             parameter_table=tables.parameter_table,
             evaluation_table=evaluation_table,
             operator_outputs=operator_outputs,
+            parameter_manifest=tables.parameter_manifest,
         )
         return OperatorRunState(
             operator_name=run.spec.name,
             config_hash=run.parsed_config.config_hash,
             status="completed",
-            parameter_columns=run.spec.parameter_columns,
+            parameter_columns=run.spec.required_parameters,
             evaluation_columns=run.spec.evaluation_columns,
             processed_count=len(tables.parameter_table),
             skipped_count=0,
@@ -337,16 +384,6 @@ class BasicCleaner(Cleaner):
             status=status,
             operator_states=operator_states,
         )
-
-    def _runs_requiring_parameters(self, runs: list[ResolvedOperatorRun]) -> list[ResolvedOperatorRun]:
-        """筛选当前参数表缺少字段、需要执行 backend 的算子。"""
-        _, tables, _ = self._require_run()
-        existing_columns = set(tables.parameter_table.columns)
-        return [
-            run
-            for run in runs
-            if any(parameter_column not in existing_columns for parameter_column in run.spec.parameter_columns)
-        ]
 
     def _replace_operator_configs(
         self,

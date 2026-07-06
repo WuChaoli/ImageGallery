@@ -99,6 +99,13 @@ def test_write_and_read_tables_round_trip(tmp_path: Path) -> None:
         parameter_table=pd.DataFrame({"image_id": ["img-1"], "image_uri": ["a"], "demo_score": [0.5]}),
         evaluation_table=pd.DataFrame({"image_id": ["img-1"], "image_uri": ["a"], "demo_action": ["drop"]}),
         operator_outputs={"quality.demo_check": ["demo_action"]},
+        parameter_manifest={
+            "demo_score": {
+                "computer": "demo_computer",
+                "stage": "image_batch",
+                "config_hash": "abc123",
+            }
+        },
     )
 
     write_tables(tables, paths)
@@ -107,3 +114,4 @@ def test_write_and_read_tables_round_trip(tmp_path: Path) -> None:
     pd.testing.assert_frame_equal(loaded.parameter_table, tables.parameter_table)
     pd.testing.assert_frame_equal(loaded.evaluation_table, tables.evaluation_table)
     assert loaded.operator_outputs == tables.operator_outputs
+    assert loaded.parameter_manifest == tables.parameter_manifest

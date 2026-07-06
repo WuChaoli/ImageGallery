@@ -7,30 +7,30 @@ from image_gallery.cleaning import BasicCleaner
 from image_gallery.dataset import Dataset
 
 
-def _write_image(path: Path, color: tuple[int, int, int]) -> None:
-    Image.new("RGB", (16, 16), color=color).save(path)
+def _write_image(path: Path, size: tuple[int, int], color: tuple[int, int, int]) -> None:
+    Image.new("RGB", size, color=color).save(path)
 
 
 def test_basic_cleaner_exports_builtin_views_and_preserves_counts(tmp_path: Path) -> None:
-    first = tmp_path / "first.png"
-    duplicate = tmp_path / "duplicate.png"
-    unique = tmp_path / "unique.png"
-    _write_image(first, (10, 20, 30))
-    duplicate.write_bytes(first.read_bytes())
-    _write_image(unique, (200, 210, 220))
+    ok = tmp_path / "ok.png"
+    small = tmp_path / "small.png"
+    broken = tmp_path / "broken.jpg"
+    _write_image(ok, (16, 16), (10, 20, 30))
+    _write_image(small, (4, 4), (200, 210, 220))
+    broken.write_bytes(b"not an image")
     dataset = Dataset.write(
         pd.DataFrame(
             {
-                "image_id": ["img-1", "img-2", "img-3"],
-                "image_uri": [str(first), str(duplicate), str(unique)],
+                "image_id": ["ok", "small", "bad"],
+                "image_uri": [str(ok), str(small), str(broken)],
             }
         ),
         str(tmp_path / "raw.parquet"),
     )
     cleaner = BasicCleaner(
         [
-            {"format.decode_check": {}},
-            {"duplicate.exact_duplicate_check": {"action": "drop"}},
+            {"format.decode_check": {"action": "drop"}},
+            {"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}},
         ]
     )
     cleaner.run(dataset, output_dir=tmp_path / "cleaning")
@@ -44,7 +44,11 @@ def test_basic_cleaner_exports_builtin_views_and_preserves_counts(tmp_path: Path
     preview = cleaner.preview()
 
     assert full.count() == 3
-    assert clean.count() + review.count() + dropped.count() + preview.restricted_count == full.count()
-    assert dropped.count() == 2
-    assert parameters.to_frame()["content_hash"].nunique() == 2
+    assert clean.count() == 1
+    assert review.count() == 1
+    assert dropped.count() == 1
+    assert preview.restricted_count == 0
+    assert {"image_id", "image_uri", "width", "height", "decode_error", "decode_ok"}.issubset(
+        parameters.to_frame().columns
+    )
     assert evaluations.count() == 3
