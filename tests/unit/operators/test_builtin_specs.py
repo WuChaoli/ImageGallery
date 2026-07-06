@@ -6,7 +6,9 @@ def test_default_registry_contains_only_first_v3_operators() -> None:
 
     assert registry.list_operators() == [
         "format.decode_check",
+        "size.aspect_ratio_check",
         "size.dimension_check",
+        "size.megapixel_check",
     ]
 
 
@@ -27,6 +29,18 @@ def test_decode_and_dimension_specs_declare_required_parameters() -> None:
     assert decode_spec.evaluation_columns == ["decode_action", "decode_reason"]
     assert dimension_spec.required_parameters == ["width", "height"]
     assert dimension_spec.evaluation_columns == ["dimension_action", "dimension_reason"]
+
+
+def test_size_derived_specs_declare_required_parameters() -> None:
+    registry = create_default_registry()
+
+    aspect_spec = registry.get_operator("size.aspect_ratio_check")
+    megapixel_spec = registry.get_operator("size.megapixel_check")
+
+    assert aspect_spec.required_parameters == ["aspect_ratio"]
+    assert aspect_spec.evaluation_columns == ["aspect_ratio", "aspect_ratio_action", "aspect_ratio_reason"]
+    assert megapixel_spec.required_parameters == ["megapixels"]
+    assert megapixel_spec.evaluation_columns == ["megapixels", "megapixel_action", "megapixel_reason"]
 
 
 def test_default_registry_can_find_metadata_computer_for_builtin_parameters() -> None:

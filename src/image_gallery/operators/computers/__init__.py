@@ -6,6 +6,7 @@ from image_gallery.operators.computers.base import (
     ParameterRequest,
     ParameterResult,
 )
+from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
 
 __all__ = [
@@ -16,4 +17,5 @@ __all__ = [
     "ParameterComputer",
     "ParameterRequest",
     "ParameterResult",
+    "TableDerivedComputer",
 ]

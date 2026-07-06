@@ -1,5 +1,6 @@
 import pandas as pd
 
+from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
@@ -9,6 +10,7 @@ def create_default_registry() -> OperatorRegistry:
     """创建包含第一版 v3 基础逻辑算子和参数计算单元的注册表。"""
     registry = OperatorRegistry()
     registry.register_parameter_computer(ImageMetadataComputer())
+    registry.register_parameter_computer(TableDerivedComputer())
     for spec in _builtin_specs():
         registry.register_operator(spec)
     return registry
@@ -36,6 +38,26 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="dimension_action",
             reason_column="dimension_reason",
             evaluator=evaluate_dimension_check,
+        ),
+        OperatorSpec(
+            name="size.aspect_ratio_check",
+            category="size",
+            required_parameters=["aspect_ratio"],
+            evaluation_columns=["aspect_ratio", "aspect_ratio_action", "aspect_ratio_reason"],
+            default_config={"min_ratio": 0.2, "max_ratio": 5.0, "action": "review"},
+            action_column="aspect_ratio_action",
+            reason_column="aspect_ratio_reason",
+            evaluator=evaluate_aspect_ratio_check,
+        ),
+        OperatorSpec(
+            name="size.megapixel_check",
+            category="size",
+            required_parameters=["megapixels"],
+            evaluation_columns=["megapixels", "megapixel_action", "megapixel_reason"],
+            default_config={"min_megapixels": 0.01, "max_megapixels": None, "action": "review"},
+            action_column="megapixel_action",
+            reason_column="megapixel_reason",
+            evaluator=evaluate_megapixel_check,
         ),
     ]
 
@@ -66,6 +88,45 @@ def evaluate_dimension_check(parameter_table: pd.DataFrame, config: dict[str, ob
             "image_id": parameter_table["image_id"],
             "dimension_action": failed.map(lambda value: action if value else "keep"),
             "dimension_reason": failed.map(lambda value: f"smaller than {min_width}x{min_height}" if value else ""),
+        }
+    )
+
+
+def evaluate_aspect_ratio_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 aspect_ratio 生成宽高比检查结果。"""
+    min_ratio = float(config.get("min_ratio", 0.2))
+    max_ratio = float(config.get("max_ratio", 5.0))
+    action = str(config.get("action", "review"))
+    ratios = pd.to_numeric(parameter_table["aspect_ratio"], errors="coerce")
+    failed = ratios.notna() & ((ratios < min_ratio) | (ratios > max_ratio))
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "aspect_ratio": ratios,
+            "aspect_ratio_action": failed.map(lambda value: action if value else "keep"),
+            "aspect_ratio_reason": failed.map(
+                lambda value: f"aspect ratio outside {min_ratio}..{max_ratio}" if value else ""
+            ),
+        }
+    )
+
+
+def evaluate_megapixel_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 megapixels 生成像素量检查结果。"""
+    min_megapixels = float(config.get("min_megapixels", 0.01))
+    max_value = config.get("max_megapixels")
+    max_megapixels = None if max_value is None else float(max_value)
+    action = str(config.get("action", "review"))
+    megapixels = pd.to_numeric(parameter_table["megapixels"], errors="coerce")
+    failed = megapixels.notna() & (megapixels < min_megapixels)
+    if max_megapixels is not None:
+        failed = failed | (megapixels.notna() & (megapixels > max_megapixels))
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "megapixels": megapixels,
+            "megapixel_action": failed.map(lambda value: action if value else "keep"),
+            "megapixel_reason": failed.map(lambda value: "megapixels outside configured range" if value else ""),
         }
     )
 
