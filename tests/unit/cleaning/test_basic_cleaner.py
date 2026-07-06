@@ -161,6 +161,48 @@ def test_basic_cleaner_runs_shared_parameter_computer_and_exposes_results(tmp_pa
     assert (next((tmp_path / "cleaning").iterdir()) / "state.json").exists()
 
 
+def test_basic_cleaner_writes_relation_outputs_and_state_paths(tmp_path: Path) -> None:
+    class RelationComputer(CountingComputer):
+        name = "relation_computer"
+
+        def compute(self, request: ParameterRequest) -> ParameterResult:
+            base = super().compute(request)
+            return ParameterResult(
+                parameter_updates=base.parameter_updates,
+                relation_updates={
+                    "demo_pairs": pd.DataFrame(
+                        {
+                            "relation_type": ["demo"],
+                            "source_image_id": ["img-1"],
+                            "target_image_id": ["img-2"],
+                            "score": [1.0],
+                            "group_id": ["group-1"],
+                            "parameter_name": ["demo_score"],
+                            "computer_name": [self.name],
+                            "artifact_ref": [""],
+                            "created_at": ["2026-07-06T00:00:00Z"],
+                        }
+                    )
+                },
+                artifact_refs=base.artifact_refs,
+                parameter_manifest=base.parameter_manifest,
+            )
+
+    cleaner = BasicCleaner([{"quality.drop_check": {}}], registry=_registry(RelationComputer()))
+    cleaner.run(_dataset(tmp_path), output_dir=tmp_path / "cleaning")
+
+    run_dir = next((tmp_path / "cleaning").iterdir())
+    relation_path = run_dir / "relations" / "demo_pairs.parquet"
+    assert relation_path.exists()
+
+    state_payload = pd.read_json(run_dir / "state.json", typ="series").to_dict()
+    assert state_payload["parameter_manifest_path"].endswith("parameter_manifest.json")
+    assert state_payload["parameter_config_hashes"] == {"demo_score": "default"}
+    assert state_payload["relation_paths"] == {"demo_pairs": str(relation_path)}
+    assert state_payload["started_at"]
+    assert state_payload["finished_at"]
+
+
 def test_basic_cleaner_rejects_result_before_run() -> None:
     cleaner = BasicCleaner([{"quality.drop_check": {}}], registry=_registry(CountingComputer()))
 

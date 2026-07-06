@@ -29,10 +29,15 @@ class CleanerRunState:
     cleaner_type: str
     enabled_operator_configs: list[dict[str, dict[str, object]]]
     operator_config_hashes: dict[str, str]
+    parameter_config_hashes: dict[str, str]
     parameter_table_path: str
     evaluation_table_path: str
     operator_outputs_path: str
+    parameter_manifest_path: str
+    relation_paths: dict[str, str]
     artifact_paths: dict[str, str]
+    started_at: str
+    finished_at: str
     status: str
     operator_states: list[OperatorRunState]
 
@@ -50,10 +55,15 @@ class JsonRunStateStore:
             cleaner_type=payload["cleaner_type"],
             enabled_operator_configs=payload["enabled_operator_configs"],
             operator_config_hashes=payload["operator_config_hashes"],
+            parameter_config_hashes=payload.get("parameter_config_hashes", {}),
             parameter_table_path=payload["parameter_table_path"],
             evaluation_table_path=payload["evaluation_table_path"],
             operator_outputs_path=payload["operator_outputs_path"],
+            parameter_manifest_path=payload.get("parameter_manifest_path", ""),
+            relation_paths=payload.get("relation_paths", {}),
             artifact_paths=payload["artifact_paths"],
+            started_at=payload.get("started_at", ""),
+            finished_at=payload.get("finished_at", ""),
             status=payload["status"],
             operator_states=operator_states,
         )

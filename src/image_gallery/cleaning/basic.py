@@ -1,4 +1,5 @@
 from dataclasses import dataclass, replace
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -24,6 +25,7 @@ from image_gallery.cleaning.tables import (
     update_evaluation_columns,
     update_operator_outputs,
     update_parameter_columns,
+    write_relation_tables,
     write_tables,
 )
 from image_gallery.dataset import Dataset
@@ -91,7 +93,8 @@ class BasicCleaner(Cleaner):
         resolved_runs = self._resolve_operator_configs(self._operator_configs)
         operator_states: list[OperatorRunState] = []
 
-        artifact_paths = self._run_parameter_computers(resolved_runs)
+        started_at = _utc_now()
+        artifact_paths, relation_paths = self._run_parameter_computers(resolved_runs)
 
         for resolved_run in resolved_runs:
             operator_states.append(self._evaluate_operator(resolved_run))
@@ -104,7 +107,15 @@ class BasicCleaner(Cleaner):
             parameter_manifest=tables.parameter_manifest,
         )
         self._tables = tables
-        state = self._build_state(context, resolved_runs, operator_states, artifact_paths, "completed")
+        state = self._build_state(
+            context,
+            resolved_runs,
+            operator_states,
+            artifact_paths,
+            relation_paths,
+            "completed",
+            started_at,
+        )
         self._state = state
         write_tables(tables, context.paths)
         JsonRunStateStore().save(state, context.paths.state_path)
@@ -229,11 +240,12 @@ class BasicCleaner(Cleaner):
         """收集本次运行需要的全部参数字段。"""
         return {parameter for run in runs for parameter in run.spec.required_parameters}
 
-    def _run_parameter_computers(self, runs: list[ResolvedOperatorRun]) -> dict[str, str]:
+    def _run_parameter_computers(self, runs: list[ResolvedOperatorRun]) -> tuple[dict[str, str], dict[str, str]]:
         """按 compute stage 执行参数计算单元并更新 parameter_table。"""
         required_parameters = self._required_parameters(runs)
         computers = self._registry.find_computers_for_parameters(required_parameters)
         artifact_paths: dict[str, str] = {}
+        relation_paths: dict[str, str] = {}
 
         image_batch: ImageBatch | None = None
         if any(computer.stage == ComputeStage.IMAGE_BATCH for computer in computers):
@@ -251,7 +263,8 @@ class BasicCleaner(Cleaner):
                     parameter_manifest={**tables.parameter_manifest, **result.parameter_manifest},
                 )
                 artifact_paths.update(result.artifact_refs)
-        return artifact_paths
+                relation_paths.update(write_relation_tables(result.relation_updates, self._context.paths))
+        return artifact_paths, relation_paths
 
     def _run_parameter_computer(
         self,
@@ -351,10 +364,15 @@ class BasicCleaner(Cleaner):
                     cleaner_type=self._context.cleaner_type,
                     enabled_operator_configs=[],
                     operator_config_hashes={},
+                    parameter_config_hashes={},
                     parameter_table_path=str(self._context.paths.parameter_table_path),
                     evaluation_table_path=str(self._context.paths.evaluation_table_path),
                     operator_outputs_path=str(self._context.paths.operator_outputs_path),
+                    parameter_manifest_path=str(self._context.paths.parameter_manifest_path),
+                    relation_paths={},
                     artifact_paths={},
+                    started_at="",
+                    finished_at="",
                     status="running",
                     operator_states=[],
                 )
@@ -368,19 +386,30 @@ class BasicCleaner(Cleaner):
         resolved_runs: list[ResolvedOperatorRun],
         operator_states: list[OperatorRunState],
         artifact_paths: dict[str, str],
+        relation_paths: dict[str, str],
         status: str,
+        started_at: str,
     ) -> CleanerRunState:
         """构造当前 run 的状态快照。"""
+        _, tables, _ = self._require_run(allow_missing_state=True)
         return CleanerRunState(
             run_id=context.run_id,
             dataset_fingerprint=context.dataset_fingerprint,
             cleaner_type=context.cleaner_type,
             enabled_operator_configs=[{run.spec.name: run.merged_config} for run in resolved_runs],
             operator_config_hashes={run.spec.name: run.parsed_config.config_hash for run in resolved_runs},
+            parameter_config_hashes={
+                parameter: str(manifest.get("config_hash", ""))
+                for parameter, manifest in tables.parameter_manifest.items()
+            },
             parameter_table_path=str(context.paths.parameter_table_path),
             evaluation_table_path=str(context.paths.evaluation_table_path),
             operator_outputs_path=str(context.paths.operator_outputs_path),
+            parameter_manifest_path=str(context.paths.parameter_manifest_path),
+            relation_paths=relation_paths,
             artifact_paths=artifact_paths,
+            started_at=started_at,
+            finished_at=_utc_now(),
             status=status,
             operator_states=operator_states,
         )
@@ -415,3 +444,8 @@ class BasicCleaner(Cleaner):
         context, tables, state = self._require_run()
         write_tables(tables, context.paths)
         JsonRunStateStore().save(state, context.paths.state_path)
+
+
+def _utc_now() -> str:
+    """返回 UTC ISO 时间字符串。"""
+    return datetime.now(timezone.utc).isoformat()

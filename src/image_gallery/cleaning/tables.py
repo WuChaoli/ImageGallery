@@ -67,6 +67,20 @@ def write_tables(tables: CleaningTables, paths: CleanerRunPaths) -> None:
     )
 
 
+def write_relation_tables(
+    relation_updates: dict[str, pd.DataFrame],
+    paths: CleanerRunPaths,
+) -> dict[str, str]:
+    """把 relation 表写入 relations 目录并返回 relation 名称到路径的映射。"""
+    paths.relations_dir.mkdir(parents=True, exist_ok=True)
+    relation_paths: dict[str, str] = {}
+    for relation_name, frame in relation_updates.items():
+        relation_path = paths.relations_dir / f"{relation_name}.parquet"
+        frame.to_parquet(relation_path, index=False)
+        relation_paths[relation_name] = str(relation_path)
+    return relation_paths
+
+
 def update_parameter_columns(
     parameter_table: pd.DataFrame,
     updates: pd.DataFrame,
