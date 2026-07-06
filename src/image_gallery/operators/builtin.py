@@ -1,6 +1,8 @@
 import pandas as pd
 
 from image_gallery.operators.computers.derived import TableDerivedComputer
+from image_gallery.operators.computers.duplicate import DuplicateGroupComputer
+from image_gallery.operators.computers.hash import ImageHashComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
 from image_gallery.operators.computers.quality import ImageQualityComputer
 from image_gallery.operators.registry import OperatorRegistry
@@ -13,6 +15,8 @@ def create_default_registry() -> OperatorRegistry:
     registry.register_parameter_computer(ImageMetadataComputer())
     registry.register_parameter_computer(TableDerivedComputer())
     registry.register_parameter_computer(ImageQualityComputer())
+    registry.register_parameter_computer(ImageHashComputer())
+    registry.register_parameter_computer(DuplicateGroupComputer())
     for spec in _builtin_specs():
         registry.register_operator(spec)
     return registry
@@ -100,6 +104,21 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="blank_action",
             reason_column="blank_reason",
             evaluator=evaluate_blank_image_check,
+        ),
+        OperatorSpec(
+            name="duplicate.exact_duplicate_check",
+            category="duplicate",
+            required_parameters=["exact_duplicate_group_id", "exact_duplicate_count"],
+            evaluation_columns=[
+                "exact_duplicate_group_id",
+                "exact_duplicate_count",
+                "exact_duplicate_action",
+                "exact_duplicate_reason",
+            ],
+            default_config={"keep": "first", "action": "drop"},
+            action_column="exact_duplicate_action",
+            reason_column="exact_duplicate_reason",
+            evaluator=evaluate_exact_duplicate_check,
         ),
     ]
 
@@ -218,6 +237,42 @@ def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, 
     failed = scores.notna() & (scores >= threshold)
     return _score_threshold_frame(
         parameter_table["image_id"], scores, failed, "blank", action, f"blank score at least {threshold}"
+    )
+
+
+def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据完全重复组生成去重结果。"""
+    keep = str(config.get("keep", "first"))
+    if keep != "first":
+        raise ValueError("duplicate.exact_duplicate_check only supports keep='first'")
+    action = str(config.get("action", "drop"))
+    groups = parameter_table["exact_duplicate_group_id"].fillna("").astype(str)
+    counts = pd.to_numeric(parameter_table["exact_duplicate_count"], errors="coerce").fillna(1).astype(int)
+
+    seen_groups: set[str] = set()
+    actions: list[str] = []
+    reasons: list[str] = []
+    for group_id, count in zip(groups.tolist(), counts.tolist(), strict=True):
+        if not group_id or count <= 1:
+            actions.append("keep")
+            reasons.append("")
+            continue
+        if group_id not in seen_groups:
+            seen_groups.add(group_id)
+            actions.append("keep")
+            reasons.append("")
+            continue
+        actions.append(action)
+        reasons.append(f"duplicate in group {group_id}")
+
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "exact_duplicate_group_id": groups,
+            "exact_duplicate_count": counts,
+            "exact_duplicate_action": actions,
+            "exact_duplicate_reason": reasons,
+        }
     )
 
 

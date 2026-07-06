@@ -8,6 +8,7 @@ def test_default_registry_contains_only_first_v3_operators() -> None:
 
     assert registry.list_operators() == [
         "content.blank_image_check",
+        "duplicate.exact_duplicate_check",
         "format.decode_check",
         "quality.blur_check",
         "quality.brightness_check",
@@ -82,6 +83,23 @@ def test_quality_evaluators_return_expected_actions() -> None:
     assert registry.get_operator("content.blank_image_check").evaluate(frame, {"threshold": 0.98, "action": "drop"})[
         "blank_action"
     ].tolist() == ["keep", "drop"]
+
+
+def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
+    registry = create_default_registry()
+    frame = pd.DataFrame(
+        {
+            "image_id": ["first", "second", "unique"],
+            "exact_duplicate_group_id": ["exact-h1", "exact-h1", ""],
+            "exact_duplicate_count": [2, 2, 1],
+        }
+    )
+
+    result = registry.get_operator("duplicate.exact_duplicate_check").evaluate(
+        frame, {"keep": "first", "action": "drop"}
+    )
+
+    assert result["exact_duplicate_action"].tolist() == ["keep", "drop", "keep"]
 
 
 def test_default_registry_can_find_metadata_computer_for_builtin_parameters() -> None:
