@@ -11,6 +11,7 @@ class DuplicateGroupComputer(ParameterComputer):
     name = "duplicate_group_computer"
     stage = ComputeStage.DATASET_GLOBAL
     produced_parameters = frozenset({"exact_duplicate_group_id", "exact_duplicate_count"})
+    required_parameters = frozenset({"content_hash"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产完全重复组参数和 pair relation。"""

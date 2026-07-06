@@ -62,6 +62,7 @@ class ParameterComputer(ABC):
     name: str
     stage: ComputeStage
     produced_parameters: frozenset[str]
+    required_parameters: frozenset[str] = frozenset()
 
     @abstractmethod
     def compute(self, request: ParameterRequest) -> ParameterResult:

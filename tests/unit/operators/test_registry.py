@@ -26,6 +26,21 @@ class DemoComputer(ParameterComputer):
         )
 
 
+class DependentComputer(ParameterComputer):
+    name = "dependent_computer"
+    stage = ComputeStage.DATASET_GLOBAL
+    produced_parameters = frozenset({"dependent_score"})
+    required_parameters = frozenset({"demo_score"})
+
+    def compute(self, request: ParameterRequest) -> ParameterResult:
+        return ParameterResult(
+            parameter_updates=pd.DataFrame({"image_id": request.parameter_table["image_id"], "dependent_score": [1.0]}),
+            relation_updates={},
+            artifact_refs={},
+            parameter_manifest={},
+        )
+
+
 def _evaluate(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -64,6 +79,16 @@ def test_registry_rejects_unknown_operator() -> None:
 
     with pytest.raises(UnknownOperatorError):
         registry.get_operator("missing.operator")
+
+
+def test_registry_expands_parameter_computer_dependencies() -> None:
+    registry = OperatorRegistry()
+    demo_computer = DemoComputer()
+    dependent_computer = DependentComputer()
+    registry.register_parameter_computer(demo_computer)
+    registry.register_parameter_computer(dependent_computer)
+
+    assert registry.find_computers_for_parameters({"dependent_score"}) == [demo_computer, dependent_computer]
 
 
 def test_registry_rejects_missing_parameter_producer() -> None:

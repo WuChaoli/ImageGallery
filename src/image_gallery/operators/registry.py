@@ -38,13 +38,28 @@ class OperatorRegistry:
 
     def find_computers_for_parameters(self, parameter_names: set[str]) -> list[ParameterComputer]:
         """按参数需求返回可覆盖这些参数的计算单元。"""
-        remaining = set(parameter_names)
+        required = set(parameter_names)
         selected: list[ParameterComputer] = []
-        for computer in self._parameter_computers.values():
-            covered = remaining & set(computer.produced_parameters)
-            if covered:
+        selected_names: set[str] = set()
+        covered_parameters: set[str] = set()
+
+        while True:
+            remaining = required - covered_parameters
+            if not remaining:
+                return [computer for computer in self._parameter_computers.values() if computer.name in selected_names]
+
+            made_progress = False
+            for computer in self._parameter_computers.values():
+                if computer.name in selected_names:
+                    continue
+                covered = remaining & set(computer.produced_parameters)
+                if not covered:
+                    continue
                 selected.append(computer)
-                remaining -= covered
-        if remaining:
-            raise UnknownOperatorError(f"missing parameter producers: {sorted(remaining)}")
-        return selected
+                selected_names.add(computer.name)
+                covered_parameters.update(covered)
+                required.update(computer.required_parameters)
+                made_progress = True
+
+            if not made_progress:
+                raise UnknownOperatorError(f"missing parameter producers: {sorted(remaining)}")
