@@ -2,16 +2,16 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-from PIL import Image
-
-from image_gallery.storage.errors import StorageConnectionError
-from image_gallery.cleaning import BasicCleaner
-from image_gallery.dataset import Dataset
 from notebooks._helpers.cleaning_configs import (
     get_cleaning_v3_first_batch_operator_configs,
 )
 from notebooks._helpers.datasets import get_default_minio_sample_1000_raw_path
 from notebooks._helpers.storage import load_minio_storage
+from PIL import Image
+
+from image_gallery.cleaning import BasicCleaner
+from image_gallery.dataset import Dataset
+from image_gallery.storage.errors import StorageConnectionError
 
 SAMPLE_DATASET_PATH = get_default_minio_sample_1000_raw_path()
 FIRST_BATCH_OPERATORS = get_cleaning_v3_first_batch_operator_configs()

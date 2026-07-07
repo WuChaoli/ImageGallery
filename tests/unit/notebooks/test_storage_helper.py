@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import pytest
+from notebooks._helpers.storage import load_minio_storage, read_required_env
 
 from image_gallery.storage.minio import MinioStorage
-from notebooks._helpers.storage import load_minio_storage, read_required_env
 
 
 def test_read_required_env_returns_stripped_value(

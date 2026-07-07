@@ -8,7 +8,6 @@ from urllib.parse import urlparse
 from dotenv import load_dotenv
 
 from image_gallery.storage import MinioStorage
-
 from notebooks._helpers.paths import get_repo_root
 
 

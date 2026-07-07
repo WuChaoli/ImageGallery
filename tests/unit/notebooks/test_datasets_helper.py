@@ -2,7 +2,6 @@ from pathlib import Path
 
 import pandas as pd
 import pytest
-
 from notebooks._helpers.datasets import (
     get_default_minio_sample_1000_raw_path,
     load_default_minio_sample_1000_dataset,

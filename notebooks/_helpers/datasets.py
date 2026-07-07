@@ -7,7 +7,6 @@ from pathlib import Path
 import pandas as pd
 
 from image_gallery.dataset import Dataset
-
 from notebooks._helpers.paths import get_repo_root
 from notebooks._helpers.storage import load_minio_storage
 
