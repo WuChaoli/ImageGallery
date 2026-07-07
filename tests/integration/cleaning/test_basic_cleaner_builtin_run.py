@@ -1,10 +1,24 @@
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from PIL import Image
 
+from image_gallery.storage.errors import StorageConnectionError
 from image_gallery.cleaning import BasicCleaner
 from image_gallery.dataset import Dataset
+from notebooks._helpers.cleaning_configs import (
+    get_cleaning_v3_first_batch_operator_configs,
+)
+from notebooks._helpers.datasets import get_default_minio_sample_1000_raw_path
+from notebooks._helpers.storage import load_minio_storage
+
+SAMPLE_DATASET_PATH = get_default_minio_sample_1000_raw_path()
+FIRST_BATCH_OPERATORS = get_cleaning_v3_first_batch_operator_configs()
+
+
+def _build_sample_1000_dataset() -> Dataset:
+    return Dataset.from_path(str(SAMPLE_DATASET_PATH), storage=load_minio_storage())
 
 
 def _write_image(path: Path, size: tuple[int, int] = (20, 20)) -> None:
@@ -74,4 +88,74 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
         "exact_duplicate_count",
     ]:
         assert column in parameter_rows.columns
+    assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
+
+
+def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp_path: Path) -> None:
+    assert SAMPLE_DATASET_PATH == get_default_minio_sample_1000_raw_path()
+
+    if not SAMPLE_DATASET_PATH.exists():
+        pytest.skip(f"sample raw dataset not found: {SAMPLE_DATASET_PATH}")
+
+    try:
+        dataset = _build_sample_1000_dataset()
+    except (KeyError, StorageConnectionError) as exc:
+        pytest.skip(f"skip sample_1000 integration test: {exc}")
+
+    cleaner = BasicCleaner(FIRST_BATCH_OPERATORS)
+    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+
+    preview = cleaner.preview()
+    assert preview.total_count == 1000
+
+    state = cleaner.state()
+    assert list(state["operator_name"]) == [
+        next(iter(item.keys())) for item in get_cleaning_v3_first_batch_operator_configs()
+    ]
+
+    run_dir = next((tmp_path / "cleaning").iterdir())
+    parameter_table = pd.read_parquet(run_dir / "parameter_table.parquet")
+    evaluation_table = pd.read_parquet(run_dir / "evaluation_table.parquet")
+    expected_parameter_columns = [
+        "width",
+        "height",
+        "aspect_ratio",
+        "megapixels",
+        "blur_score",
+        "brightness_score",
+        "contrast_score",
+        "blank_score",
+        "content_hash",
+        "exact_duplicate_group_id",
+        "exact_duplicate_count",
+    ]
+    for column in expected_parameter_columns:
+        assert column in parameter_table.columns
+
+    expected_evaluation_columns = [
+        "decode_action",
+        "decode_reason",
+        "dimension_action",
+        "dimension_reason",
+        "aspect_ratio_action",
+        "aspect_ratio_reason",
+        "megapixel_action",
+        "megapixel_reason",
+        "blur_action",
+        "blur_reason",
+        "brightness_action",
+        "brightness_reason",
+        "contrast_action",
+        "contrast_reason",
+        "blank_action",
+        "blank_reason",
+        "exact_duplicate_action",
+        "exact_duplicate_reason",
+        "final_action",
+        "final_reason",
+        "triggered_operator_names",
+    ]
+    for column in expected_evaluation_columns:
+        assert column in evaluation_table.columns
+
     assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
