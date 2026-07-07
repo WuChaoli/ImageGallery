@@ -24,3 +24,17 @@ def test_stage0_module_names_are_importable() -> None:
 
     for module_name in module_names:
         assert importlib.import_module(module_name).__name__ == module_name
+
+
+def test_notebook_helper_modules_are_importable() -> None:
+    module_names = [
+        "notebooks",
+        "notebooks._helpers",
+        "notebooks._helpers.paths",
+        "notebooks._helpers.storage",
+        "notebooks._helpers.datasets",
+        "notebooks._helpers.cleaning_configs",
+    ]
+
+    for module_name in module_names:
+        assert importlib.import_module(module_name).__name__ == module_name
