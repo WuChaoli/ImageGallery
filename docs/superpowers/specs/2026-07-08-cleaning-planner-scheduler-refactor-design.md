@@ -25,6 +25,7 @@
 4. 不拆出独立 `ArtifactStore` 或 `StateManager` 类；现有 tables/state 写入函数第一阶段继续复用。
 5. 不扩大 `rerun()` 语义；第一阶段仍保持 evaluation-only。
 6. 不实现分块 image batch；`PER_IMAGE` 第一阶段继续共享完整 `ImageBatch`。
+7. 不实现执行中 checkpoint、断点恢复或分块落盘；第一阶段仍以内存 DataFrame 作为运行工作区，完成后写出最终产物。
 
 ## 核心原则
 
@@ -276,6 +277,31 @@ class CompiledCleaningPlan:
 
 第一阶段保留当前完整 `ImageBatch` 行为，不做分块和并发。
 
+## 进度缓存与持久化扩展
+
+第一阶段不实现执行中的进度缓存。`ParameterScheduler` 运行时仍以内存中的 `parameter_table` 和 `evaluation_table` 作为工作区，所有 parameter computers 执行完成后再写出最终产物。
+
+当前持久化边界保持：
+
+1. `parameter_table.parquet` 保存最终参数宽表。
+2. `evaluation_table.parquet` 保存最终评估宽表。
+3. `operator_outputs.json` 保存算子到输出列的映射。
+4. `parameter_manifest.json` 保存参数来源、computer、config hash 和依赖信息。
+5. `relations/*.parquet` 保存重复、相似、聚类等图片间关系。
+6. `artifacts/` 保存未来 embedding、索引、模型输出等大型产物引用。
+7. `state.json` 保存一次 run 的状态摘要和产物路径。
+
+后续扩展时应增加独立的 checkpoint/store 层，而不是把缓存逻辑写进 `BasicCleaner` 或具体 `ParameterComputer`。推荐边界：
+
+1. 参数值仍优先写入 Parquet，不使用 SQLite 存储大规模宽表参数。
+2. relation 结果仍优先写入 Parquet。
+3. 模型大产物写入 `artifacts/`，并由 manifest 引用。
+4. SQLite 只用于运行状态、step 状态、checkpoint 索引和恢复元数据。
+5. `ParameterScheduler` 未来可以在每个 `ParameterExecutionStep` 完成后调用 checkpoint store 写入 step 级快照。
+6. 分块执行时，`PER_IMAGE` step 可以按 batch 写临时 parquet fragment，最终再合并为 `parameter_table.parquet`。
+
+本阶段的类设计需要避免堵死这些扩展点：`ParameterExecutionStep` 保留 step 级身份，`ParameterScheduler` 集中执行所有 computer，`parameter_manifest` 记录每个参数的来源和依赖。
+
 ## Evaluator 设计
 
 `OperatorEvaluator` 输入：
@@ -379,3 +405,4 @@ Scheduler 阶段处理执行错误：
 5. `ParameterComputer` 使用 `execution_mode`，不再使用 `ComputeStage.stage`。
 6. 去重链路通过依赖图表达为 per-image hash 后 dataset aggregate 分组。
 7. 第一批内置算子测试和清洗集成测试通过。
+8. 设计中明确 checkpoint/store 是未来扩展，不要求本阶段实现。
