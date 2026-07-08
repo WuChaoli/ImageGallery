@@ -7,7 +7,7 @@ import pytest
 from PIL import Image
 
 from image_gallery.operators.computers.base import ImageBatch, ImageBatchItem, ParameterRequest
-from image_gallery.operators.computers.semantic import SemanticEmbeddingComputer
+from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
 from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider, SemanticEmbeddingResult
 
 
@@ -82,3 +82,101 @@ def test_semantic_embedding_computer_rejects_non_finite_vectors(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="non-finite"):
         SemanticEmbeddingComputer({"fake": provider}).compute(_request(tmp_path))
+
+
+def _write_embedding_artifact(tmp_path: Path) -> str:
+    artifact_dir = tmp_path / "artifacts" / "semantic_embeddings"
+    artifact_dir.mkdir(parents=True)
+    np.save(
+        artifact_dir / "embeddings.npy",
+        np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.99, 0.01, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        ),
+    )
+    pd.DataFrame({"image_id": ["keeper", "near", "far"]}).to_parquet(artifact_dir / "image_ids.parquet", index=False)
+    (artifact_dir / "manifest.json").write_text(
+        json.dumps(
+            {
+                "artifact_schema_version": 1,
+                "provider_name": "fake",
+                "provider_version": "1",
+                "model_id": "fake",
+                "model_path": "/tmp/fake.onnx",
+                "base_model": "fake",
+                "embedding_dimension": 3,
+                "normalized": True,
+                "embedding_source": "unit",
+                "image_count": 3,
+                "config_hash": "cfg",
+            }
+        ),
+        encoding="utf-8",
+    )
+    return str(artifact_dir)
+
+
+def test_semantic_duplicate_group_computer_groups_vectors_and_writes_relations(tmp_path: Path) -> None:
+    embedding_ref = _write_embedding_artifact(tmp_path)
+    request = ParameterRequest(
+        parameter_table=pd.DataFrame(
+            {
+                "image_id": ["keeper", "near", "far"],
+                "semantic_embedding_ref": [embedding_ref, embedding_ref, embedding_ref],
+            }
+        ),
+        requested_parameters=frozenset(
+            {
+                "semantic_duplicate_group_id",
+                "semantic_duplicate_count",
+                "semantic_duplicate_score",
+                "semantic_duplicate_nearest_image_id",
+            }
+        ),
+        config={"threshold": 0.9, "index": "faiss_flat_ip"},
+        config_hash="cfg",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    result = SemanticDuplicateGroupComputer().compute(request)
+
+    rows = result.parameter_updates.set_index("image_id")
+    assert rows.loc["keeper", "semantic_duplicate_group_id"].startswith("semantic-")
+    assert rows.loc["keeper", "semantic_duplicate_count"] == 2
+    assert rows.loc["near", "semantic_duplicate_count"] == 2
+    assert rows.loc["near", "semantic_duplicate_nearest_image_id"] == "keeper"
+    assert rows.loc["far", "semantic_duplicate_group_id"] == ""
+    pairs = result.relation_updates["semantic_duplicate_pairs"]
+    assert pairs[["relation_type", "source_image_id", "target_image_id", "parameter_name"]].to_dict(
+        orient="records"
+    ) == [
+        {
+            "relation_type": "semantic_duplicate",
+            "source_image_id": "keeper",
+            "target_image_id": "near",
+            "parameter_name": "semantic_duplicate_group_id",
+        }
+    ]
+    assert Path(result.artifact_refs["semantic_index"]).exists()
+
+
+def test_semantic_duplicate_group_computer_keeps_all_rows_when_no_valid_embedding(tmp_path: Path) -> None:
+    request = ParameterRequest(
+        parameter_table=pd.DataFrame({"image_id": ["bad"], "semantic_embedding_ref": [""]}),
+        requested_parameters=frozenset({"semantic_duplicate_group_id"}),
+        config={"threshold": 0.9, "index": "faiss_flat_ip"},
+        config_hash="cfg",
+        artifacts_dir=tmp_path / "artifacts",
+    )
+
+    result = SemanticDuplicateGroupComputer().compute(request)
+
+    row = result.parameter_updates.iloc[0]
+    assert row["semantic_duplicate_group_id"] == ""
+    assert row["semantic_duplicate_count"] == 1
+    assert pd.isna(row["semantic_duplicate_score"])
+    assert result.relation_updates["semantic_duplicate_pairs"].empty
