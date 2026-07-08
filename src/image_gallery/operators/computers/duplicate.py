@@ -87,6 +87,7 @@ class PerceptualDuplicateGroupComputer(ParameterComputer):
         {"perceptual_duplicate_group_id", "perceptual_duplicate_count", "perceptual_duplicate_distance"}
     )
     required_parameters = frozenset({"phash"})
+    config_parameters = frozenset({"max_distance"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产视觉近重复组参数和 pair relation。"""

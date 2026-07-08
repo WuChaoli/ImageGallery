@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pandas as pd
 
-from image_gallery.cleaning.config import ParsedOperatorConfig, merge_default_config
+from image_gallery.cleaning.config import ParsedOperatorConfig, hash_config, merge_default_config
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
@@ -27,6 +27,8 @@ class ParameterExecutionStep:
     produced_parameters: frozenset[str]
     execution_mode: ExecutionMode
     upstream_computer_names: tuple[str, ...]
+    config: dict[str, object]
+    config_hash: str
 
 
 @dataclass(frozen=True)
@@ -48,6 +50,7 @@ class ParameterExecutionPlan:
                     "required_parameters": ",".join(sorted(step.required_parameters)),
                     "produced_parameters": ",".join(sorted(step.produced_parameters)),
                     "upstream_computers": ",".join(step.upstream_computer_names),
+                    "config_hash": step.config_hash,
                 }
             )
         return pd.DataFrame(
@@ -60,6 +63,7 @@ class ParameterExecutionPlan:
                 "required_parameters",
                 "produced_parameters",
                 "upstream_computers",
+                "config_hash",
             ],
         )
 
@@ -83,7 +87,7 @@ class CleaningRunPlanner:
         """编译清洗计划，不读取 dataset，不产生运行产物。"""
         resolved_runs = tuple(self._resolve_operator_configs(parsed_configs))
         target_parameters = {parameter for run in resolved_runs for parameter in run.spec.required_parameters}
-        parameter_plan = self._build_parameter_plan(target_parameters)
+        parameter_plan = self._build_parameter_plan(resolved_runs, target_parameters)
         return CompiledCleaningPlan(
             resolved_operator_runs=resolved_runs,
             parameter_plan=parameter_plan,
@@ -99,10 +103,15 @@ class CleaningRunPlanner:
             resolved.append(ResolvedOperatorRun(parsed_config=merged, spec=spec, merged_config=merged.config))
         return resolved
 
-    def _build_parameter_plan(self, target_parameters: set[str]) -> ParameterExecutionPlan:
+    def _build_parameter_plan(
+        self,
+        resolved_runs: tuple[ResolvedOperatorRun, ...],
+        target_parameters: set[str],
+    ) -> ParameterExecutionPlan:
         """根据目标参数反向追踪生产者，构造参数计算执行计划。"""
         requested_by_computer: dict[str, set[str]] = {}
         upstream_by_computer: dict[str, set[str]] = {}
+        config_by_computer = self._parameter_computer_configs(resolved_runs)
         computer_by_name = {computer.name: computer for computer in self._registry.list_parameter_computers()}
         visiting: set[str] = set()
         visited: set[str] = set()
@@ -148,9 +157,33 @@ class CleaningRunPlanner:
                     produced_parameters=frozenset(computer.produced_parameters),
                     execution_mode=computer.execution_mode,
                     upstream_computer_names=tuple(sorted(upstream_by_computer.get(computer.name, set()))),
+                    config=dict(config_by_computer.get(computer.name, ({}, "default"))[0]),
+                    config_hash=config_by_computer.get(computer.name, ({}, "default"))[1],
                 )
             )
         return ParameterExecutionPlan(steps=tuple(steps))
+
+    def _parameter_computer_configs(
+        self,
+        resolved_runs: tuple[ResolvedOperatorRun, ...],
+    ) -> dict[str, tuple[dict[str, object], str]]:
+        """把逻辑算子配置绑定到其 required parameters 的生产 computer。"""
+        configs: dict[str, tuple[dict[str, object], str]] = {}
+        for run in resolved_runs:
+            for parameter_name in run.spec.required_parameters:
+                computer = self._registry.get_parameter_producer(parameter_name)
+                projected_config = {
+                    key: run.merged_config[key]
+                    for key in sorted(computer.config_parameters)
+                    if key in run.merged_config
+                }
+                config_hash = hash_config(projected_config) if projected_config else "default"
+                next_config = (projected_config, config_hash)
+                existing_config = configs.get(computer.name)
+                if existing_config is not None and existing_config != next_config:
+                    raise ValueError(f"conflicting parameter computer config: {computer.name}")
+                configs[computer.name] = next_config
+        return configs
 
     def _topological_order(
         self,

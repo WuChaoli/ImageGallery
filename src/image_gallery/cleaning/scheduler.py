@@ -44,8 +44,8 @@ class ParameterScheduler:
                 ParameterRequest(
                     parameter_table=current_tables.parameter_table,
                     requested_parameters=step.requested_parameters,
-                    config={},
-                    config_hash="default",
+                    config=step.config,
+                    config_hash=step.config_hash,
                     artifacts_dir=context.paths.artifacts_dir,
                     image_batch=image_batch if step.execution_mode == ExecutionMode.PER_IMAGE else None,
                 )
