@@ -11,6 +11,11 @@ from PIL import Image
 
 from image_gallery.cleaning import BasicCleaner
 from image_gallery.dataset import Dataset
+from image_gallery.operators.builtin import evaluate_perceptual_duplicate_check
+from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
+from image_gallery.operators.computers.duplicate import PerceptualDuplicateGroupComputer
+from image_gallery.operators.registry import OperatorRegistry
+from image_gallery.operators.spec import OperatorSpec
 from image_gallery.storage.errors import StorageConnectionError
 
 SAMPLE_DATASET_PATH = get_default_minio_sample_1000_raw_path()
@@ -28,6 +33,72 @@ def _write_image(path: Path, size: tuple[int, int] = (20, 20)) -> None:
             if (x + y) % 2 == 0:
                 image.putpixel((x, y), (180, 60, 90))
     image.save(path)
+
+
+class FixedPerceptualHashComputer(ParameterComputer):
+    name = "fixed_perceptual_hash_computer"
+    execution_mode = ExecutionMode.TABLE
+    produced_parameters = frozenset({"phash"})
+
+    def compute(self, request: ParameterRequest) -> ParameterResult:
+        return ParameterResult(
+            parameter_updates=pd.DataFrame(
+                {
+                    "image_id": request.parameter_table["image_id"],
+                    "phash": ["0000000000000000", "0000000000000001"],
+                }
+            ),
+            relation_updates={},
+            artifact_refs={},
+            parameter_manifest={
+                "phash": {
+                    "computer": self.name,
+                    "execution_mode": self.execution_mode.value,
+                    "config_hash": request.config_hash,
+                }
+            },
+        )
+
+
+def _perceptual_duplicate_registry() -> OperatorRegistry:
+    registry = OperatorRegistry()
+    registry.register_parameter_computer(FixedPerceptualHashComputer())
+    registry.register_parameter_computer(PerceptualDuplicateGroupComputer())
+    registry.register_operator(
+        OperatorSpec(
+            name="duplicate.perceptual_duplicate_check",
+            category="duplicate",
+            required_parameters=[
+                "perceptual_duplicate_group_id",
+                "perceptual_duplicate_count",
+                "perceptual_duplicate_distance",
+            ],
+            evaluation_columns=[
+                "perceptual_duplicate_group_id",
+                "perceptual_duplicate_count",
+                "perceptual_duplicate_distance",
+                "perceptual_duplicate_action",
+                "perceptual_duplicate_reason",
+            ],
+            default_config={"max_distance": 10, "keep": "first", "action": "drop"},
+            action_column="perceptual_duplicate_action",
+            reason_column="perceptual_duplicate_reason",
+            evaluator=evaluate_perceptual_duplicate_check,
+        )
+    )
+    return registry
+
+
+def _two_image_dataset(tmp_path: Path) -> Dataset:
+    return Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["keeper", "near"],
+                "image_uri": [str(tmp_path / "keeper.png"), str(tmp_path / "near.png")],
+            }
+        ),
+        str(tmp_path / "raw.parquet"),
+    )
 
 
 def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> None:
@@ -96,6 +167,34 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
         assert column in parameter_rows.columns
     assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
     assert (run_dir / "relations" / "perceptual_duplicate_pairs.parquet").exists()
+
+
+def test_perceptual_duplicate_max_distance_reaches_parameter_computer(tmp_path: Path) -> None:
+    dataset = _two_image_dataset(tmp_path)
+    registry = _perceptual_duplicate_registry()
+
+    strict_cleaner = BasicCleaner(
+        [{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}],
+        registry=registry,
+    )
+    strict_cleaner.run(dataset, output_dir=tmp_path / "strict")
+    strict_rows = strict_cleaner.export("full", str(tmp_path / "strict.parquet")).to_frame().set_index("image_id")
+    strict_run_dir = next((tmp_path / "strict").iterdir())
+    strict_manifest = pd.read_json(strict_run_dir / "parameter_manifest.json", typ="series").to_dict()
+
+    loose_cleaner = BasicCleaner(
+        [{"duplicate.perceptual_duplicate_check": {"max_distance": 1}}],
+        registry=registry,
+    )
+    loose_cleaner.run(dataset, output_dir=tmp_path / "loose")
+    loose_rows = loose_cleaner.export("full", str(tmp_path / "loose.parquet")).to_frame().set_index("image_id")
+    loose_run_dir = next((tmp_path / "loose").iterdir())
+    loose_manifest = pd.read_json(loose_run_dir / "parameter_manifest.json", typ="series").to_dict()
+
+    assert strict_rows.loc["near", "perceptual_duplicate_action"] == "keep"
+    assert strict_manifest["perceptual_duplicate_group_id"]["max_distance"] == 0
+    assert loose_rows.loc["near", "perceptual_duplicate_action"] == "drop"
+    assert loose_manifest["perceptual_duplicate_group_id"]["max_distance"] == 1
 
 
 def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp_path: Path) -> None:

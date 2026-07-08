@@ -24,6 +24,7 @@ class AggregateComputer(ParameterComputer):
     execution_mode = ExecutionMode.DATASET_AGGREGATE
     produced_parameters = frozenset({"group_id", "group_count"})
     required_parameters = frozenset({"feature_score"})
+    config_parameters = frozenset({"max_distance"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         return ParameterResult(pd.DataFrame(), {}, {}, {})
@@ -74,6 +75,10 @@ def _registry() -> OperatorRegistry:
     return registry
 
 
+def _evaluate_other(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    return pd.DataFrame({"image_id": parameter_table["image_id"], "other_action": "keep", "other_reason": ""})
+
+
 def test_planner_expands_parameter_dependencies_in_topological_order() -> None:
     parsed = parse_operator_configs([{"duplicate.demo_check": {}}])
 
@@ -100,6 +105,31 @@ def test_planner_merges_requested_parameters_per_computer() -> None:
     assert names.index("feature_computer") < names.index("aggregate_computer")
     assert rows_by_name["aggregate_computer"]["requested_parameters"] == "group_count,group_id"
     assert rows_by_name["other_computer"]["requested_parameters"] == "other_score"
+
+
+def test_planner_rejects_conflicting_parameter_computer_configs() -> None:
+    registry = _registry()
+    registry.register_operator(
+        OperatorSpec(
+            name="duplicate.other_demo_check",
+            category="duplicate",
+            required_parameters=["group_id"],
+            evaluation_columns=["other_action", "other_reason"],
+            default_config={"max_distance": 2},
+            action_column="other_action",
+            reason_column="other_reason",
+            evaluator=_evaluate_other,
+        )
+    )
+    parsed = parse_operator_configs(
+        [
+            {"duplicate.demo_check": {"max_distance": 1}},
+            {"duplicate.other_demo_check": {"max_distance": 2}},
+        ]
+    )
+
+    with pytest.raises(ValueError, match="conflicting parameter computer config: aggregate_computer"):
+        CleaningRunPlanner(registry).compile(parsed)
 
 
 def test_planner_rejects_missing_parameter_producer() -> None:
@@ -198,3 +228,14 @@ def test_builtin_planner_expands_semantic_duplicate_dependencies() -> None:
             "semantic_duplicate_nearest_image_id",
         }
     )
+
+
+def test_builtin_planner_passes_operator_config_to_parameter_computer() -> None:
+    parsed = parse_operator_configs([{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}])
+
+    plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
+
+    perceptual_step = plan.parameter_plan.steps[1]
+    assert perceptual_step.computer_name == "perceptual_duplicate_group_computer"
+    assert perceptual_step.config == {"max_distance": 0}
+    assert perceptual_step.config_hash != "default"

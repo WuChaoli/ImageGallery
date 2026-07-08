@@ -63,6 +63,7 @@ class ParameterComputer(ABC):
     execution_mode: ExecutionMode
     produced_parameters: frozenset[str]
     required_parameters: frozenset[str] = frozenset()
+    config_parameters: frozenset[str] = frozenset()
 
     @abstractmethod
     def compute(self, request: ParameterRequest) -> ParameterResult:

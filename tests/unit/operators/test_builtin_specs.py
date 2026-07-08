@@ -181,6 +181,7 @@ def test_perceptual_duplicate_spec_declares_required_parameters() -> None:
 
     spec = registry.get_operator("duplicate.perceptual_duplicate_check")
 
+    assert spec.default_config == {"max_distance": 10, "keep": "first", "action": "drop"}
     assert spec.required_parameters == [
         "perceptual_duplicate_group_id",
         "perceptual_duplicate_count",
