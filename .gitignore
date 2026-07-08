@@ -6,5 +6,6 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 .superpowers/
+.worktrees/
 .env
 notebooks/.importers_test_library/
