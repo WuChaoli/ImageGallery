@@ -132,6 +132,7 @@ def test_write_preview_html_renders_groups_and_base64_images(tmp_path: Path) -> 
             include_group_context=True,
             caption_columns=["image_id", "final_action", "distance"],
             thumbnail_size=96,
+            columns_per_row=2,
         ),
     )
 
@@ -142,6 +143,34 @@ def test_write_preview_html_renders_groups_and_base64_images(tmp_path: Path) -> 
     assert "keeper-a" in html
     assert "drop-a" in html
     assert "data:image/jpeg;base64," in html
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in html
+
+
+def test_write_preview_html_defaults_caption_to_image_id_only(tmp_path: Path) -> None:
+    image_path = tmp_path / "image.png"
+    _write_image(image_path, (0, 0, 255))
+    frame = pd.DataFrame(
+        {
+            "image_id": ["img-1"],
+            "image_uri": [str(image_path)],
+            "final_action": ["drop"],
+            "distance": [3],
+        }
+    )
+    dataset = Dataset.write(frame[["image_id", "image_uri"]], str(tmp_path / "raw.parquet"))
+
+    output_path = write_preview_html(
+        frame,
+        tmp_path / "preview.html",
+        dataset=dataset,
+        options=PreviewHtmlOptions(),
+    )
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "image_id: img-1" in html
+    assert "final_action: drop" not in html
+    assert "distance: 3" not in html
+    assert "grid-template-columns: repeat(6, minmax(0, 1fr));" in html
 
 
 def test_write_preview_html_records_image_read_errors(tmp_path: Path) -> None:
@@ -165,3 +194,16 @@ def test_write_preview_html_records_image_read_errors(tmp_path: Path) -> None:
     html = output_path.read_text(encoding="utf-8")
     assert "Image read failed" in html
     assert "missing.png" in html
+
+
+def test_write_preview_html_rejects_invalid_columns_per_row(tmp_path: Path) -> None:
+    frame = pd.DataFrame([{"image_id": "img-1", "image_uri": str(tmp_path / "missing.png")}])
+    dataset = Dataset.write(frame, str(tmp_path / "raw.parquet"))
+
+    with pytest.raises(ValueError, match="columns_per_row must be at least 1"):
+        write_preview_html(
+            frame,
+            tmp_path / "preview.html",
+            dataset=dataset,
+            options=PreviewHtmlOptions(columns_per_row=0),
+        )

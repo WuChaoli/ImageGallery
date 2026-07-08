@@ -136,7 +136,8 @@ class BasicCleaner(Cleaner):
         max_rows: int = 200,
         max_groups: int = 50,
         max_items_per_group: int = 20,
-        thumbnail_size: int = 160,
+        thumbnail_size: int = 320,
+        columns_per_row: int = 6,
     ) -> Path:
         """把当前清洗结果写出为静态 HTML 预览页。"""
         context, tables, _ = self._require_run()
@@ -152,6 +153,7 @@ class BasicCleaner(Cleaner):
             max_groups=max_groups,
             max_items_per_group=max_items_per_group,
             thumbnail_size=thumbnail_size,
+            columns_per_row=columns_per_row,
         )
         frame = build_preview_frame(
             tables.evaluation_table,

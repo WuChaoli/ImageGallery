@@ -74,11 +74,10 @@ def test_basic_cleaner_writes_html_preview(tmp_path: Path) -> None:
     output_path = cleaner.preview_html(
         tmp_path / "preview.html",
         action="drop",
-        caption_columns=["image_id", "final_action", "decode_check_reason"],
     )
 
     html = output_path.read_text(encoding="utf-8")
     assert output_path == tmp_path / "preview.html"
     assert "Cleaning Preview" in html
     assert "bad" in html
-    assert "final_action: drop" in html
+    assert "final_action: drop" not in html

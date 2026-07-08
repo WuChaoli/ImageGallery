@@ -47,7 +47,8 @@ class Cleaner(ABC):
         max_rows: int = 200,
         max_groups: int = 50,
         max_items_per_group: int = 20,
-        thumbnail_size: int = 160,
+        thumbnail_size: int = 320,
+        columns_per_row: int = 6,
     ) -> Path:
         """把当前清洗结果写出为静态 HTML 预览页。"""
 

@@ -27,7 +27,8 @@ class PreviewHtmlOptions:
     max_rows: int = 200
     max_groups: int = 50
     max_items_per_group: int = 20
-    thumbnail_size: int = 160
+    thumbnail_size: int = 320
+    columns_per_row: int = 6
 
 
 @dataclass(frozen=True)
@@ -151,6 +152,8 @@ def _render_document(
     options: PreviewHtmlOptions,
 ) -> str:
     """渲染完整 HTML 文档。"""
+    if options.columns_per_row < 1:
+        raise ValueError("columns_per_row must be at least 1")
     group_html = "\n".join(_render_group(group=group, dataset=dataset, options=options) for group in groups)
     summary_rows = [
         ("rows", len(frame)),
@@ -179,12 +182,12 @@ def _render_document(
     .group {{ margin: 0 0 24px; padding: 16px; background: #ffffff; border: 1px solid #d8dee4; border-radius: 8px; }}
     .grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax({options.thumbnail_size}px, 1fr));
+      grid-template-columns: repeat({options.columns_per_row}, minmax(0, 1fr));
       gap: 12px;
       align-items: start;
     }}
     figure {{ margin: 0; padding: 8px; border: 1px solid #e5e7eb; border-radius: 6px; background: #ffffff; }}
-    img {{ width: {options.thumbnail_size}px; max-width: 100%; height: auto; object-fit: contain; display: block; }}
+    img {{ width: 100%; height: auto; object-fit: contain; display: block; }}
     figcaption {{ margin-top: 6px; font-size: 12px; line-height: 1.4; overflow-wrap: anywhere; }}
     .error {{
       min-height: 80px;

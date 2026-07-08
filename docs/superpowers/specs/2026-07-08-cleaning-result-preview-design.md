@@ -64,12 +64,7 @@ cleaner.preview_html(
     groupby="perceptual_duplicate_group_id",
     include_group_context=True,
     sort_by=["perceptual_duplicate_count", "perceptual_duplicate_distance"],
-    caption_columns=[
-        "image_id",
-        "final_action",
-        "perceptual_duplicate_distance",
-        "perceptual_duplicate_reason",
-    ],
+    columns_per_row=6,
 )
 ```
 
@@ -90,7 +85,8 @@ def preview_html(
     max_rows: int = 200,
     max_groups: int = 50,
     max_items_per_group: int = 20,
-    thumbnail_size: int = 160,
+    thumbnail_size: int = 320,
+    columns_per_row: int = 6,
 ) -> Path:
     """把当前清洗运行结果渲染为静态 HTML 预览页。"""
 ```
@@ -205,12 +201,7 @@ cleaner.preview_html(
     include_group_context=True,
     sort_by=["perceptual_duplicate_count", "perceptual_duplicate_distance"],
     ascending=[False, True],
-    caption_columns=[
-        "image_id",
-        "final_action",
-        "perceptual_duplicate_distance",
-        "perceptual_duplicate_reason",
-    ],
+    columns_per_row=6,
 )
 ```
 
