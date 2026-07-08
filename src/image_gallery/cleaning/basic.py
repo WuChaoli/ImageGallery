@@ -24,6 +24,7 @@ from image_gallery.cleaning.tables import (
 from image_gallery.dataset import Dataset
 from image_gallery.operators.builtin import create_default_registry
 from image_gallery.operators.registry import OperatorRegistry
+from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider
 
 
 class BasicCleaner(Cleaner):
@@ -34,9 +35,10 @@ class BasicCleaner(Cleaner):
         operator_configs: OperatorConfigInput,
         output_dir: str | Path | None = None,
         registry: OperatorRegistry | None = None,
+        semantic_providers: dict[str, SemanticEmbeddingProvider] | None = None,
     ) -> None:
         self._operator_configs = parse_operator_configs(operator_configs)
-        self._registry = registry if registry is not None else create_default_registry()
+        self._registry = registry if registry is not None else create_default_registry(semantic_providers)
         self._output_dir = output_dir
         self._context: CleanerRunContext | None = None
         self._tables: CleaningTables | None = None

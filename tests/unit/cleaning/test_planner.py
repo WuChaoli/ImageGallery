@@ -178,3 +178,23 @@ def test_builtin_planner_expands_perceptual_duplicate_dependencies() -> None:
             "perceptual_duplicate_distance",
         }
     )
+
+
+def test_builtin_planner_expands_semantic_duplicate_dependencies() -> None:
+    parsed = parse_operator_configs([{"duplicate.semantic_duplicate_check": {"provider": "fake"}}])
+
+    plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
+
+    assert [step.computer_name for step in plan.parameter_plan.steps] == [
+        "semantic_embedding_computer",
+        "semantic_duplicate_group_computer",
+    ]
+    assert plan.parameter_plan.steps[0].requested_parameters == frozenset({"semantic_embedding_ref"})
+    assert plan.parameter_plan.steps[1].requested_parameters == frozenset(
+        {
+            "semantic_duplicate_group_id",
+            "semantic_duplicate_count",
+            "semantic_duplicate_score",
+            "semantic_duplicate_nearest_image_id",
+        }
+    )
