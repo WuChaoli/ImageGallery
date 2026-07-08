@@ -1,4 +1,7 @@
+from io import BytesIO
+
 import pandas as pd
+from PIL import Image
 
 from image_gallery.operators.computers.base import (
     ExecutionMode,
@@ -123,15 +126,35 @@ class ImageFormatDetailComputer(ParameterComputer):
                 "orientation_risk": False,
             }
 
-        frame_count = int(getattr(item.image, "n_frames", 1) or 1)
-        animated = bool(getattr(item.image, "is_animated", False) or frame_count > 1)
-        orientation = _read_exif_orientation(item.image)
+        frame_count, animated, orientation = _read_format_details(item)
         return {
             "frame_count": frame_count,
             "animated": animated,
             "exif_orientation": orientation if orientation is not None else pd.NA,
             "orientation_risk": orientation not in (None, 1),
         }
+
+
+def _read_format_details(item: ImageBatchItem) -> tuple[int, bool, int | None]:
+    """优先从原始 bytes 读取多帧和 EXIF 元数据，失败时回退到解码图片。"""
+    if item.data is not None:
+        try:
+            with Image.open(BytesIO(item.data)) as image:
+                frame_count = int(getattr(image, "n_frames", 1) or 1)
+                animated = bool(getattr(image, "is_animated", False) or frame_count > 1)
+                return frame_count, animated, _read_exif_orientation(image)
+        except Exception:
+            return _read_format_details_from_image(item.image)
+    return _read_format_details_from_image(item.image)
+
+
+def _read_format_details_from_image(image: object | None) -> tuple[int, bool, int | None]:
+    """从已解码图片对象读取格式细节。"""
+    if image is None:
+        return 1, False, None
+    frame_count = int(getattr(image, "n_frames", 1) or 1)
+    animated = bool(getattr(image, "is_animated", False) or frame_count > 1)
+    return frame_count, animated, _read_exif_orientation(image)
 
 
 def _read_exif_orientation(image: object) -> int | None:

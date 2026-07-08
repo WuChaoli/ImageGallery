@@ -1,3 +1,5 @@
+from io import BytesIO
+
 import pandas as pd
 from PIL import Image
 
@@ -79,16 +81,23 @@ def test_metadata_computer_records_shared_decode_error(tmp_path) -> None:
 
 
 def test_format_detail_computer_detects_animated_images(tmp_path) -> None:
-    image = Image.new("RGB", (8, 8), color=(100, 120, 140))
-    image.is_animated = True
-    image.n_frames = 3
+    frames = [
+        Image.new("RGB", (8, 8), color=(100, 120, 140)),
+        Image.new("RGB", (8, 8), color=(140, 120, 100)),
+        Image.new("RGB", (8, 8), color=(80, 160, 120)),
+    ]
+    buffer = BytesIO()
+    frames[0].save(buffer, format="GIF", save_all=True, append_images=frames[1:], duration=100, loop=0)
+    data = buffer.getvalue()
+    image = Image.open(BytesIO(data))
+    image.load()
     batch = ImageBatch(
         items=[
             ImageBatchItem(
                 image_id="animated",
                 image_uri="/tmp/animated.gif",
                 row={"image_id": "animated", "image_uri": "/tmp/animated.gif"},
-                data=b"gif-bytes",
+                data=data,
                 image=image,
                 error=None,
             )
