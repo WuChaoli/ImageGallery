@@ -44,8 +44,11 @@ class SemanticEmbeddingComputer(ParameterComputer):
         artifact_dir = request.artifacts_dir / "semantic_embeddings"
 
         provider = load_semantic_provider(request.config, self._providers)
-        embedding_result = provider.embed_images(valid_images)
-        embeddings = _validate_embeddings(embedding_result, len(valid_images))
+        embedding_result, embeddings = _embed_in_batches(
+            provider,
+            valid_images,
+            _as_int(request.config.get("batch_size", 32)),
+        )
 
         _write_embeddings(artifact_dir, embeddings, valid_image_ids)
         _write_embedding_manifest(artifact_dir, embedding_result, request.config_hash, len(valid_image_ids))
@@ -80,6 +83,29 @@ def _write_embeddings(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     np.save(artifact_dir / "embeddings.npy", embeddings)
     pd.DataFrame({"image_id": image_ids}).to_parquet(artifact_dir / "image_ids.parquet", index=False)
+
+
+def _embed_in_batches(
+    provider: SemanticEmbeddingProvider,
+    images: list[Image.Image],
+    batch_size: int,
+) -> tuple[SemanticEmbeddingResult, NDArray[np.float32]]:
+    """按配置批量调用 provider，避免一次性推理过多图片。"""
+    if batch_size <= 0:
+        raise ValueError("batch_size must be positive")
+
+    results: list[NDArray[np.float32]] = []
+    last_result: SemanticEmbeddingResult | None = None
+    for start in range(0, len(images), batch_size):
+        batch = images[start : start + batch_size]
+        batch_result = provider.embed_images(batch)
+        results.append(_validate_embeddings(batch_result, len(batch)))
+        last_result = batch_result
+
+    if last_result is None:
+        empty_result = provider.embed_images([])
+        return empty_result, _validate_embeddings(empty_result, 0)
+    return last_result, np.vstack(results).astype(np.float32)
 
 
 def _validate_embeddings(
@@ -388,3 +414,10 @@ def _as_float(value: object) -> float:
     if isinstance(value, (str, bytes, int, float)):
         return float(value)
     raise TypeError(f"expected float-compatible config value, got {type(value).__name__}")
+
+
+def _as_int(value: object) -> int:
+    """把配置值转换为 int。"""
+    if isinstance(value, (str, bytes, int, float)):
+        return int(value)
+    raise TypeError(f"expected int-compatible config value, got {type(value).__name__}")

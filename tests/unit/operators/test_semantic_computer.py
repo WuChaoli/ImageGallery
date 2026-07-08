@@ -25,8 +25,10 @@ class FakeSemanticProvider(SemanticEmbeddingProvider):
 
     def __init__(self, embeddings: np.ndarray) -> None:
         self._embeddings = embeddings.astype(np.float32)
+        self.batch_sizes: list[int] = []
 
     def embed_images(self, images: list[Image.Image]) -> SemanticEmbeddingResult:
+        self.batch_sizes.append(len(images))
         return SemanticEmbeddingResult(
             embeddings=self._embeddings[: len(images)],
             provider_name=self.provider_name,
@@ -57,6 +59,28 @@ def _request(tmp_path: Path, provider_name: str = "fake") -> ParameterRequest:
     )
 
 
+def _multi_image_request(tmp_path: Path, image_count: int, batch_size: int) -> ParameterRequest:
+    image = Image.new("RGB", (8, 8), color=(100, 120, 140))
+    return ParameterRequest(
+        parameter_table=pd.DataFrame(
+            {
+                "image_id": [f"img-{index}" for index in range(image_count)],
+                "image_uri": [f"img-{index}.png" for index in range(image_count)],
+            }
+        ),
+        requested_parameters=frozenset({"semantic_embedding_ref"}),
+        config={"provider": "fake", "batch_size": batch_size},
+        config_hash="cfg",
+        artifacts_dir=tmp_path / "artifacts",
+        image_batch=ImageBatch(
+            items=[
+                ImageBatchItem(f"img-{index}", f"img-{index}.png", {}, b"img", image.copy(), None)
+                for index in range(image_count)
+            ]
+        ),
+    )
+
+
 def test_semantic_embedding_computer_writes_artifact_and_refs(tmp_path: Path) -> None:
     provider = FakeSemanticProvider(np.array([[1.0, 0.0, 0.0]], dtype=np.float32))
 
@@ -82,6 +106,25 @@ def test_semantic_embedding_computer_rejects_non_finite_vectors(tmp_path: Path) 
 
     with pytest.raises(ValueError, match="non-finite"):
         SemanticEmbeddingComputer({"fake": provider}).compute(_request(tmp_path))
+
+
+def test_semantic_embedding_computer_batches_provider_calls(tmp_path: Path) -> None:
+    provider = FakeSemanticProvider(
+        np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+    )
+
+    result = SemanticEmbeddingComputer({"fake": provider}).compute(_multi_image_request(tmp_path, 5, 2))
+
+    assert provider.batch_sizes == [2, 2, 1]
+    artifact_dir = tmp_path / "artifacts" / "semantic_embeddings"
+    assert np.load(artifact_dir / "embeddings.npy").shape == (5, 3)
+    assert result.parameter_updates["semantic_embedding_ref"].ne("").all()
 
 
 def _write_embedding_artifact(tmp_path: Path) -> str:
