@@ -49,6 +49,39 @@ class DuplicateGroupComputer(ParameterComputer):
         )
 
 
+class PerceptualDuplicateGroupComputer(ParameterComputer):
+    """基于 pHash 距离生产视觉近重复分组。"""
+
+    name = "perceptual_duplicate_group_computer"
+    execution_mode = ExecutionMode.DATASET_AGGREGATE
+    produced_parameters = frozenset(
+        {"perceptual_duplicate_group_id", "perceptual_duplicate_count", "perceptual_duplicate_distance"}
+    )
+    required_parameters = frozenset({"phash"})
+
+    def compute(self, request: ParameterRequest) -> ParameterResult:
+        """生产视觉近重复组参数和 pair relation。"""
+        max_distance = _as_int(request.config.get("max_distance", 4))
+        frame = request.parameter_table[["image_id", "phash"]].copy()
+        group_rows, pair_rows = _build_perceptual_groups(frame, max_distance)
+
+        return ParameterResult(
+            parameter_updates=pd.DataFrame(group_rows),
+            relation_updates={"perceptual_duplicate_pairs": _build_perceptual_duplicate_pairs(pair_rows)},
+            artifact_refs={},
+            parameter_manifest={
+                parameter: {
+                    "computer": self.name,
+                    "execution_mode": self.execution_mode.value,
+                    "config_hash": request.config_hash,
+                    "depends_on": ["phash"],
+                    "max_distance": max_distance,
+                }
+                for parameter in sorted(self.produced_parameters)
+            },
+        )
+
+
 def _build_duplicate_pairs(frame: pd.DataFrame, duplicate_hashes: set[str]) -> pd.DataFrame:
     """构造重复组内保留图到重复图的 pair relation。"""
     created_at = datetime.now(timezone.utc).isoformat()
@@ -87,3 +120,122 @@ def _build_duplicate_pairs(frame: pd.DataFrame, duplicate_hashes: set[str]) -> p
             "created_at",
         ],
     )
+
+
+def _build_perceptual_groups(
+    frame: pd.DataFrame,
+    max_distance: int,
+) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+    """按 pHash 与 keeper 的距离构造近重复组。"""
+    groups: list[dict[str, object]] = []
+    assignments: list[dict[str, object]] = []
+    pairs: list[dict[str, object]] = []
+
+    for row in frame.to_dict(orient="records"):
+        image_id = str(row["image_id"])
+        phash = str(row.get("phash") or "")
+        if not phash:
+            assignments.append({"image_id": image_id, "group_index": None, "distance": pd.NA})
+            continue
+
+        best_group_index: int | None = None
+        best_distance: int | None = None
+        for index, group in enumerate(groups):
+            distance = _hamming_distance(phash, str(group["keeper_phash"]))
+            if distance <= max_distance and (best_distance is None or distance < best_distance):
+                best_group_index = index
+                best_distance = distance
+
+        if best_group_index is None:
+            groups.append({"keeper_image_id": image_id, "keeper_phash": phash, "members": [image_id]})
+            assignments.append({"image_id": image_id, "group_index": len(groups) - 1, "distance": 0})
+            continue
+
+        group = groups[best_group_index]
+        members = group["members"]
+        if not isinstance(members, list):
+            raise TypeError("perceptual group members must be a list")
+        members.append(image_id)
+        assignments.append({"image_id": image_id, "group_index": best_group_index, "distance": best_distance})
+        pairs.append(
+            {
+                "source_image_id": group["keeper_image_id"],
+                "target_image_id": image_id,
+                "distance": int(best_distance),
+                "group_id": f"perceptual-{group['keeper_phash']}",
+            }
+        )
+
+    rows: list[dict[str, object]] = []
+    for assignment in assignments:
+        group_index = assignment["group_index"]
+        if group_index is None:
+            rows.append(
+                {
+                    "image_id": assignment["image_id"],
+                    "perceptual_duplicate_group_id": "",
+                    "perceptual_duplicate_count": 1,
+                    "perceptual_duplicate_distance": pd.NA,
+                }
+            )
+            continue
+        group = groups[int(group_index)]
+        members = group["members"]
+        if not isinstance(members, list):
+            raise TypeError("perceptual group members must be a list")
+        count = len(members)
+        group_id = f"perceptual-{group['keeper_phash']}" if count > 1 else ""
+        rows.append(
+            {
+                "image_id": assignment["image_id"],
+                "perceptual_duplicate_group_id": group_id,
+                "perceptual_duplicate_count": count,
+                "perceptual_duplicate_distance": assignment["distance"] if count > 1 else pd.NA,
+            }
+        )
+    return rows, pairs
+
+
+def _build_perceptual_duplicate_pairs(pair_rows: list[dict[str, object]]) -> pd.DataFrame:
+    """构造视觉近重复 pair relation。"""
+    created_at = datetime.now(timezone.utc).isoformat()
+    rows = [
+        {
+            "relation_type": "perceptual_duplicate",
+            "source_image_id": pair["source_image_id"],
+            "target_image_id": pair["target_image_id"],
+            "score": 1.0 - float(pair["distance"]) / 64.0,
+            "group_id": pair["group_id"],
+            "parameter_name": "perceptual_duplicate_group_id",
+            "computer_name": "perceptual_duplicate_group_computer",
+            "artifact_ref": "",
+            "created_at": created_at,
+        }
+        for pair in pair_rows
+    ]
+    return pd.DataFrame(
+        rows,
+        columns=[
+            "relation_type",
+            "source_image_id",
+            "target_image_id",
+            "score",
+            "group_id",
+            "parameter_name",
+            "computer_name",
+            "artifact_ref",
+            "created_at",
+        ],
+    )
+
+
+def _hamming_distance(left: str, right: str) -> int:
+    """计算两个 16 位十六进制 pHash 的 Hamming distance。"""
+    return (int(left, 16) ^ int(right, 16)).bit_count()
+
+
+def _as_int(value: object) -> int:
+    """把配置值转换为 int。"""
+    if isinstance(value, (str, bytes, int, float)):
+        return int(value)
+    raise TypeError(f"expected int-compatible config value, got {type(value).__name__}")
