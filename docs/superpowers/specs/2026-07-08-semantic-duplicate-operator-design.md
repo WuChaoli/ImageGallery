@@ -12,7 +12,7 @@
 ## 目标
 
 1. 新增用户侧逻辑算子 `duplicate.semantic_duplicate_check`。
-2. 默认绑定一个轻量 image-image embedding provider，让用户可以直接运行语义去重。
+2. 默认绑定 `onnx-community/dinov2-small-ONNX` image embedding provider，让用户可以直接运行语义去重。
 3. 允许外部注入自定义 embedding provider，用于替换为本地模型、远程服务或企业内部 embedding API。
 4. 使用 Faiss ANN index 作为第一版索引能力，并把 embedding 与 index 保存为 cleaning run artifact。
 5. 通过 `relations/semantic_duplicate_pairs.parquet` 解释 keeper、duplicate、score 和 index artifact 来源。
@@ -51,7 +51,8 @@ BasicCleaner(
     "threshold": 0.92,
     "keep": "first",
     "action": "drop",
-    "provider": "default_image_embedding",
+    "provider": "onnx_dinov2_small",
+    "model_id": "onnx-community/dinov2-small-ONNX",
     "index": "faiss_flat_ip",
     "batch_size": 32,
 }
@@ -62,9 +63,10 @@ BasicCleaner(
 1. `threshold`：embedding 归一化后，cosine similarity 大于等于该值时认为语义重复。
 2. `keep`：第一版只支持 `"first"`，表示每个语义重复组保留 `parameter_table` 顺序中的第一张。
 3. `action`：支持 `"drop"` 和 `"review"`。默认 `"drop"`。
-4. `provider`：默认使用内置轻量 image-image provider，也可以指向外部注入 provider。
+4. `provider`：默认使用 `onnx_dinov2_small`，也可以指向外部注入 provider。
 5. `index`：第一版支持 `"faiss_flat_ip"`，使用归一化 embedding 与 inner product 近似 cosine similarity。
-6. `batch_size`：provider 批量推理大小。
+6. `model_id`：默认使用 `onnx-community/dinov2-small-ONNX`。
+7. `batch_size`：provider 批量推理大小。
 
 `duplicate.semantic_duplicate_check` 只表达 image-image 语义重复。它不表达文本检索、caption、OCR、分类或聚类。
 
@@ -88,6 +90,20 @@ BasicCleaner(
 4. 不写 relation table。
 
 默认 provider 作为 semantic 可选能力启用。主包不应强制安装语义模型依赖。用户未安装 semantic 可选依赖却使用默认 provider 时，应抛出明确错误，提示安装语义可选依赖。
+
+第一版默认 provider 明确为：
+
+```text
+provider = "onnx_dinov2_small"
+runtime = "onnxruntime"
+model_id = "onnx-community/dinov2-small-ONNX"
+base_model = "facebook/dinov2-small"
+embedding_dimension = 384
+embedding_source = "cls_token"
+normalize = true
+```
+
+该 provider 通过 ONNX Runtime 执行 DINOv2-small ONNX 模型，提取 image-image embedding。模型文件不打入 wheel。首次使用时可以下载到本地 cache；离线环境或受控环境中，用户可以通过 `model_path` 指定已下载的 ONNX 文件。实现必须在 artifact manifest 中记录最终使用的 `model_id`、`model_path`、`base_model` 和 `embedding_dimension`。
 
 外部 provider 注入用于支持本地模型、远程 embedding 服务或企业内部模型。注入方式可以在实现计划中进一步细化，但不应改变 `duplicate.semantic_duplicate_check` 的用户侧算子名称和输出契约。
 
@@ -184,8 +200,12 @@ artifacts/semantic_embeddings/
 artifact_schema_version
 provider_name
 provider_version
+model_id
+model_path
+base_model
 embedding_dimension
 normalized
+embedding_source
 image_count
 config_hash
 ```
@@ -303,17 +323,20 @@ BasicCleaner([{duplicate.semantic_duplicate_check: config}])
 2. 外部 provider 返回维度不一致、空向量或非有限数值：抛出 `ValueError`。
 3. 图片读取或解码失败：该图片 `semantic_embedding_ref=""`，不会参与语义分组。
 4. Faiss 不可用且配置 `index="faiss_flat_ip"`：直接失败，不静默降级。
-5. `action` 不在 `"drop"`、`"review"` 中：抛出明确错误。
-6. `keep` 不是 `"first"`：抛出明确错误。
-7. 没有任何有效 embedding：产出空分组，所有图片保持 `keep`。
+5. 默认模型下载失败且未配置 `model_path`：抛出明确错误，不静默替换模型。
+6. `model_path` 指向的 ONNX 文件不存在或输出维度不是 384：抛出明确错误。
+7. `action` 不在 `"drop"`、`"review"` 中：抛出明确错误。
+8. `keep` 不是 `"first"`：抛出明确错误。
+9. 没有任何有效 embedding：产出空分组，所有图片保持 `keep`。
 
 ## 测试策略
 
 ### Provider 层
 
-1. 默认 provider 在安装 semantic 可选依赖后能返回固定维度 embedding。
+1. 默认 `onnx_dinov2_small` provider 在安装 semantic 可选依赖后能返回 384 维 embedding。
 2. 外部注入 provider 能被 `SemanticEmbeddingComputer` 调用。
-3. provider 返回维度不一致、NaN、Inf 或空向量时失败明确。
+3. 默认 provider 能通过 `model_path` 使用本地 ONNX 文件。
+4. provider 返回维度不一致、NaN、Inf 或空向量时失败明确。
 
 ### Embedding artifact 层
 
@@ -340,7 +363,7 @@ BasicCleaner([{duplicate.semantic_duplicate_check: config}])
 ## 成功标准
 
 1. `duplicate.semantic_duplicate_check` 能在 `BasicCleaner` 中作为正式逻辑算子使用。
-2. 默认轻量 image-image provider 可用，同时支持外部 provider 注入。
+2. 默认 `onnx_dinov2_small` image-image provider 可用，同时支持外部 provider 注入。
 3. embedding 和 Faiss index 不进入宽表，只进入 run artifacts。
 4. relation table 能解释 keeper、duplicate、score 和 index artifact 来源。
 5. 默认命中后 `drop`，用户可配置为 `review`。
