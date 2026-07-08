@@ -33,6 +33,25 @@ class Cleaner(ABC):
         """预览当前 evaluation_table 的清洗结果。"""
 
     @abstractmethod
+    def preview_html(
+        self,
+        path: str | Path,
+        *,
+        action: str | None = None,
+        filters: dict[str, object] | None = None,
+        groupby: str | None = None,
+        include_group_context: bool = False,
+        sort_by: list[str] | None = None,
+        ascending: bool | list[bool] = True,
+        caption_columns: list[str] | None = None,
+        max_rows: int = 200,
+        max_groups: int = 50,
+        max_items_per_group: int = 20,
+        thumbnail_size: int = 160,
+    ) -> Path:
+        """把当前清洗结果写出为静态 HTML 预览页。"""
+
+    @abstractmethod
     def state(self) -> pd.DataFrame:
         """返回每个算子的运行状态矩阵。"""
 
