@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pytest
@@ -7,8 +8,8 @@ from PIL import Image
 from image_gallery.operators.semantic_provider import (
     OnnxDinoV2SmallProvider,
     SemanticDependencyError,
-    SemanticEmbeddingResult,
     SemanticEmbeddingProvider,
+    SemanticEmbeddingResult,
     load_semantic_provider,
 )
 
@@ -50,8 +51,25 @@ def test_load_semantic_provider_rejects_unknown_provider_name() -> None:
         load_semantic_provider({"provider": "missing"}, {})
 
 
-def test_onnx_dinov2_provider_requires_existing_model_path(tmp_path: Path) -> None:
+def test_onnx_dinov2_provider_requires_existing_model_path(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     missing_path = tmp_path / "missing.onnx"
+
+    real_import = __import__
+
+    def fake_import(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
+        if name == "onnxruntime":
+            return object()
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
 
     with pytest.raises(ValueError, match="model_path does not exist"):
         OnnxDinoV2SmallProvider(model_path=missing_path)
@@ -60,10 +78,16 @@ def test_onnx_dinov2_provider_requires_existing_model_path(tmp_path: Path) -> No
 def test_default_provider_reports_missing_optional_dependencies(monkeypatch: pytest.MonkeyPatch) -> None:
     real_import = __import__
 
-    def fake_import(name: str, *args: object, **kwargs: object):
+    def fake_import(
+        name: str,
+        globals: dict[str, Any] | None = None,
+        locals: dict[str, Any] | None = None,
+        fromlist: tuple[str, ...] = (),
+        level: int = 0,
+    ) -> Any:
         if name == "onnxruntime":
             raise ImportError(name)
-        return real_import(name, *args, **kwargs)
+        return real_import(name, globals, locals, fromlist, level)
 
     monkeypatch.setattr("builtins.__import__", fake_import)
 

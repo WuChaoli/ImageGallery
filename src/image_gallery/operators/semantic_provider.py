@@ -57,19 +57,20 @@ class OnnxDinoV2SmallProvider:
     normalized = True
 
     def __init__(self, model_path: str | Path | None = None) -> None:
-        resolved_path = _resolve_model_path(model_path, self.model_id)
-        self.model_path = str(resolved_path)
         try:
             import onnxruntime as ort
         except ImportError as exc:
             raise SemanticDependencyError(
                 "semantic optional dependencies are required; install image-gallery[semantic]"
             ) from exc
+        resolved_path = _resolve_model_path(model_path, self.model_id)
+        self.model_path = str(resolved_path)
         self._session = ort.InferenceSession(str(resolved_path), providers=["CPUExecutionProvider"])
         self._input_name = self._session.get_inputs()[0].name
 
     def embed_images(self, images: list[Image.Image]) -> SemanticEmbeddingResult:
         """运行 DINOv2-small ONNX 模型并返回归一化 cls token embedding。"""
+        embeddings: NDArray[np.float32]
         if not images:
             embeddings = np.empty((0, self.embedding_dimension), dtype=np.float32)
         else:
@@ -139,7 +140,7 @@ def _extract_cls_embedding(output: NDArray[np.float32], dimension: int) -> NDArr
 
 def _l2_normalize(embeddings: NDArray[np.float32]) -> NDArray[np.float32]:
     """对 embedding 做 L2 归一化。"""
-    norms = np.linalg.norm(embeddings, axis=1, keepdims=True)
+    norms: NDArray[np.float32] = np.linalg.norm(embeddings, axis=1, keepdims=True)
     if np.any(norms <= 0) or not np.isfinite(norms).all():
         raise ValueError("embedding contains zero or non-finite norm")
-    return embeddings / norms
+    return np.asarray(embeddings / norms, dtype=np.float32)
