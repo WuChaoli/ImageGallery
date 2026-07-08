@@ -137,7 +137,7 @@ def _builtin_specs() -> list[OperatorSpec]:
                 "perceptual_duplicate_action",
                 "perceptual_duplicate_reason",
             ],
-            default_config={"max_distance": 4, "keep": "first", "action": "drop"},
+            default_config={"max_distance": 10, "keep": "first", "action": "drop"},
             action_column="perceptual_duplicate_action",
             reason_column="perceptual_duplicate_reason",
             evaluator=evaluate_perceptual_duplicate_check,

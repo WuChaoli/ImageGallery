@@ -13,7 +13,7 @@
 - User-facing operator name is `duplicate.perceptual_duplicate_check`.
 - Do not implement or register `duplicate.near_duplicate_check`.
 - Do not add new runtime dependencies; use existing `Pillow + numpy`.
-- Default config is exactly `{"max_distance": 4, "keep": "first", "action": "drop"}`.
+- Default config is exactly `{"max_distance": 10, "keep": "first", "action": "drop"}`.
 - First version only outputs `drop` or `keep`; do not add `review`.
 - First version only supports `keep="first"` and `action="drop"`.
 - Keep `duplicate.exact_duplicate_check` behavior unchanged.
@@ -258,7 +258,7 @@ git commit -m "feat: add perceptual hash computer"
 - Consumes:
   - `parameter_table["image_id"]`
   - `parameter_table["phash"]`
-  - `ParameterRequest.config["max_distance"]`, default `4`
+  - `ParameterRequest.config["max_distance"]`, default `10`
 - Produces:
   - `PerceptualDuplicateGroupComputer.name = "perceptual_duplicate_group_computer"`
   - `produced_parameters = frozenset({"perceptual_duplicate_group_id", "perceptual_duplicate_count", "perceptual_duplicate_distance"})`
@@ -291,7 +291,7 @@ def test_perceptual_duplicate_group_computer_groups_hashes_within_distance(tmp_p
                     "perceptual_duplicate_distance",
                 }
             ),
-            config={"max_distance": 4},
+            config={"max_distance": 10},
             config_hash="default",
             artifacts_dir=tmp_path,
         )
@@ -381,7 +381,7 @@ class PerceptualDuplicateGroupComputer(ParameterComputer):
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产视觉近重复组参数和 pair relation。"""
-        max_distance = _as_int(request.config.get("max_distance", 4))
+        max_distance = _as_int(request.config.get("max_distance", 10))
         frame = request.parameter_table[["image_id", "phash"]].copy()
         group_rows, pair_rows = _build_perceptual_groups(frame, max_distance)
 
@@ -616,7 +616,7 @@ def test_perceptual_duplicate_evaluator_drops_non_first_group_members() -> None:
 
     result = registry.get_operator("duplicate.perceptual_duplicate_check").evaluate(
         frame,
-        {"max_distance": 4, "keep": "first", "action": "drop"},
+        {"max_distance": 10, "keep": "first", "action": "drop"},
     )
 
     assert result["perceptual_duplicate_action"].tolist() == ["keep", "drop", "keep"]
@@ -694,7 +694,7 @@ OperatorSpec(
         "perceptual_duplicate_action",
         "perceptual_duplicate_reason",
     ],
-    default_config={"max_distance": 4, "keep": "first", "action": "drop"},
+    default_config={"max_distance": 10, "keep": "first", "action": "drop"},
     action_column="perceptual_duplicate_action",
     reason_column="perceptual_duplicate_reason",
     evaluator=evaluate_perceptual_duplicate_check,

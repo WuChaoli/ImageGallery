@@ -91,7 +91,7 @@ class PerceptualDuplicateGroupComputer(ParameterComputer):
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产视觉近重复组参数和 pair relation。"""
-        max_distance = _as_int(request.config.get("max_distance", 4))
+        max_distance = _as_int(request.config.get("max_distance", 10))
         frame = request.parameter_table[["image_id", "phash"]].copy()
         group_rows, pair_rows = _build_perceptual_groups(frame, max_distance)
 

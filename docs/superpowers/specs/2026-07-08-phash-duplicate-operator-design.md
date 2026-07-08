@@ -36,7 +36,7 @@ BasicCleaner(
 
 ```python
 {
-    "max_distance": 4,
+    "max_distance": 10,
     "keep": "first",
     "action": "drop",
 }
