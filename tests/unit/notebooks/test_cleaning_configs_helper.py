@@ -16,6 +16,7 @@ def test_get_cleaning_v3_first_batch_operator_configs_returns_expected_order() -
         "quality.contrast_check",
         "content.blank_image_check",
         "duplicate.exact_duplicate_check",
+        "duplicate.perceptual_duplicate_check",
     ]
 
 
