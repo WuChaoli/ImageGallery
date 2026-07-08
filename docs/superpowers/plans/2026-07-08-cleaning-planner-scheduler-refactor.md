@@ -290,6 +290,8 @@ def get_parameter_producer(self, parameter_name: str) -> ParameterComputer:
 
 Keep `find_computers_for_parameters()` temporarily for compatibility with current `BasicCleaner`; update it to use `execution_mode`-compatible computers but do not remove it yet.
 
+Do not run cleaning tests in Task 1. Until Task 5 migrates `BasicCleaner`, cleaning modules may still contain old internal references while operator-only tests validate the new computer contract.
+
 - [ ] **Step 6: Update tests for manifest field**
 
 In `tests/unit/operators/test_parameter_computer_contract.py`, replace `stage` with `execution_mode`:
@@ -549,7 +551,7 @@ from dataclasses import dataclass
 import pandas as pd
 
 from image_gallery.cleaning.config import ParsedOperatorConfig, merge_default_config
-from image_gallery.operators.computers.base import ExecutionMode
+from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
 
@@ -682,7 +684,7 @@ class CleaningRunPlanner:
         for parameter_name in sorted(target_parameters):
             visit_parameter(parameter_name)
 
-        ordered_names = self._topological_order(upstream_by_computer)
+        ordered_names = self._topological_order(upstream_by_computer, computer_by_name)
         steps = []
         for computer_name in ordered_names:
             computer = computer_by_name[computer_name]
@@ -698,11 +700,23 @@ class CleaningRunPlanner:
             )
         return ParameterExecutionPlan(steps=tuple(steps))
 
-    def _topological_order(self, upstream_by_computer: dict[str, set[str]]) -> list[str]:
+    def _topological_order(
+        self,
+        upstream_by_computer: dict[str, set[str]],
+        computer_by_name: dict[str, ParameterComputer],
+    ) -> list[str]:
+        mode_order = {
+            ExecutionMode.PER_IMAGE: 0,
+            ExecutionMode.TABLE: 1,
+            ExecutionMode.DATASET_AGGREGATE: 2,
+        }
         remaining = {name: set(upstreams) for name, upstreams in upstream_by_computer.items()}
         ordered: list[str] = []
         while remaining:
-            ready = sorted(name for name, upstreams in remaining.items() if not upstreams)
+            ready = sorted(
+                (name for name, upstreams in remaining.items() if not upstreams),
+                key=lambda name: (mode_order[computer_by_name[name].execution_mode], name),
+            )
             if not ready:
                 cycle = " -> ".join(sorted(remaining))
                 raise ValueError(f"parameter dependency cycle: {cycle}")
@@ -758,7 +772,6 @@ git commit -m "feat: compile cleaning parameter execution plans"
 Create `tests/unit/cleaning/test_scheduler.py`:
 
 ```python
-from dataclasses import replace
 from io import BytesIO
 from pathlib import Path
 
@@ -1458,8 +1471,9 @@ In `rerun()`, keep evaluation-only but use planner for resolving the passed conf
 ```python
 resolved_runs = CleaningRunPlanner(self._registry).compile(parsed_configs).resolved_operator_runs
 evaluator = OperatorEvaluator()
+_, tables, _ = self._require_run()
 for resolved_run in resolved_runs:
-    tables, operator_state = evaluator.evaluate(resolved_run, self._require_run()[1])
+    tables, operator_state = evaluator.evaluate(resolved_run, tables)
     self._tables = tables
     operator_states.append(operator_state)
 ```
