@@ -67,6 +67,7 @@ class ParameterScheduler:
         )
 
     def _requires_image_batch(self, plan: ParameterExecutionPlan) -> bool:
+        """判断计划中是否存在需要共享图片解码结果的 per-image computer。"""
         return any(step.execution_mode == ExecutionMode.PER_IMAGE for step in plan.steps)
 
     def _build_image_batch(self, context: CleanerRunContext, tables: CleaningTables) -> ImageBatch:
@@ -76,6 +77,7 @@ class ParameterScheduler:
             image_id = str(row["image_id"])
             image_uri = str(row["image_uri"])
             try:
+                # 每张图片只读取和解码一次，后续 per-image computer 共享同一个 ImageBatch。
                 data = context.dataset.read_image_bytes(image_uri)
                 with Image.open(BytesIO(data)) as opened:
                     opened.load()
@@ -87,6 +89,7 @@ class ParameterScheduler:
         return ImageBatch(items=items)
 
     def _require_requested_parameters(self, step: ParameterExecutionStep, updates: pd.DataFrame) -> None:
+        """校验 computer 实际产出了本步骤请求的全部参数列。"""
         missing_parameters = [
             parameter for parameter in sorted(step.requested_parameters) if parameter not in updates.columns
         ]

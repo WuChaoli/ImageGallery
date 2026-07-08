@@ -91,6 +91,7 @@ class CleaningRunPlanner:
         )
 
     def _resolve_operator_configs(self, parsed_configs: list[ParsedOperatorConfig]) -> list[ResolvedOperatorRun]:
+        """把用户配置绑定到逻辑算子 spec，并合并默认配置。"""
         resolved: list[ResolvedOperatorRun] = []
         for parsed_config in parsed_configs:
             spec = self._registry.get_operator(parsed_config.operator_name)
@@ -99,6 +100,7 @@ class CleaningRunPlanner:
         return resolved
 
     def _build_parameter_plan(self, target_parameters: set[str]) -> ParameterExecutionPlan:
+        """根据目标参数反向追踪生产者，构造参数计算执行计划。"""
         requested_by_computer: dict[str, set[str]] = {}
         upstream_by_computer: dict[str, set[str]] = {}
         computer_by_name = {computer.name: computer for computer in self._registry.list_parameter_computers()}
@@ -106,12 +108,14 @@ class CleaningRunPlanner:
         visited: set[str] = set()
 
         def visit_parameter(parameter_name: str) -> str:
+            """记录目标参数的生产 computer，并递归解析该 computer 的依赖。"""
             computer = self._registry.get_parameter_producer(parameter_name)
             requested_by_computer.setdefault(computer.name, set()).add(parameter_name)
             visit_computer(computer.name)
             return computer.name
 
         def visit_computer(computer_name: str) -> None:
+            """深度优先遍历 computer 依赖，并在递归栈中检测循环依赖。"""
             if computer_name in visiting:
                 cycle = " -> ".join([*sorted(visiting), computer_name])
                 raise ValueError(f"parameter dependency cycle: {cycle}")
@@ -128,6 +132,7 @@ class CleaningRunPlanner:
             visiting.remove(computer_name)
             visited.add(computer_name)
 
+        # 从逻辑算子所需参数出发，反向收集所有必要的 ParameterComputer。
         for parameter_name in sorted(target_parameters):
             visit_parameter(parameter_name)
 
@@ -152,6 +157,7 @@ class CleaningRunPlanner:
         upstream_by_computer: dict[str, set[str]],
         computer_by_name: dict[str, ParameterComputer],
     ) -> list[str]:
+        """按依赖关系和执行模式稳定排序参数计算步骤。"""
         mode_order = {
             ExecutionMode.PER_IMAGE: 0,
             ExecutionMode.TABLE: 1,

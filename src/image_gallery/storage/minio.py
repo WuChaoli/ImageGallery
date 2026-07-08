@@ -27,6 +27,7 @@ class MinioStorage(Storage):
         bucket: str,
         secure: bool = False,
     ) -> MinioStorage:
+        """连接 MinIO bucket，并验证目标 bucket 已存在。"""
         self._require_text(endpoint, "endpoint")
         self._require_text(access_key, "access_key")
         self._require_text(secret_key, "secret_key")
@@ -45,6 +46,7 @@ class MinioStorage(Storage):
         return self
 
     def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+        """写入 MinIO 对象并返回 s3:// image_uri。"""
         client, bucket = self._require_connected()
         if self.exists(object_path) and not overwrite:
             raise ObjectAlreadyExistsError(f"object already exists: {object_path}")
@@ -52,6 +54,7 @@ class MinioStorage(Storage):
         return self.make_image_uri(object_path)
 
     def _read_bytes(self, object_path: str) -> bytes:
+        """读取 MinIO 对象 bytes，并把对象不存在错误翻译为 ObjectNotFoundError。"""
         client, bucket = self._require_connected()
         response = None
         try:
@@ -68,6 +71,7 @@ class MinioStorage(Storage):
                 response.release_conn()
 
     def exists(self, object_path: str) -> bool:
+        """通过 stat_object 检查 MinIO 对象是否存在。"""
         client, bucket = self._require_connected()
         try:
             client.stat_object(bucket, object_path)
@@ -78,6 +82,7 @@ class MinioStorage(Storage):
             raise
 
     def delete(self, object_path: str) -> None:
+        """删除 MinIO 对象，不存在时抛出 ObjectNotFoundError。"""
         client, bucket = self._require_connected()
         try:
             client.remove_object(bucket, object_path)
@@ -87,6 +92,7 @@ class MinioStorage(Storage):
             raise
 
     def copy(self, src_object_path: str, dst_object_path: str, overwrite: bool = False) -> str:
+        """在同一 bucket 内复制对象并返回目标 s3:// image_uri。"""
         client, bucket = self._require_connected()
         if not self.exists(src_object_path):
             raise ObjectNotFoundError(f"object not found: {src_object_path}")
@@ -96,24 +102,29 @@ class MinioStorage(Storage):
         return self.make_image_uri(dst_object_path)
 
     def move(self, src_object_path: str, dst_object_path: str, overwrite: bool = False) -> str:
+        """在同一 bucket 内移动对象并返回目标 s3:// image_uri。"""
         image_uri = self.copy(src_object_path, dst_object_path, overwrite)
         self.delete(src_object_path)
         return image_uri
 
     def make_image_uri(self, object_path: str) -> str:
+        """把 object_path 转换为数据集可持久化的 s3:// image_uri。"""
         _, bucket = self._require_connected()
         return f"s3://{bucket}/{object_path}"
 
     def _require_connected(self) -> tuple[Any, str]:
+        """返回已连接的 MinIO client 和 bucket。"""
         if self.client is None or self.bucket is None:
             raise StorageConnectionError(f"storage is not connected: {self.storage_name}")
         return self.client, self.bucket
 
     @staticmethod
     def _require_text(value: str, key: str) -> None:
+        """校验 MinIO 连接参数非空。"""
         if not value:
             raise StorageConnectionError(f"minio connection requires {key}")
 
     @staticmethod
     def _is_not_found_error(exc: Exception) -> bool:
+        """识别 MinIO SDK 返回的对象或 bucket 不存在错误。"""
         return getattr(exc, "code", None) in {"NoSuchKey", "NoSuchObject", "NoSuchBucket"}

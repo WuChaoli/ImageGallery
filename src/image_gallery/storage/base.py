@@ -21,19 +21,25 @@ class Storage(ABC):
 
     @abstractmethod
     def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+        """写入单个对象并返回可持久化的 image_uri。"""
         raise NotImplementedError
 
     @abstractmethod
     def _read_bytes(self, object_path: str) -> bytes:
+        """读取单个对象的原始 bytes。"""
         raise NotImplementedError
 
     @overload
-    def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str: ...
+    def write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+        """写入单个对象并返回 image_uri。"""
+        ...
 
     @overload
     def write_bytes(
         self, object_path: list[str], data: list[bytes], overwrite: bool = False
-    ) -> list[StorageBatchResult]: ...
+    ) -> list[StorageBatchResult]:
+        """批量写入对象，逐项返回成功值或错误信息。"""
+        ...
 
     def write_bytes(
         self, object_path: str | list[str], data: bytes | list[bytes], overwrite: bool = False
@@ -52,10 +58,14 @@ class Storage(ABC):
         return self._batch_write_bytes(zip(object_path, data, strict=True), overwrite)
 
     @overload
-    def read_bytes(self, object_path: str) -> bytes: ...
+    def read_bytes(self, object_path: str) -> bytes:
+        """读取单个对象的 bytes。"""
+        ...
 
     @overload
-    def read_bytes(self, object_path: list[str]) -> list[StorageBatchResult]: ...
+    def read_bytes(self, object_path: list[str]) -> list[StorageBatchResult]:
+        """批量读取对象，逐项返回 bytes 或错误信息。"""
+        ...
 
     def read_bytes(self, object_path: str | list[str]) -> bytes | list[StorageBatchResult]:
         """读取单个或多个 bytes；列表输入时逐项返回结果。"""
@@ -65,22 +75,27 @@ class Storage(ABC):
 
     @abstractmethod
     def exists(self, object_path: str) -> bool:
+        """检查对象是否存在。"""
         raise NotImplementedError
 
     @abstractmethod
     def delete(self, object_path: str) -> None:
+        """删除对象，不存在时由具体后端决定是否抛出 ObjectNotFoundError。"""
         raise NotImplementedError
 
     @abstractmethod
     def copy(self, src_object_path: str, dst_object_path: str, overwrite: bool = False) -> str:
+        """复制对象并返回目标对象的 image_uri。"""
         raise NotImplementedError
 
     @abstractmethod
     def move(self, src_object_path: str, dst_object_path: str, overwrite: bool = False) -> str:
+        """移动对象并返回目标对象的 image_uri。"""
         raise NotImplementedError
 
     @abstractmethod
     def make_image_uri(self, object_path: str) -> str:
+        """把后端内部 object_path 转换为数据集可持久化的 image_uri。"""
         raise NotImplementedError
 
     def batch_write_bytes(
@@ -92,6 +107,7 @@ class Storage(ABC):
     def _batch_write_bytes(
         self, items: Iterable[tuple[str, bytes]], overwrite: bool = False
     ) -> list[StorageBatchResult]:
+        """逐项写入对象，并把单项异常转换为批量结果。"""
         results: list[StorageBatchResult] = []
         for object_path, data in items:
             try:
@@ -105,6 +121,7 @@ class Storage(ABC):
         return self._batch_read_bytes(object_paths)
 
     def _batch_read_bytes(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+        """逐项读取对象，并把单项异常转换为批量结果。"""
         results: list[StorageBatchResult] = []
         for object_path in object_paths:
             try:
@@ -122,6 +139,7 @@ class Storage(ABC):
         return self.batch_read_bytes(object_paths)
 
     def exists_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+        """批量检查对象是否存在，单项异常不影响整批检查。"""
         results: list[StorageBatchResult] = []
         for object_path in object_paths:
             try:
@@ -131,6 +149,7 @@ class Storage(ABC):
         return results
 
     def delete_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
+        """批量删除对象，逐项记录删除结果。"""
         results: list[StorageBatchResult] = []
         for object_path in object_paths:
             try:

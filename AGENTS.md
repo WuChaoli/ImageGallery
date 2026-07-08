@@ -26,6 +26,16 @@ uv venv .venv --python 3.10 --seed
 
 除非相关开发计划明确要求，不要添加服务端 API、Web UI、分布式调度器或宽泛抽象。第一版代码应保持 local-first，以 Python package/API 为核心，并方便 Notebook 验证。
 
+## 注释与 Docstring 规范
+
+代码注释优先使用中文；公开 API、核心领域类、抽象接口、算子入口、IO 边界函数、状态变更函数、复杂私有 helper 必须编写 Python docstring。
+
+Docstring 使用 Google Python 风格：第一行说明函数或类职责；必要时补充契约、输入前置条件、输出语义和副作用；按需使用 `Args`、`Returns`、`Raises`、`Examples` 等标准段落。参数名、类型名、字段名保持英文，解释文字使用中文。简单 getter、明显的一行转换函数、测试内部局部 helper 可不写 docstring。
+
+函数内部中文注释只写在关键节点：数据校验与失败条件、Storage/Parquet/SQLite/图片读取等 IO 边界、批处理循环、缓存、去重、分组、merge policy 等非显然逻辑、`image_uri` 和 `source_uri` 等架构契约字段语义，以及为兼容第三方库行为而做的特殊处理。
+
+禁止添加低价值注释：不复述代码本身，不解释显而易见的语法，不写与当前实现不一致的愿景式说明，不为未来可能发生的需求预留注释。
+
 ## 测试指南
 
 新增行为优先采用测试先行。单元测试应按包领域组织，例如 `tests/unit/storage/test_uri.py`。集成测试只在所需底层模块已经存在后覆盖端到端流程。每个模块都应包含小而确定的测试，用于验证错误处理和产物契约。
