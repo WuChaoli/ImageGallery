@@ -1,10 +1,11 @@
 import pandas as pd
 
+from image_gallery.operators.computers.border import ImageBorderComputer
 from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.duplicate import DuplicateGroupComputer, PerceptualDuplicateGroupComputer
 from image_gallery.operators.computers.hash import ImageHashComputer, ImagePerceptualHashComputer
-from image_gallery.operators.computers.metadata import ImageMetadataComputer
-from image_gallery.operators.computers.quality import ImageQualityComputer
+from image_gallery.operators.computers.metadata import ImageFormatDetailComputer, ImageMetadataComputer
+from image_gallery.operators.computers.quality import ImageQualityComputer, ImageQualityDetailComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
 
@@ -15,6 +16,9 @@ def create_default_registry() -> OperatorRegistry:
     registry.register_parameter_computer(ImageMetadataComputer())
     registry.register_parameter_computer(TableDerivedComputer())
     registry.register_parameter_computer(ImageQualityComputer())
+    registry.register_parameter_computer(ImageQualityDetailComputer())
+    registry.register_parameter_computer(ImageBorderComputer())
+    registry.register_parameter_computer(ImageFormatDetailComputer())
     registry.register_parameter_computer(ImageHashComputer())
     registry.register_parameter_computer(ImagePerceptualHashComputer())
     registry.register_parameter_computer(DuplicateGroupComputer())
@@ -106,6 +110,93 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="blank_action",
             reason_column="blank_reason",
             evaluator=evaluate_blank_image_check,
+        ),
+        OperatorSpec(
+            name="quality.exposure_check",
+            category="quality",
+            required_parameters=["dark_pixel_ratio", "bright_pixel_ratio", "clipped_pixel_ratio"],
+            evaluation_columns=[
+                "dark_pixel_ratio",
+                "bright_pixel_ratio",
+                "clipped_pixel_ratio",
+                "exposure_action",
+                "exposure_reason",
+            ],
+            default_config={
+                "max_dark_pixel_ratio": 0.95,
+                "max_bright_pixel_ratio": 0.95,
+                "max_clipped_pixel_ratio": 0.98,
+                "action": "review",
+            },
+            action_column="exposure_action",
+            reason_column="exposure_reason",
+            evaluator=evaluate_exposure_check,
+        ),
+        OperatorSpec(
+            name="quality.noise_check",
+            category="quality",
+            required_parameters=["noise_score"],
+            evaluation_columns=["noise_score", "noise_action", "noise_reason"],
+            default_config={"max_score": 0.75, "action": "review"},
+            action_column="noise_action",
+            reason_column="noise_reason",
+            evaluator=evaluate_noise_check,
+        ),
+        OperatorSpec(
+            name="content.mono_color_check",
+            category="content",
+            required_parameters=["mono_color_score"],
+            evaluation_columns=["mono_color_score", "mono_color_action", "mono_color_reason"],
+            default_config={"threshold": 0.98, "action": "review"},
+            action_column="mono_color_action",
+            reason_column="mono_color_reason",
+            evaluator=evaluate_mono_color_check,
+        ),
+        OperatorSpec(
+            name="content.border_padding_check",
+            category="content",
+            required_parameters=["border_padding_ratio", "border_padding_sides", "border_padding_color"],
+            evaluation_columns=[
+                "border_padding_ratio",
+                "border_padding_sides",
+                "border_padding_color",
+                "border_padding_action",
+                "border_padding_reason",
+            ],
+            default_config={
+                "max_ratio": 0.25,
+                "min_side_ratio": 0.08,
+                "colors": ["white", "black", "solid"],
+                "action": "review",
+            },
+            action_column="border_padding_action",
+            reason_column="border_padding_reason",
+            evaluator=evaluate_border_padding_check,
+        ),
+        OperatorSpec(
+            name="format.animated_image_check",
+            category="format",
+            required_parameters=["frame_count", "animated"],
+            evaluation_columns=["frame_count", "animated", "animated_action", "animated_reason"],
+            default_config={"action": "review"},
+            action_column="animated_action",
+            reason_column="animated_reason",
+            evaluator=evaluate_animated_image_check,
+        ),
+        OperatorSpec(
+            name="metadata.orientation_check",
+            category="metadata",
+            required_parameters=["exif_orientation", "orientation_risk"],
+            evaluation_columns=[
+                "exif_orientation",
+                "orientation_risk",
+                "orientation_action",
+                "orientation_reason",
+            ],
+            default_config={"action": "review"},
+            action_column="orientation_action",
+            reason_column="orientation_reason",
+            evaluator=evaluate_orientation_check,
         ),
         OperatorSpec(
             name="duplicate.exact_duplicate_check",
@@ -264,6 +355,124 @@ def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, 
     )
 
 
+def evaluate_exposure_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据暗部、亮部和截断像素比例生成曝光检查结果。"""
+    max_dark = _as_float(config.get("max_dark_pixel_ratio", 0.95))
+    max_bright = _as_float(config.get("max_bright_pixel_ratio", 0.95))
+    max_clipped = _as_float(config.get("max_clipped_pixel_ratio", 0.98))
+    action = str(config.get("action", "review"))
+    dark = pd.to_numeric(parameter_table["dark_pixel_ratio"], errors="coerce")
+    bright = pd.to_numeric(parameter_table["bright_pixel_ratio"], errors="coerce")
+    clipped = pd.to_numeric(parameter_table["clipped_pixel_ratio"], errors="coerce")
+    failed = (dark > max_dark) | (bright > max_bright) | (clipped > max_clipped)
+    reasons = [
+        _exposure_reason(dark_value, bright_value, clipped_value, max_dark, max_bright, max_clipped)
+        if failed_value
+        else ""
+        for dark_value, bright_value, clipped_value, failed_value in zip(
+            dark.tolist(), bright.tolist(), clipped.tolist(), failed.tolist(), strict=True
+        )
+    ]
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "dark_pixel_ratio": dark,
+            "bright_pixel_ratio": bright,
+            "clipped_pixel_ratio": clipped,
+            "exposure_action": failed.map(lambda value: action if value else "keep"),
+            "exposure_reason": reasons,
+        }
+    )
+
+
+def evaluate_noise_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 noise_score 生成噪声检查结果。"""
+    max_score = _as_float(config.get("max_score", 0.75))
+    action = str(config.get("action", "review"))
+    scores = pd.to_numeric(parameter_table["noise_score"], errors="coerce")
+    failed = scores.notna() & (scores > max_score)
+    return _score_threshold_frame(
+        parameter_table["image_id"], scores, failed, "noise", action, f"noise score above {max_score}"
+    )
+
+
+def evaluate_mono_color_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 mono_color_score 生成近单色检查结果。"""
+    threshold = _as_float(config.get("threshold", 0.98))
+    action = str(config.get("action", "review"))
+    scores = pd.to_numeric(parameter_table["mono_color_score"], errors="coerce")
+    failed = scores.notna() & (scores >= threshold)
+    return _score_threshold_frame(
+        parameter_table["image_id"],
+        scores,
+        failed,
+        "mono_color",
+        action,
+        f"mono color score at least {threshold}",
+    )
+
+
+def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据边框留白比例生成边框检查结果。"""
+    max_ratio = _as_float(config.get("max_ratio", 0.25))
+    colors = {str(color) for color in config.get("colors", ["white", "black", "solid"])}
+    action = str(config.get("action", "review"))
+    ratios = pd.to_numeric(parameter_table["border_padding_ratio"], errors="coerce")
+    sides = parameter_table["border_padding_sides"].fillna("").astype(str)
+    border_colors = parameter_table["border_padding_color"].fillna("unknown").astype(str)
+    side_counts = sides.map(lambda value: 0 if not value else len(value.split(",")))
+    failed = ratios.notna() & (ratios > max_ratio) & (side_counts > 0) & border_colors.isin(colors)
+    reasons = [
+        f"border padding ratio above {max_ratio} sides={side_value} color={color_value}" if failed_value else ""
+        for side_value, color_value, failed_value in zip(sides.tolist(), border_colors.tolist(), failed.tolist(), strict=True)
+    ]
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "border_padding_ratio": ratios,
+            "border_padding_sides": sides,
+            "border_padding_color": border_colors,
+            "border_padding_action": failed.map(lambda value: action if value else "keep"),
+            "border_padding_reason": reasons,
+        }
+    )
+
+
+def evaluate_animated_image_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 animated 标记生成多帧图片检查结果。"""
+    action = str(config.get("action", "review"))
+    frame_count = pd.to_numeric(parameter_table["frame_count"], errors="coerce")
+    animated = parameter_table["animated"].fillna(False).astype(bool)
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "frame_count": frame_count,
+            "animated": animated,
+            "animated_action": animated.map(lambda value: action if value else "keep"),
+            "animated_reason": animated.map(lambda value: "animated image" if value else ""),
+        }
+    )
+
+
+def evaluate_orientation_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据 EXIF orientation 风险生成方向检查结果。"""
+    action = str(config.get("action", "review"))
+    orientations = pd.to_numeric(parameter_table["exif_orientation"], errors="coerce")
+    risk = parameter_table["orientation_risk"].fillna(False).astype(bool)
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "exif_orientation": orientations,
+            "orientation_risk": risk,
+            "orientation_action": risk.map(lambda value: action if value else "keep"),
+            "orientation_reason": [
+                f"exif orientation {int(orientation)}" if risk_value and pd.notna(orientation) else ""
+                for orientation, risk_value in zip(orientations.tolist(), risk.tolist(), strict=True)
+            ],
+        }
+    )
+
+
 def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据完全重复组生成去重结果。"""
     keep = str(config.get("keep", "first"))
@@ -372,3 +581,22 @@ def _as_float(value: object) -> float:
     if isinstance(value, (str, bytes, int, float)):
         return float(value)
     raise TypeError(f"expected float-compatible config value, got {type(value).__name__}")
+
+
+def _exposure_reason(
+    dark: float,
+    bright: float,
+    clipped: float,
+    max_dark: float,
+    max_bright: float,
+    max_clipped: float,
+) -> str:
+    """构造曝光检查命中的原因。"""
+    reasons: list[str] = []
+    if pd.notna(dark) and dark > max_dark:
+        reasons.append(f"dark pixel ratio above {max_dark}")
+    if pd.notna(bright) and bright > max_bright:
+        reasons.append(f"bright pixel ratio above {max_bright}")
+    if pd.notna(clipped) and clipped > max_clipped:
+        reasons.append(f"clipped pixel ratio above {max_clipped}")
+    return "; ".join(reasons)

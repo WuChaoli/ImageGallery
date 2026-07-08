@@ -3,17 +3,23 @@ import pandas as pd
 from image_gallery.operators.builtin import create_default_registry
 
 
-def test_default_registry_contains_only_first_v3_operators() -> None:
+def test_default_registry_contains_builtin_v3_operators() -> None:
     registry = create_default_registry()
 
     assert registry.list_operators() == [
         "content.blank_image_check",
+        "content.border_padding_check",
+        "content.mono_color_check",
         "duplicate.exact_duplicate_check",
         "duplicate.perceptual_duplicate_check",
+        "format.animated_image_check",
         "format.decode_check",
+        "metadata.orientation_check",
         "quality.blur_check",
         "quality.brightness_check",
         "quality.contrast_check",
+        "quality.exposure_check",
+        "quality.noise_check",
         "size.aspect_ratio_check",
         "size.dimension_check",
         "size.megapixel_check",
@@ -84,6 +90,72 @@ def test_quality_evaluators_return_expected_actions() -> None:
     assert registry.get_operator("content.blank_image_check").evaluate(frame, {"threshold": 0.98, "action": "drop"})[
         "blank_action"
     ].tolist() == ["keep", "drop"]
+
+
+def test_light_quality_specs_declare_required_parameters() -> None:
+    registry = create_default_registry()
+
+    assert registry.get_operator("quality.exposure_check").required_parameters == [
+        "dark_pixel_ratio",
+        "bright_pixel_ratio",
+        "clipped_pixel_ratio",
+    ]
+    assert registry.get_operator("quality.noise_check").required_parameters == ["noise_score"]
+    assert registry.get_operator("content.mono_color_check").required_parameters == ["mono_color_score"]
+    assert registry.get_operator("content.border_padding_check").required_parameters == [
+        "border_padding_ratio",
+        "border_padding_sides",
+        "border_padding_color",
+    ]
+    assert registry.get_operator("format.animated_image_check").required_parameters == ["frame_count", "animated"]
+    assert registry.get_operator("metadata.orientation_check").required_parameters == [
+        "exif_orientation",
+        "orientation_risk",
+    ]
+
+
+def test_light_quality_evaluators_return_expected_actions() -> None:
+    registry = create_default_registry()
+    frame = pd.DataFrame(
+        {
+            "image_id": ["ok", "bad"],
+            "dark_pixel_ratio": [0.01, 0.99],
+            "bright_pixel_ratio": [0.01, 0.0],
+            "clipped_pixel_ratio": [0.01, 0.99],
+            "noise_score": [0.1, 0.9],
+            "mono_color_score": [0.2, 0.99],
+            "border_padding_ratio": [0.0, 0.5],
+            "border_padding_sides": ["", "top,bottom"],
+            "border_padding_color": ["unknown", "white"],
+            "frame_count": [1, 3],
+            "animated": [False, True],
+            "exif_orientation": [pd.NA, 6],
+            "orientation_risk": [False, True],
+        }
+    )
+
+    assert registry.get_operator("quality.exposure_check").evaluate(frame, {})["exposure_action"].tolist() == [
+        "keep",
+        "review",
+    ]
+    assert registry.get_operator("quality.noise_check").evaluate(frame, {})["noise_action"].tolist() == [
+        "keep",
+        "review",
+    ]
+    assert registry.get_operator("content.mono_color_check").evaluate(frame, {})["mono_color_action"].tolist() == [
+        "keep",
+        "review",
+    ]
+    assert registry.get_operator("content.border_padding_check").evaluate(frame, {})[
+        "border_padding_action"
+    ].tolist() == ["keep", "review"]
+    assert registry.get_operator("format.animated_image_check").evaluate(frame, {})["animated_action"].tolist() == [
+        "keep",
+        "review",
+    ]
+    assert registry.get_operator("metadata.orientation_check").evaluate(frame, {})[
+        "orientation_action"
+    ].tolist() == ["keep", "review"]
 
 
 def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
