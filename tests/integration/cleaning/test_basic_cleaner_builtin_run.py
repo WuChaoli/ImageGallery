@@ -62,6 +62,7 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
             {"quality.contrast_check": {"min_score": 0.0}},
             {"content.blank_image_check": {}},
             {"duplicate.exact_duplicate_check": {}},
+            {"duplicate.perceptual_duplicate_check": {}},
         ]
     )
     cleaner.run(dataset, output_dir=tmp_path / "cleaning")
@@ -72,6 +73,7 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
     assert rows.loc["small", "dimension_action"] == "drop"
     assert rows.loc["blank", "blank_action"] == "drop"
     assert rows.loc["dupe", "exact_duplicate_action"] == "drop"
+    assert rows.loc["dupe", "perceptual_duplicate_action"] == "drop"
     assert cleaner.preview().total_count == 5
 
     run_dir = next((tmp_path / "cleaning").iterdir())
@@ -84,11 +86,16 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
         "contrast_score",
         "blank_score",
         "content_hash",
+        "phash",
         "exact_duplicate_group_id",
         "exact_duplicate_count",
+        "perceptual_duplicate_group_id",
+        "perceptual_duplicate_count",
+        "perceptual_duplicate_distance",
     ]:
         assert column in parameter_rows.columns
     assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
+    assert (run_dir / "relations" / "perceptual_duplicate_pairs.parquet").exists()
 
 
 def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp_path: Path) -> None:
@@ -126,8 +133,12 @@ def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp
         "contrast_score",
         "blank_score",
         "content_hash",
+        "phash",
         "exact_duplicate_group_id",
         "exact_duplicate_count",
+        "perceptual_duplicate_group_id",
+        "perceptual_duplicate_count",
+        "perceptual_duplicate_distance",
     ]
     for column in expected_parameter_columns:
         assert column in parameter_table.columns
@@ -151,6 +162,8 @@ def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp
         "blank_reason",
         "exact_duplicate_action",
         "exact_duplicate_reason",
+        "perceptual_duplicate_action",
+        "perceptual_duplicate_reason",
         "final_action",
         "final_reason",
         "triggered_operator_names",
@@ -159,3 +172,4 @@ def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp
         assert column in evaluation_table.columns
 
     assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
+    assert (run_dir / "relations" / "perceptual_duplicate_pairs.parquet").exists()

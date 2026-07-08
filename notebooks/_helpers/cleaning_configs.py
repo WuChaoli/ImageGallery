@@ -15,4 +15,5 @@ def get_cleaning_v3_first_batch_operator_configs() -> list[dict[str, dict[str, o
         {"quality.contrast_check": {"min_score": 0.0}},
         {"content.blank_image_check": {}},
         {"duplicate.exact_duplicate_check": {}},
+        {"duplicate.perceptual_duplicate_check": {}},
     ]
