@@ -9,6 +9,7 @@ def test_default_registry_contains_only_first_v3_operators() -> None:
     assert registry.list_operators() == [
         "content.blank_image_check",
         "duplicate.exact_duplicate_check",
+        "duplicate.perceptual_duplicate_check",
         "format.decode_check",
         "quality.blur_check",
         "quality.brightness_check",
@@ -100,6 +101,45 @@ def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
     )
 
     assert result["exact_duplicate_action"].tolist() == ["keep", "drop", "keep"]
+
+
+def test_perceptual_duplicate_spec_declares_required_parameters() -> None:
+    registry = create_default_registry()
+
+    spec = registry.get_operator("duplicate.perceptual_duplicate_check")
+
+    assert spec.required_parameters == [
+        "perceptual_duplicate_group_id",
+        "perceptual_duplicate_count",
+        "perceptual_duplicate_distance",
+    ]
+    assert spec.evaluation_columns == [
+        "perceptual_duplicate_group_id",
+        "perceptual_duplicate_count",
+        "perceptual_duplicate_distance",
+        "perceptual_duplicate_action",
+        "perceptual_duplicate_reason",
+    ]
+
+
+def test_perceptual_duplicate_evaluator_drops_non_first_group_members() -> None:
+    registry = create_default_registry()
+    frame = pd.DataFrame(
+        {
+            "image_id": ["first", "second", "unique"],
+            "perceptual_duplicate_group_id": ["perceptual-a", "perceptual-a", ""],
+            "perceptual_duplicate_count": [2, 2, 1],
+            "perceptual_duplicate_distance": [0, 3, pd.NA],
+        }
+    )
+
+    result = registry.get_operator("duplicate.perceptual_duplicate_check").evaluate(
+        frame,
+        {"max_distance": 4, "keep": "first", "action": "drop"},
+    )
+
+    assert result["perceptual_duplicate_action"].tolist() == ["keep", "drop", "keep"]
+    assert result.loc[1, "perceptual_duplicate_reason"] == "duplicate in group perceptual-a distance 3"
 
 
 def test_default_registry_can_find_metadata_computer_for_builtin_parameters() -> None:

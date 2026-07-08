@@ -1,8 +1,8 @@
 import pandas as pd
 
 from image_gallery.operators.computers.derived import TableDerivedComputer
-from image_gallery.operators.computers.duplicate import DuplicateGroupComputer
-from image_gallery.operators.computers.hash import ImageHashComputer
+from image_gallery.operators.computers.duplicate import DuplicateGroupComputer, PerceptualDuplicateGroupComputer
+from image_gallery.operators.computers.hash import ImageHashComputer, ImagePerceptualHashComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
 from image_gallery.operators.computers.quality import ImageQualityComputer
 from image_gallery.operators.registry import OperatorRegistry
@@ -16,7 +16,9 @@ def create_default_registry() -> OperatorRegistry:
     registry.register_parameter_computer(TableDerivedComputer())
     registry.register_parameter_computer(ImageQualityComputer())
     registry.register_parameter_computer(ImageHashComputer())
+    registry.register_parameter_computer(ImagePerceptualHashComputer())
     registry.register_parameter_computer(DuplicateGroupComputer())
+    registry.register_parameter_computer(PerceptualDuplicateGroupComputer())
     for spec in _builtin_specs():
         registry.register_operator(spec)
     return registry
@@ -119,6 +121,26 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="exact_duplicate_action",
             reason_column="exact_duplicate_reason",
             evaluator=evaluate_exact_duplicate_check,
+        ),
+        OperatorSpec(
+            name="duplicate.perceptual_duplicate_check",
+            category="duplicate",
+            required_parameters=[
+                "perceptual_duplicate_group_id",
+                "perceptual_duplicate_count",
+                "perceptual_duplicate_distance",
+            ],
+            evaluation_columns=[
+                "perceptual_duplicate_group_id",
+                "perceptual_duplicate_count",
+                "perceptual_duplicate_distance",
+                "perceptual_duplicate_action",
+                "perceptual_duplicate_reason",
+            ],
+            default_config={"max_distance": 4, "keep": "first", "action": "drop"},
+            action_column="perceptual_duplicate_action",
+            reason_column="perceptual_duplicate_reason",
+            evaluator=evaluate_perceptual_duplicate_check,
         ),
     ]
 
@@ -274,6 +296,47 @@ def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[s
             "exact_duplicate_count": counts,
             "exact_duplicate_action": actions,
             "exact_duplicate_reason": reasons,
+        }
+    )
+
+
+def evaluate_perceptual_duplicate_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据视觉近重复组生成去重结果。"""
+    keep = str(config.get("keep", "first"))
+    if keep != "first":
+        raise ValueError("duplicate.perceptual_duplicate_check only supports keep='first'")
+    action = str(config.get("action", "drop"))
+    if action != "drop":
+        raise ValueError("duplicate.perceptual_duplicate_check only supports action='drop'")
+
+    groups = parameter_table["perceptual_duplicate_group_id"].fillna("").astype(str)
+    counts = pd.to_numeric(parameter_table["perceptual_duplicate_count"], errors="coerce").fillna(1).astype(int)
+    distances = pd.to_numeric(parameter_table["perceptual_duplicate_distance"], errors="coerce")
+
+    seen_groups: set[str] = set()
+    actions: list[str] = []
+    reasons: list[str] = []
+    for group_id, count, distance in zip(groups.tolist(), counts.tolist(), distances.tolist(), strict=True):
+        if not group_id or count <= 1:
+            actions.append("keep")
+            reasons.append("")
+            continue
+        if group_id not in seen_groups:
+            seen_groups.add(group_id)
+            actions.append("keep")
+            reasons.append("")
+            continue
+        actions.append(action)
+        reasons.append(f"duplicate in group {group_id} distance {int(distance)}")
+
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "perceptual_duplicate_group_id": groups,
+            "perceptual_duplicate_count": counts,
+            "perceptual_duplicate_distance": distances,
+            "perceptual_duplicate_action": actions,
+            "perceptual_duplicate_reason": reasons,
         }
     )
 

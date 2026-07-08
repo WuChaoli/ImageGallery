@@ -4,6 +4,7 @@ import pytest
 from image_gallery.cleaning.config import parse_operator_configs
 from image_gallery.cleaning.errors import UnknownOperatorError
 from image_gallery.cleaning.planner import CleaningRunPlanner
+from image_gallery.operators.builtin import create_default_registry
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
@@ -158,3 +159,22 @@ def test_planner_rejects_dependency_cycle() -> None:
 
     with pytest.raises(ValueError, match="parameter dependency cycle"):
         CleaningRunPlanner(registry).compile(parse_operator_configs([{"quality.cycle_check": {}}]))
+
+
+def test_builtin_planner_expands_perceptual_duplicate_dependencies() -> None:
+    parsed = parse_operator_configs([{"duplicate.perceptual_duplicate_check": {}}])
+
+    plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
+
+    assert [step.computer_name for step in plan.parameter_plan.steps] == [
+        "image_perceptual_hash_computer",
+        "perceptual_duplicate_group_computer",
+    ]
+    assert plan.parameter_plan.steps[0].requested_parameters == frozenset({"phash"})
+    assert plan.parameter_plan.steps[1].requested_parameters == frozenset(
+        {
+            "perceptual_duplicate_group_id",
+            "perceptual_duplicate_count",
+            "perceptual_duplicate_distance",
+        }
+    )
