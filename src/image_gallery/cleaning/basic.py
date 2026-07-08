@@ -10,6 +10,7 @@ from image_gallery.cleaning.context import CleanerRunContext, create_run_context
 from image_gallery.cleaning.errors import CleanerStateError
 from image_gallery.cleaning.evaluator import OperatorEvaluator
 from image_gallery.cleaning.export import export_cleaning_result
+from image_gallery.cleaning.html_preview import PreviewHtmlOptions, build_preview_frame, write_preview_html
 from image_gallery.cleaning.planner import CleaningRunPlanner, CompiledCleaningPlan, ResolvedOperatorRun
 from image_gallery.cleaning.preview import PreviewResult, apply_final_action, build_preview
 from image_gallery.cleaning.scheduler import ParameterScheduler
@@ -118,6 +119,49 @@ class BasicCleaner(Cleaner):
         """返回当前评估宽表的预览摘要。"""
         _, tables, _ = self._require_run()
         return build_preview(tables.evaluation_table, tables.operator_outputs, limit=limit)
+
+    def preview_html(
+        self,
+        path: str | Path,
+        *,
+        action: str | None = None,
+        filters: dict[str, object] | None = None,
+        groupby: str | None = None,
+        include_group_context: bool = False,
+        sort_by: list[str] | None = None,
+        ascending: bool | list[bool] = True,
+        caption_columns: list[str] | None = None,
+        max_rows: int = 200,
+        max_groups: int = 50,
+        max_items_per_group: int = 20,
+        thumbnail_size: int = 160,
+    ) -> Path:
+        """把当前清洗结果写出为静态 HTML 预览页。"""
+        context, tables, _ = self._require_run()
+        options = PreviewHtmlOptions(
+            action=action,
+            filters=filters,
+            groupby=groupby,
+            include_group_context=include_group_context,
+            sort_by=sort_by,
+            ascending=ascending,
+            caption_columns=caption_columns,
+            max_rows=max_rows,
+            max_groups=max_groups,
+            max_items_per_group=max_items_per_group,
+            thumbnail_size=thumbnail_size,
+        )
+        frame = build_preview_frame(
+            tables.evaluation_table,
+            action=action,
+            filters=filters,
+            groupby=groupby,
+            include_group_context=include_group_context,
+            sort_by=sort_by,
+            ascending=ascending,
+            max_rows=max_rows,
+        )
+        return write_preview_html(frame, path, dataset=context.dataset, options=options)
 
     def state(self) -> pd.DataFrame:
         """返回算子级状态矩阵。"""

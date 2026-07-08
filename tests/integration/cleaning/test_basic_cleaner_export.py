@@ -52,3 +52,33 @@ def test_basic_cleaner_exports_builtin_views_and_preserves_counts(tmp_path: Path
         parameters.to_frame().columns
     )
     assert evaluations.count() == 3
+
+
+def test_basic_cleaner_writes_html_preview(tmp_path: Path) -> None:
+    ok = tmp_path / "ok.png"
+    broken = tmp_path / "broken.jpg"
+    _write_image(ok, (16, 16), (10, 20, 30))
+    broken.write_bytes(b"not an image")
+    dataset = Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["ok", "bad"],
+                "image_uri": [str(ok), str(broken)],
+            }
+        ),
+        str(tmp_path / "raw.parquet"),
+    )
+    cleaner = BasicCleaner([{"format.decode_check": {"action": "drop"}}])
+    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+
+    output_path = cleaner.preview_html(
+        tmp_path / "preview.html",
+        action="drop",
+        caption_columns=["image_id", "final_action", "decode_check_reason"],
+    )
+
+    html = output_path.read_text(encoding="utf-8")
+    assert output_path == tmp_path / "preview.html"
+    assert "Cleaning Preview" in html
+    assert "bad" in html
+    assert "final_action: drop" in html
