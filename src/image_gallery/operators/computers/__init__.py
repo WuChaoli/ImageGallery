@@ -1,5 +1,5 @@
 from image_gallery.operators.computers.base import (
-    ComputeStage,
+    ExecutionMode,
     ImageBatch,
     ImageBatchItem,
     ParameterComputer,
@@ -13,7 +13,7 @@ from image_gallery.operators.computers.metadata import ImageMetadataComputer
 from image_gallery.operators.computers.quality import ImageQualityComputer
 
 __all__ = [
-    "ComputeStage",
+    "ExecutionMode",
     "DuplicateGroupComputer",
     "ImageBatch",
     "ImageBatchItem",

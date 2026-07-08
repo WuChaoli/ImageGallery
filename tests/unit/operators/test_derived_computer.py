@@ -27,6 +27,14 @@ def test_table_derived_computer_produces_aspect_ratio_and_megapixels(tmp_path) -
     assert pd.isna(rows[1]["aspect_ratio"])
     assert pd.isna(rows[1]["megapixels"])
     assert result.parameter_manifest == {
-        "aspect_ratio": {"computer": "table_derived_computer", "stage": "table_derived", "config_hash": "default"},
-        "megapixels": {"computer": "table_derived_computer", "stage": "table_derived", "config_hash": "default"},
+        "aspect_ratio": {
+            "computer": "table_derived_computer",
+            "execution_mode": "table",
+            "config_hash": "default",
+        },
+        "megapixels": {
+            "computer": "table_derived_computer",
+            "execution_mode": "table",
+            "config_hash": "default",
+        },
     }

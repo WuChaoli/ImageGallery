@@ -1,7 +1,7 @@
 import pandas as pd
 
 from image_gallery.operators.computers.base import (
-    ComputeStage,
+    ExecutionMode,
     ImageBatchItem,
     ParameterComputer,
     ParameterRequest,
@@ -13,7 +13,7 @@ class ImageMetadataComputer(ParameterComputer):
     """基于 Cleaner 共享 ImageBatch 生产解码和尺寸参数。"""
 
     name = "image_metadata_computer"
-    stage = ComputeStage.IMAGE_BATCH
+    execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset(
         {
             "width",
@@ -43,7 +43,7 @@ class ImageMetadataComputer(ParameterComputer):
         manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
-                "stage": self.stage.value,
+                "execution_mode": self.execution_mode.value,
                 "config_hash": request.config_hash,
             }
             for parameter in sorted(produced)

@@ -3,7 +3,7 @@ import pandas as pd
 from numpy.typing import NDArray
 
 from image_gallery.operators.computers.base import (
-    ComputeStage,
+    ExecutionMode,
     ImageBatchItem,
     ParameterComputer,
     ParameterRequest,
@@ -15,7 +15,7 @@ class ImageQualityComputer(ParameterComputer):
     """基于共享解码图片生产基础质量参数。"""
 
     name = "image_quality_computer"
-    stage = ComputeStage.IMAGE_BATCH
+    execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset({"blur_score", "brightness_score", "contrast_score", "blank_score"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
@@ -36,7 +36,7 @@ class ImageQualityComputer(ParameterComputer):
         manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
-                "stage": self.stage.value,
+                "execution_mode": self.execution_mode.value,
                 "config_hash": request.config_hash,
             }
             for parameter in sorted(produced)

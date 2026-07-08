@@ -1,13 +1,13 @@
 import pandas as pd
 
-from image_gallery.operators.computers.base import ComputeStage, ParameterComputer, ParameterRequest, ParameterResult
+from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
 
 
 class TableDerivedComputer(ParameterComputer):
     """基于 parameter_table 派生尺寸参数。"""
 
     name = "table_derived_computer"
-    stage = ComputeStage.TABLE_DERIVED
+    execution_mode = ExecutionMode.TABLE
     produced_parameters = frozenset({"aspect_ratio", "megapixels"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
@@ -27,7 +27,7 @@ class TableDerivedComputer(ParameterComputer):
         manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
-                "stage": self.stage.value,
+                "execution_mode": self.execution_mode.value,
                 "config_hash": request.config_hash,
             }
             for parameter in sorted(produced)

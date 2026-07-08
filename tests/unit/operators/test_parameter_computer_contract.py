@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 
 from image_gallery.operators.computers.base import (
-    ComputeStage,
+    ExecutionMode,
     ImageBatch,
     ImageBatchItem,
     ParameterComputer,
@@ -14,7 +14,7 @@ from image_gallery.operators.computers.base import (
 
 class DemoComputer(ParameterComputer):
     name = "demo_computer"
-    stage = ComputeStage.IMAGE_BATCH
+    execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset({"demo_score"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
@@ -31,7 +31,7 @@ class DemoComputer(ParameterComputer):
             parameter_manifest={
                 "demo_score": {
                     "computer": self.name,
-                    "stage": self.stage.value,
+                    "execution_mode": self.execution_mode.value,
                     "config_hash": request.config_hash,
                 }
             },

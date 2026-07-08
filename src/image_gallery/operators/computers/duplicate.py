@@ -2,14 +2,14 @@ from datetime import datetime, timezone
 
 import pandas as pd
 
-from image_gallery.operators.computers.base import ComputeStage, ParameterComputer, ParameterRequest, ParameterResult
+from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
 
 
 class DuplicateGroupComputer(ParameterComputer):
     """基于 content_hash 生产完全重复分组。"""
 
     name = "duplicate_group_computer"
-    stage = ComputeStage.DATASET_GLOBAL
+    execution_mode = ExecutionMode.DATASET_AGGREGATE
     produced_parameters = frozenset({"exact_duplicate_group_id", "exact_duplicate_count"})
     required_parameters = frozenset({"content_hash"})
 
@@ -40,7 +40,7 @@ class DuplicateGroupComputer(ParameterComputer):
             parameter_manifest={
                 parameter: {
                     "computer": self.name,
-                    "stage": self.stage.value,
+                    "execution_mode": self.execution_mode.value,
                     "config_hash": request.config_hash,
                     "depends_on": ["content_hash"],
                 }

@@ -9,14 +9,24 @@ class OperatorRegistry:
     def __init__(self) -> None:
         self._operators: dict[str, OperatorSpec] = {}
         self._parameter_computers: dict[str, ParameterComputer] = {}
+        self._parameter_producers: dict[str, str] = {}
 
     def register_operator(self, spec: OperatorSpec) -> None:
         """注册逻辑算子。"""
         self._operators[spec.name] = spec
 
     def register_parameter_computer(self, computer: ParameterComputer) -> None:
-        """注册参数计算单元。"""
+        """注册参数计算单元，并索引参数生产者。"""
+        for parameter_name in computer.produced_parameters:
+            existing_computer = self._parameter_producers.get(parameter_name)
+            if existing_computer is not None and existing_computer != computer.name:
+                raise ValueError(
+                    f"parameter already has producer: {parameter_name} "
+                    f"({existing_computer}, {computer.name})"
+                )
         self._parameter_computers[computer.name] = computer
+        for parameter_name in computer.produced_parameters:
+            self._parameter_producers[parameter_name] = computer.name
 
     def get_operator(self, operator_name: str) -> OperatorSpec:
         """按名称获取逻辑算子。"""
@@ -35,6 +45,18 @@ class OperatorRegistry:
     def list_operators(self) -> list[str]:
         """返回当前可用算子名称。"""
         return sorted(self._operators)
+
+    def list_parameter_computers(self) -> list[ParameterComputer]:
+        """返回注册顺序下的参数计算单元。"""
+        return list(self._parameter_computers.values())
+
+    def get_parameter_producer(self, parameter_name: str) -> ParameterComputer:
+        """返回生产指定参数的计算单元。"""
+        try:
+            computer_name = self._parameter_producers[parameter_name]
+        except KeyError as exc:
+            raise UnknownOperatorError(f"missing parameter producer: {parameter_name}") from exc
+        return self.get_parameter_computer(computer_name)
 
     def find_computers_for_parameters(self, parameter_names: set[str]) -> list[ParameterComputer]:
         """按参数需求返回可覆盖这些参数的计算单元。"""

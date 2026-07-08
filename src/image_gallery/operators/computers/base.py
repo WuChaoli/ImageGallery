@@ -7,12 +7,12 @@ import pandas as pd
 from PIL import Image
 
 
-class ComputeStage(str, Enum):
-    """参数计算阶段。"""
+class ExecutionMode(str, Enum):
+    """参数计算执行模式。"""
 
-    IMAGE_BATCH = "image_batch"
-    TABLE_DERIVED = "table_derived"
-    DATASET_GLOBAL = "dataset_global"
+    PER_IMAGE = "per_image"
+    TABLE = "table"
+    DATASET_AGGREGATE = "dataset_aggregate"
 
 
 @dataclass(frozen=True)
@@ -60,7 +60,7 @@ class ParameterComputer(ABC):
     """参数计算单元基类。"""
 
     name: str
-    stage: ComputeStage
+    execution_mode: ExecutionMode
     produced_parameters: frozenset[str]
     required_parameters: frozenset[str] = frozenset()
 

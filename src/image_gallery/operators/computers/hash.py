@@ -2,14 +2,14 @@ import hashlib
 
 import pandas as pd
 
-from image_gallery.operators.computers.base import ComputeStage, ParameterComputer, ParameterRequest, ParameterResult
+from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
 
 
 class ImageHashComputer(ParameterComputer):
     """基于原始图片字节生产完全重复内容哈希。"""
 
     name = "image_hash_computer"
-    stage = ComputeStage.IMAGE_BATCH
+    execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset({"content_hash"})
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
@@ -29,7 +29,7 @@ class ImageHashComputer(ParameterComputer):
             parameter_manifest={
                 "content_hash": {
                     "computer": self.name,
-                    "stage": self.stage.value,
+                    "execution_mode": self.execution_mode.value,
                     "config_hash": request.config_hash,
                 }
             },
