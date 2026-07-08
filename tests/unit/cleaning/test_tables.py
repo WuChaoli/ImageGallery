@@ -102,7 +102,7 @@ def test_write_and_read_tables_round_trip(tmp_path: Path) -> None:
         parameter_manifest={
             "demo_score": {
                 "computer": "demo_computer",
-                "stage": "image_batch",
+                "execution_mode": "per_image",
                 "config_hash": "abc123",
             }
         },

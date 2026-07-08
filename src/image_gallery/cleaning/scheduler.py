@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from io import BytesIO
 
+import pandas as pd
 from PIL import Image
 
 from image_gallery.cleaning.context import CleanerRunContext
@@ -59,7 +60,11 @@ class ParameterScheduler:
             artifact_paths.update(result.artifact_refs)
             relation_paths.update(write_relation_tables(result.relation_updates, context.paths))
 
-        return ParameterScheduleResult(tables=current_tables, artifact_paths=artifact_paths, relation_paths=relation_paths)
+        return ParameterScheduleResult(
+            tables=current_tables,
+            artifact_paths=artifact_paths,
+            relation_paths=relation_paths,
+        )
 
     def _requires_image_batch(self, plan: ParameterExecutionPlan) -> bool:
         return any(step.execution_mode == ExecutionMode.PER_IMAGE for step in plan.steps)
@@ -81,9 +86,11 @@ class ParameterScheduler:
                 items.append(ImageBatchItem(image_id, image_uri, row, None, None, str(exc)))
         return ImageBatch(items=items)
 
-    def _require_requested_parameters(self, step: ParameterExecutionStep, updates) -> None:
+    def _require_requested_parameters(self, step: ParameterExecutionStep, updates: pd.DataFrame) -> None:
         missing_parameters = [
             parameter for parameter in sorted(step.requested_parameters) if parameter not in updates.columns
         ]
         if missing_parameters:
-            raise ValueError(f"computer did not produce requested parameters: {step.computer_name} {missing_parameters}")
+            raise ValueError(
+                f"computer did not produce requested parameters: {step.computer_name} {missing_parameters}"
+            )
