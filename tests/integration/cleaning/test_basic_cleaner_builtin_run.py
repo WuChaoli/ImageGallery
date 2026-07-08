@@ -173,3 +173,77 @@ def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp
 
     assert (run_dir / "relations" / "duplicate_pairs.parquet").exists()
     assert (run_dir / "relations" / "perceptual_duplicate_pairs.parquet").exists()
+
+
+def test_basic_cleaner_runs_second_batch_light_quality_operators(tmp_path: Path) -> None:
+    dark_path = tmp_path / "dark.png"
+    border_path = tmp_path / "border.png"
+    plain_path = tmp_path / "plain.png"
+    Image.new("RGB", (24, 24), color=(0, 0, 0)).save(dark_path)
+    border_image = Image.new("RGB", (24, 24), color=(255, 255, 255))
+    for x in range(8, 16):
+        for y in range(8, 16):
+            border_image.putpixel((x, y), (30, 80, 130))
+    border_image.save(border_path)
+    Image.new("RGB", (24, 24), color=(90, 120, 150)).save(plain_path)
+    dataset = Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["dark", "border", "plain"],
+                "image_uri": [str(dark_path), str(border_path), str(plain_path)],
+            }
+        ),
+        str(tmp_path / "raw.parquet"),
+    )
+
+    cleaner = BasicCleaner(
+        [
+            {"quality.exposure_check": {}},
+            {"content.border_padding_check": {}},
+            {"quality.noise_check": {"max_score": 0.01}},
+            {"content.mono_color_check": {}},
+            {"format.animated_image_check": {}},
+            {"metadata.orientation_check": {}},
+        ]
+    )
+    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+
+    rows = cleaner.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
+    assert rows.loc["dark", "exposure_action"] == "review"
+    assert rows.loc["dark", "mono_color_action"] == "review"
+    assert rows.loc["border", "border_padding_action"] == "review"
+    assert rows.loc["plain", "animated_action"] == "keep"
+    assert rows.loc["plain", "orientation_action"] == "keep"
+
+    run_dir = next((tmp_path / "cleaning").iterdir())
+    parameter_rows = pd.read_parquet(run_dir / "parameter_table.parquet")
+    for column in [
+        "dark_pixel_ratio",
+        "bright_pixel_ratio",
+        "clipped_pixel_ratio",
+        "noise_score",
+        "mono_color_score",
+        "border_padding_ratio",
+        "border_padding_sides",
+        "border_padding_color",
+        "frame_count",
+        "animated",
+        "exif_orientation",
+        "orientation_risk",
+    ]:
+        assert column in parameter_rows.columns
+
+    preview_path = cleaner.preview_html(
+        str(tmp_path / "preview.html"),
+        action="review",
+        caption_columns=[
+            "image_id",
+            "final_action",
+            "border_padding_ratio",
+            "clipped_pixel_ratio",
+            "noise_score",
+            "mono_color_score",
+        ],
+    )
+    assert preview_path.exists()
+    assert "border_padding_ratio" in preview_path.read_text(encoding="utf-8")
