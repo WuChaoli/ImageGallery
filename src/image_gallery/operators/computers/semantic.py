@@ -43,7 +43,7 @@ class SemanticEmbeddingComputer(ParameterComputer):
         embeddings = _validate_embeddings(embedding_result, len(valid_images))
 
         _write_embeddings(artifact_dir, embeddings, valid_image_ids)
-        _write_embedding_manifest(artifact_dir, embedding_result)
+        _write_embedding_manifest(artifact_dir, embedding_result, request.config_hash, len(valid_image_ids))
 
         rows: list[dict[str, object]] = []
         for item in request.image_batch.items:
@@ -90,9 +90,15 @@ def _validate_embeddings(
     return embeddings
 
 
-def _write_embedding_manifest(artifact_dir: Path, result: SemanticEmbeddingResult) -> None:
+def _write_embedding_manifest(
+    artifact_dir: Path,
+    result: SemanticEmbeddingResult,
+    config_hash: str,
+    image_count: int,
+) -> None:
     """写入语义 embedding 模型与参数快照。"""
     manifest = {
+        "artifact_schema_version": 1,
         "provider_name": result.provider_name,
         "provider_version": result.provider_version,
         "model_id": result.model_id,
@@ -101,6 +107,8 @@ def _write_embedding_manifest(artifact_dir: Path, result: SemanticEmbeddingResul
         "embedding_dimension": result.embedding_dimension,
         "embedding_source": result.embedding_source,
         "normalized": result.normalized,
+        "image_count": image_count,
+        "config_hash": config_hash,
     }
     artifact_dir.mkdir(parents=True, exist_ok=True)
     (artifact_dir / "manifest.json").write_text(json.dumps(manifest, ensure_ascii=False))

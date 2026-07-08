@@ -65,7 +65,11 @@ def test_semantic_embedding_computer_writes_artifact_and_refs(tmp_path: Path) ->
     artifact_dir = tmp_path / "artifacts" / "semantic_embeddings"
     assert np.load(artifact_dir / "embeddings.npy").tolist() == [[1.0, 0.0, 0.0]]
     assert pd.read_parquet(artifact_dir / "image_ids.parquet")["image_id"].tolist() == ["a"]
-    assert json.loads((artifact_dir / "manifest.json").read_text())["embedding_dimension"] == 3
+    manifest = json.loads((artifact_dir / "manifest.json").read_text())
+    assert manifest["artifact_schema_version"] == 1
+    assert manifest["embedding_dimension"] == 3
+    assert manifest["image_count"] == 1
+    assert manifest["config_hash"] == "cfg"
     assert result.parameter_updates.to_dict(orient="records") == [
         {"image_id": "a", "semantic_embedding_ref": str(artifact_dir)},
         {"image_id": "b", "semantic_embedding_ref": ""},
