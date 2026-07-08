@@ -1,8 +1,37 @@
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 import pandas as pd
 
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
+
+
+@dataclass
+class _PerceptualGroup:
+    """视觉近重复组的内部状态。"""
+
+    keeper_image_id: str
+    keeper_phash: str
+    members: list[str]
+
+
+@dataclass(frozen=True)
+class _PerceptualAssignment:
+    """单张图片到视觉近重复组的内部映射。"""
+
+    image_id: str
+    group_index: int | None
+    distance: int | None
+
+
+@dataclass(frozen=True)
+class _PerceptualPair:
+    """视觉近重复 relation 的内部行。"""
+
+    source_image_id: str
+    target_image_id: str
+    distance: int
+    group_id: str
 
 
 class DuplicateGroupComputer(ParameterComputer):
@@ -125,87 +154,85 @@ def _build_duplicate_pairs(frame: pd.DataFrame, duplicate_hashes: set[str]) -> p
 def _build_perceptual_groups(
     frame: pd.DataFrame,
     max_distance: int,
-) -> tuple[list[dict[str, object]], list[dict[str, object]]]:
+) -> tuple[list[dict[str, object]], list[_PerceptualPair]]:
     """按 pHash 与 keeper 的距离构造近重复组。"""
-    groups: list[dict[str, object]] = []
-    assignments: list[dict[str, object]] = []
-    pairs: list[dict[str, object]] = []
+    groups: list[_PerceptualGroup] = []
+    assignments: list[_PerceptualAssignment] = []
+    pairs: list[_PerceptualPair] = []
 
     for row in frame.to_dict(orient="records"):
         image_id = str(row["image_id"])
         phash = str(row.get("phash") or "")
         if not phash:
-            assignments.append({"image_id": image_id, "group_index": None, "distance": pd.NA})
+            assignments.append(_PerceptualAssignment(image_id=image_id, group_index=None, distance=None))
             continue
 
         best_group_index: int | None = None
         best_distance: int | None = None
         for index, group in enumerate(groups):
-            distance = _hamming_distance(phash, str(group["keeper_phash"]))
+            distance = _hamming_distance(phash, group.keeper_phash)
             if distance <= max_distance and (best_distance is None or distance < best_distance):
                 best_group_index = index
                 best_distance = distance
 
         if best_group_index is None:
-            groups.append({"keeper_image_id": image_id, "keeper_phash": phash, "members": [image_id]})
-            assignments.append({"image_id": image_id, "group_index": len(groups) - 1, "distance": 0})
+            groups.append(_PerceptualGroup(keeper_image_id=image_id, keeper_phash=phash, members=[image_id]))
+            assignments.append(_PerceptualAssignment(image_id=image_id, group_index=len(groups) - 1, distance=0))
             continue
 
+        if best_distance is None:
+            raise ValueError("best perceptual duplicate distance is missing")
         group = groups[best_group_index]
-        members = group["members"]
-        if not isinstance(members, list):
-            raise TypeError("perceptual group members must be a list")
-        members.append(image_id)
-        assignments.append({"image_id": image_id, "group_index": best_group_index, "distance": best_distance})
+        group.members.append(image_id)
+        assignments.append(
+            _PerceptualAssignment(image_id=image_id, group_index=best_group_index, distance=best_distance)
+        )
         pairs.append(
-            {
-                "source_image_id": group["keeper_image_id"],
-                "target_image_id": image_id,
-                "distance": int(best_distance),
-                "group_id": f"perceptual-{group['keeper_phash']}",
-            }
+            _PerceptualPair(
+                source_image_id=group.keeper_image_id,
+                target_image_id=image_id,
+                distance=best_distance,
+                group_id=f"perceptual-{group.keeper_phash}",
+            )
         )
 
     rows: list[dict[str, object]] = []
     for assignment in assignments:
-        group_index = assignment["group_index"]
+        group_index = assignment.group_index
         if group_index is None:
             rows.append(
                 {
-                    "image_id": assignment["image_id"],
+                    "image_id": assignment.image_id,
                     "perceptual_duplicate_group_id": "",
                     "perceptual_duplicate_count": 1,
                     "perceptual_duplicate_distance": pd.NA,
                 }
             )
             continue
-        group = groups[int(group_index)]
-        members = group["members"]
-        if not isinstance(members, list):
-            raise TypeError("perceptual group members must be a list")
-        count = len(members)
-        group_id = f"perceptual-{group['keeper_phash']}" if count > 1 else ""
+        group = groups[group_index]
+        count = len(group.members)
+        group_id = f"perceptual-{group.keeper_phash}" if count > 1 else ""
         rows.append(
             {
-                "image_id": assignment["image_id"],
+                "image_id": assignment.image_id,
                 "perceptual_duplicate_group_id": group_id,
                 "perceptual_duplicate_count": count,
-                "perceptual_duplicate_distance": assignment["distance"] if count > 1 else pd.NA,
+                "perceptual_duplicate_distance": assignment.distance if count > 1 else pd.NA,
             }
         )
     return rows, pairs
 
 
-def _build_perceptual_duplicate_pairs(pair_rows: list[dict[str, object]]) -> pd.DataFrame:
+def _build_perceptual_duplicate_pairs(pair_rows: list[_PerceptualPair]) -> pd.DataFrame:
     """构造视觉近重复 pair relation。"""
     created_at = datetime.now(timezone.utc).isoformat()
     rows = [
         {
             "relation_type": "perceptual_duplicate",
-            "source_image_id": pair["source_image_id"],
-            "target_image_id": pair["target_image_id"],
-            "score": 1.0 - float(pair["distance"]) / 64.0,
-            "group_id": pair["group_id"],
+            "source_image_id": pair.source_image_id,
+            "target_image_id": pair.target_image_id,
+            "score": 1.0 - float(pair.distance) / 64.0,
+            "group_id": pair.group_id,
             "parameter_name": "perceptual_duplicate_group_id",
             "computer_name": "perceptual_duplicate_group_computer",
             "artifact_ref": "",
