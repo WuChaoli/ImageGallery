@@ -13,14 +13,7 @@ from notebooks._helpers.storage import load_minio_storage
 
 def get_default_minio_sample_1000_raw_path() -> Path:
     """Return the raw parquet path for the default MinIO sample_1000 dataset."""
-    return (
-        get_repo_root()
-        / "notebooks"
-        / ".importers_test_library"
-        / "default_minio_dataset"
-        / "sample_1000"
-        / "raw.parquet"
-    )
+    return get_repo_root() / "datasets" / "sample_1000" / "raw.parquet"
 
 
 def load_default_minio_sample_1000_dataset() -> Dataset:

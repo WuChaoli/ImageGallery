@@ -10,7 +10,7 @@ from notebooks._helpers.datasets import (
 
 
 def test_get_default_minio_sample_1000_raw_path_points_to_expected_location() -> None:
-    expected = Path("notebooks/.importers_test_library/default_minio_dataset/sample_1000/raw.parquet")
+    expected = Path("datasets/sample_1000/raw.parquet")
     assert get_default_minio_sample_1000_raw_path().as_posix().endswith(expected.as_posix())
 
 

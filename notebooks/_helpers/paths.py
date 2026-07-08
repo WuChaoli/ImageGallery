@@ -18,7 +18,7 @@ def get_repo_root() -> Path:
 
 def get_notebook_library_root(name: str) -> Path:
     """Return the private runtime directory for a notebook validation flow."""
-    return get_repo_root() / "notebooks" / ".operators_test_library" / name
+    return get_repo_root() / "datasets" / "tests" / name
 
 
 def reset_output_dir(path: Path) -> Path:
