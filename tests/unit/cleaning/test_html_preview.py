@@ -1,7 +1,16 @@
+from pathlib import Path
+
 import pandas as pd
 import pytest
+from PIL import Image
 
-from image_gallery.cleaning.html_preview import build_preview_frame, build_preview_groups
+from image_gallery.cleaning.html_preview import (
+    PreviewHtmlOptions,
+    build_preview_frame,
+    build_preview_groups,
+    write_preview_html,
+)
+from image_gallery.dataset import Dataset
 
 
 def _preview_input_frame() -> pd.DataFrame:
@@ -91,3 +100,68 @@ def test_build_preview_groups_preserves_group_order_and_limits_items() -> None:
     assert [group.name for group in groups] == ["group-a", "group-b"]
     assert [group.total_count for group in groups] == [2, 2]
     assert [group.rows["image_id"].tolist() for group in groups] == [["keeper-a"], ["keeper-b"]]
+
+
+def _write_image(path: Path, color: tuple[int, int, int]) -> None:
+    Image.new("RGB", (24, 16), color=color).save(path)
+
+
+def test_write_preview_html_renders_groups_and_base64_images(tmp_path: Path) -> None:
+    first = tmp_path / "first.png"
+    second = tmp_path / "second.png"
+    _write_image(first, (255, 0, 0))
+    _write_image(second, (0, 255, 0))
+    frame = pd.DataFrame(
+        {
+            "image_id": ["keeper-a", "drop-a"],
+            "image_uri": [str(first), str(second)],
+            "final_action": ["keep", "drop"],
+            "duplicate_group_id": ["group-a", "group-a"],
+            "distance": [0, 2],
+        }
+    )
+    dataset = Dataset.write(frame[["image_id", "image_uri"]], str(tmp_path / "raw.parquet"))
+
+    output_path = write_preview_html(
+        frame,
+        tmp_path / "preview.html",
+        dataset=dataset,
+        options=PreviewHtmlOptions(
+            action="drop",
+            groupby="duplicate_group_id",
+            include_group_context=True,
+            caption_columns=["image_id", "final_action", "distance"],
+            thumbnail_size=96,
+        ),
+    )
+
+    html = output_path.read_text(encoding="utf-8")
+    assert output_path == tmp_path / "preview.html"
+    assert "Cleaning Preview" in html
+    assert "group-a" in html
+    assert "keeper-a" in html
+    assert "drop-a" in html
+    assert "data:image/jpeg;base64," in html
+
+
+def test_write_preview_html_records_image_read_errors(tmp_path: Path) -> None:
+    missing = tmp_path / "missing.png"
+    frame = pd.DataFrame(
+        {
+            "image_id": ["missing"],
+            "image_uri": [str(missing)],
+            "final_action": ["drop"],
+        }
+    )
+    dataset = Dataset.write(frame[["image_id", "image_uri"]], str(tmp_path / "raw.parquet"))
+
+    output_path = write_preview_html(
+        frame,
+        tmp_path / "preview.html",
+        dataset=dataset,
+        options=PreviewHtmlOptions(caption_columns=["image_id"]),
+    )
+
+    html = output_path.read_text(encoding="utf-8")
+    assert "Image read failed" in html
+    assert "missing.png" in html
