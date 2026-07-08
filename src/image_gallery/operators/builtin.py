@@ -5,11 +5,15 @@ from image_gallery.operators.computers.duplicate import DuplicateGroupComputer, 
 from image_gallery.operators.computers.hash import ImageHashComputer, ImagePerceptualHashComputer
 from image_gallery.operators.computers.metadata import ImageMetadataComputer
 from image_gallery.operators.computers.quality import ImageQualityComputer
+from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
 from image_gallery.operators.registry import OperatorRegistry
+from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider
 from image_gallery.operators.spec import OperatorSpec
 
 
-def create_default_registry() -> OperatorRegistry:
+def create_default_registry(
+    semantic_providers: dict[str, SemanticEmbeddingProvider] | None = None,
+) -> OperatorRegistry:
     """创建包含第一版 v3 基础逻辑算子和参数计算单元的注册表。"""
     registry = OperatorRegistry()
     registry.register_parameter_computer(ImageMetadataComputer())
@@ -19,6 +23,8 @@ def create_default_registry() -> OperatorRegistry:
     registry.register_parameter_computer(ImagePerceptualHashComputer())
     registry.register_parameter_computer(DuplicateGroupComputer())
     registry.register_parameter_computer(PerceptualDuplicateGroupComputer())
+    registry.register_parameter_computer(SemanticEmbeddingComputer(semantic_providers))
+    registry.register_parameter_computer(SemanticDuplicateGroupComputer())
     for spec in _builtin_specs():
         registry.register_operator(spec)
     return registry
@@ -141,6 +147,36 @@ def _builtin_specs() -> list[OperatorSpec]:
             action_column="perceptual_duplicate_action",
             reason_column="perceptual_duplicate_reason",
             evaluator=evaluate_perceptual_duplicate_check,
+        ),
+        OperatorSpec(
+            name="duplicate.semantic_duplicate_check",
+            category="duplicate",
+            required_parameters=[
+                "semantic_duplicate_group_id",
+                "semantic_duplicate_count",
+                "semantic_duplicate_score",
+                "semantic_duplicate_nearest_image_id",
+            ],
+            evaluation_columns=[
+                "semantic_duplicate_group_id",
+                "semantic_duplicate_count",
+                "semantic_duplicate_score",
+                "semantic_duplicate_nearest_image_id",
+                "semantic_duplicate_action",
+                "semantic_duplicate_reason",
+            ],
+            default_config={
+                "threshold": 0.92,
+                "keep": "first",
+                "action": "drop",
+                "provider": "onnx_dinov2_small",
+                "model_id": "onnx-community/dinov2-small-ONNX",
+                "index": "faiss_flat_ip",
+                "batch_size": 32,
+            },
+            action_column="semantic_duplicate_action",
+            reason_column="semantic_duplicate_reason",
+            evaluator=evaluate_semantic_duplicate_check,
         ),
     ]
 
@@ -337,6 +373,55 @@ def evaluate_perceptual_duplicate_check(parameter_table: pd.DataFrame, config: d
             "perceptual_duplicate_distance": distances,
             "perceptual_duplicate_action": actions,
             "perceptual_duplicate_reason": reasons,
+        }
+    )
+
+
+def evaluate_semantic_duplicate_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    """根据语义重复组生成去重结果。"""
+    keep = str(config.get("keep", "first"))
+    if keep != "first":
+        raise ValueError("duplicate.semantic_duplicate_check only supports keep='first'")
+    action = str(config.get("action", "drop"))
+    if action not in {"drop", "review"}:
+        raise ValueError("duplicate.semantic_duplicate_check only supports action='drop' or action='review'")
+
+    groups = parameter_table["semantic_duplicate_group_id"].fillna("").astype(str)
+    counts = pd.to_numeric(parameter_table["semantic_duplicate_count"], errors="coerce").fillna(1).astype(int)
+    scores = pd.to_numeric(parameter_table["semantic_duplicate_score"], errors="coerce")
+    nearest_ids = parameter_table["semantic_duplicate_nearest_image_id"].fillna("").astype(str)
+
+    seen_groups: set[str] = set()
+    actions: list[str] = []
+    reasons: list[str] = []
+    for group_id, count, score, nearest_id in zip(
+        groups.tolist(),
+        counts.tolist(),
+        scores.tolist(),
+        nearest_ids.tolist(),
+        strict=True,
+    ):
+        if not group_id or count <= 1:
+            actions.append("keep")
+            reasons.append("")
+            continue
+        if group_id not in seen_groups:
+            seen_groups.add(group_id)
+            actions.append("keep")
+            reasons.append("")
+            continue
+        actions.append(action)
+        reasons.append(f"semantic duplicate in group {group_id} score {float(score):.4f} nearest {nearest_id}")
+
+    return pd.DataFrame(
+        {
+            "image_id": parameter_table["image_id"],
+            "semantic_duplicate_group_id": groups,
+            "semantic_duplicate_count": counts,
+            "semantic_duplicate_score": scores,
+            "semantic_duplicate_nearest_image_id": nearest_ids,
+            "semantic_duplicate_action": actions,
+            "semantic_duplicate_reason": reasons,
         }
     )
 
