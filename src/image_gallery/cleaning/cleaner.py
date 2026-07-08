@@ -12,6 +12,14 @@ class Cleaner(ABC):
     """清洗策略基类。"""
 
     @abstractmethod
+    def compile(self) -> "Cleaner":
+        """编译当前 Cleaner 配置，不读取 dataset，不写运行产物。"""
+
+    @abstractmethod
+    def plan(self) -> pd.DataFrame:
+        """返回当前编译计划的可读表格。"""
+
+    @abstractmethod
     def run(
         self,
         dataset: Dataset,

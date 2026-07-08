@@ -1,54 +1,28 @@
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timezone
-from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
-from PIL import Image
 
 from image_gallery.cleaning.cleaner import Cleaner
-from image_gallery.cleaning.config import (
-    OperatorConfigInput,
-    ParsedOperatorConfig,
-    merge_default_config,
-    parse_operator_configs,
-)
+from image_gallery.cleaning.config import OperatorConfigInput, ParsedOperatorConfig, parse_operator_configs
 from image_gallery.cleaning.context import CleanerRunContext, create_run_context
+from image_gallery.cleaning.evaluator import OperatorEvaluator
 from image_gallery.cleaning.errors import CleanerStateError
 from image_gallery.cleaning.export import export_cleaning_result
+from image_gallery.cleaning.planner import CompiledCleaningPlan, CleaningRunPlanner, ResolvedOperatorRun
 from image_gallery.cleaning.preview import PreviewResult, apply_final_action, build_preview
 from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore, OperatorRunState, build_state_frame
 from image_gallery.cleaning.tables import (
     CleaningTables,
     initialize_evaluation_table,
     initialize_parameter_table,
-    update_evaluation_columns,
-    update_operator_outputs,
-    update_parameter_columns,
-    write_relation_tables,
     write_tables,
 )
+from image_gallery.cleaning.scheduler import ParameterScheduler
 from image_gallery.dataset import Dataset
 from image_gallery.operators.builtin import create_default_registry
-from image_gallery.operators.computers.base import (
-    ComputeStage,
-    ImageBatch,
-    ImageBatchItem,
-    ParameterComputer,
-    ParameterRequest,
-    ParameterResult,
-)
 from image_gallery.operators.registry import OperatorRegistry
-from image_gallery.operators.spec import OperatorSpec
-
-
-@dataclass(frozen=True)
-class ResolvedOperatorRun:
-    """一次运行中已绑定 spec 和配置的逻辑算子。"""
-
-    parsed_config: ParsedOperatorConfig
-    spec: OperatorSpec
-    merged_config: dict[str, object]
 
 
 class BasicCleaner(Cleaner):
@@ -66,6 +40,17 @@ class BasicCleaner(Cleaner):
         self._context: CleanerRunContext | None = None
         self._tables: CleaningTables | None = None
         self._state: CleanerRunState | None = None
+        self._compiled_plan: CompiledCleaningPlan | None = None
+
+    def compile(self) -> "BasicCleaner":
+        """编译当前算子配置并缓存执行计划。"""
+        self._compiled_plan = CleaningRunPlanner(self._registry).compile(self._operator_configs)
+        return self
+
+    def plan(self) -> pd.DataFrame:
+        """返回当前参数计算计划。"""
+        compiled_plan = self._require_compiled_plan()
+        return compiled_plan.parameter_plan.to_frame()
 
     def run(
         self,
@@ -90,15 +75,23 @@ class BasicCleaner(Cleaner):
         self._context = context
         self._tables = tables
 
-        resolved_runs = self._resolve_operator_configs(self._operator_configs)
+        compiled_plan = self._require_compiled_plan()
         operator_states: list[OperatorRunState] = []
 
         started_at = _utc_now()
-        artifact_paths, relation_paths = self._run_parameter_computers(resolved_runs)
+        schedule_result = ParameterScheduler(self._registry).run(compiled_plan.parameter_plan, context, tables)
+        tables = schedule_result.tables
+        self._tables = tables
 
-        for resolved_run in resolved_runs:
-            operator_states.append(self._evaluate_operator(resolved_run))
-            _, tables, _ = self._require_run(allow_missing_state=True)
+        evaluator = OperatorEvaluator()
+        for resolved_run in compiled_plan.resolved_operator_runs:
+            tables, operator_state = evaluator.evaluate(resolved_run, tables)
+            self._tables = tables
+            operator_states.append(operator_state)
+
+        artifact_paths = schedule_result.artifact_paths
+        relation_paths = schedule_result.relation_paths
+        resolved_runs = list(compiled_plan.resolved_operator_runs)
 
         tables = CleaningTables(
             parameter_table=tables.parameter_table,
@@ -135,10 +128,11 @@ class BasicCleaner(Cleaner):
         """更新算子配置，并把相关算子状态标记为 stale。"""
         parsed_configs = parse_operator_configs(operator_configs)
         self._operator_configs = self._replace_operator_configs(parsed_configs)
+        self._compiled_plan = None
         if self._state is None:
             return self
 
-        resolved_runs = self._resolve_operator_configs(parsed_configs)
+        resolved_runs = CleaningRunPlanner(self._registry).compile(parsed_configs).resolved_operator_runs
         stale_names = {run.spec.name for run in resolved_runs}
         operator_config_hashes = dict(self._state.operator_config_hashes)
         for run in resolved_runs:
@@ -163,11 +157,16 @@ class BasicCleaner(Cleaner):
         self._require_run()
         parsed_configs = parse_operator_configs(operator_configs)
         self._operator_configs = self._replace_operator_configs(parsed_configs)
-        resolved_runs = self._resolve_operator_configs(parsed_configs)
+        self._compiled_plan = None
+        resolved_runs = CleaningRunPlanner(self._registry).compile(parsed_configs).resolved_operator_runs
         operator_states: list[OperatorRunState] = []
 
+        _, tables, _ = self._require_run()
+        evaluator = OperatorEvaluator()
         for resolved_run in resolved_runs:
-            operator_states.append(self._evaluate_operator(resolved_run))
+            tables, operator_state = evaluator.evaluate(resolved_run, tables)
+            self._tables = tables
+            operator_states.append(operator_state)
 
         context, tables, state = self._require_run()
         rerun_names = {operator_state.operator_name for operator_state in operator_states}
@@ -218,136 +217,13 @@ class BasicCleaner(Cleaner):
         _, tables, _ = self._require_run()
         return export_cleaning_result(kind, tables, path)
 
-    def _resolve_operator_configs(
-        self,
-        parsed_configs: list[ParsedOperatorConfig],
-    ) -> list[ResolvedOperatorRun]:
-        """解析算子配置，绑定 OperatorSpec 和合并后配置。"""
-        resolved: list[ResolvedOperatorRun] = []
-        for parsed_config in parsed_configs:
-            spec = self._registry.get_operator(parsed_config.operator_name)
-            merged = merge_default_config(parsed_config, spec.default_config)
-            resolved.append(
-                ResolvedOperatorRun(
-                    parsed_config=merged,
-                    spec=spec,
-                    merged_config=merged.config,
-                )
-            )
-        return resolved
-
-    def _required_parameters(self, runs: list[ResolvedOperatorRun]) -> set[str]:
-        """收集本次运行需要的全部参数字段。"""
-        return {parameter for run in runs for parameter in run.spec.required_parameters}
-
-    def _run_parameter_computers(self, runs: list[ResolvedOperatorRun]) -> tuple[dict[str, str], dict[str, str]]:
-        """按 compute stage 执行参数计算单元并更新 parameter_table。"""
-        required_parameters = self._required_parameters(runs)
-        computers = self._registry.find_computers_for_parameters(required_parameters)
-        artifact_paths: dict[str, str] = {}
-        relation_paths: dict[str, str] = {}
-
-        image_batch: ImageBatch | None = None
-        if any(computer.stage == ComputeStage.IMAGE_BATCH for computer in computers):
-            _, tables, _ = self._require_run(allow_missing_state=True)
-            image_batch = self._build_image_batch(tables.parameter_table)
-
-        for stage in (ComputeStage.IMAGE_BATCH, ComputeStage.TABLE_DERIVED, ComputeStage.DATASET_GLOBAL):
-            for computer in [item for item in computers if item.stage == stage]:
-                result = self._run_parameter_computer(computer, required_parameters, image_batch)
-                context, tables, _ = self._require_run(allow_missing_state=True)
-                self._tables = CleaningTables(
-                    parameter_table=update_parameter_columns(tables.parameter_table, result.parameter_updates),
-                    evaluation_table=tables.evaluation_table,
-                    operator_outputs=tables.operator_outputs,
-                    parameter_manifest={**tables.parameter_manifest, **result.parameter_manifest},
-                )
-                artifact_paths.update(result.artifact_refs)
-                relation_paths.update(write_relation_tables(result.relation_updates, context.paths))
-        return artifact_paths, relation_paths
-
-    def _run_parameter_computer(
-        self,
-        computer: ParameterComputer,
-        required_parameters: set[str],
-        image_batch: ImageBatch | None,
-    ) -> ParameterResult:
-        """执行单个参数计算单元。"""
-        context, tables, _ = self._require_run(allow_missing_state=True)
-        requested_parameters = frozenset(required_parameters & set(computer.produced_parameters))
-        return computer.compute(
-            ParameterRequest(
-                parameter_table=tables.parameter_table,
-                requested_parameters=requested_parameters,
-                config={},
-                config_hash="default",
-                artifacts_dir=context.paths.artifacts_dir,
-                image_batch=image_batch if computer.stage == ComputeStage.IMAGE_BATCH else None,
-            )
-        )
-
-    def _build_image_batch(self, parameter_table: pd.DataFrame) -> ImageBatch:
-        """统一读取和解码当前 parameter_table 中的图片。"""
-        context, _, _ = self._require_run(allow_missing_state=True)
-        items: list[ImageBatchItem] = []
-        for row in parameter_table.to_dict(orient="records"):
-            image_id = str(row["image_id"])
-            image_uri = str(row["image_uri"])
-            try:
-                data = context.dataset.read_image_bytes(image_uri)
-                with Image.open(BytesIO(data)) as opened:
-                    opened.load()
-                    image = opened.copy()
-                    image.format = opened.format
-                items.append(
-                    ImageBatchItem(
-                        image_id=image_id,
-                        image_uri=image_uri,
-                        row=row,
-                        data=data,
-                        image=image,
-                        error=None,
-                    )
-                )
-            except Exception as exc:
-                items.append(
-                    ImageBatchItem(
-                        image_id=image_id,
-                        image_uri=image_uri,
-                        row=row,
-                        data=None,
-                        image=None,
-                        error=str(exc),
-                    )
-                )
-        return ImageBatch(items=items)
-
-    def _evaluate_operator(self, run: ResolvedOperatorRun) -> OperatorRunState:
-        """基于参数表执行单个逻辑算子的评估，并更新 evaluation_table 和 manifest。"""
-        _, tables, _ = self._require_run(allow_missing_state=True)
-        updates = run.spec.evaluate(tables.parameter_table, run.merged_config)
-        operator_outputs = update_operator_outputs(tables.operator_outputs, run.spec.name, run.spec.evaluation_columns)
-        evaluation_table = update_evaluation_columns(
-            tables.evaluation_table,
-            updates,
-            run.spec.evaluation_columns,
-        )
-        self._tables = CleaningTables(
-            parameter_table=tables.parameter_table,
-            evaluation_table=evaluation_table,
-            operator_outputs=operator_outputs,
-            parameter_manifest=tables.parameter_manifest,
-        )
-        return OperatorRunState(
-            operator_name=run.spec.name,
-            config_hash=run.parsed_config.config_hash,
-            status="completed",
-            parameter_columns=run.spec.required_parameters,
-            evaluation_columns=run.spec.evaluation_columns,
-            processed_count=len(tables.parameter_table),
-            skipped_count=0,
-            failed_count=0,
-        )
+    def _require_compiled_plan(self) -> CompiledCleaningPlan:
+        """返回已编译计划；不存在时自动编译。"""
+        if self._compiled_plan is None:
+            self.compile()
+        if self._compiled_plan is None:
+            raise CleanerStateError("BasicCleaner compile failed")
+        return self._compiled_plan
 
     def _require_run(
         self,
@@ -436,7 +312,7 @@ class BasicCleaner(Cleaner):
 
     def _enabled_operator_configs_from_current(self) -> list[dict[str, dict[str, object]]]:
         """把当前算子配置转回 state 使用的输入形态。"""
-        resolved_runs = self._resolve_operator_configs(self._operator_configs)
+        resolved_runs = CleaningRunPlanner(self._registry).compile(self._operator_configs).resolved_operator_runs
         return [{run.spec.name: run.merged_config} for run in resolved_runs]
 
     def _save_current_outputs(self) -> None:

@@ -9,7 +9,7 @@ from image_gallery.cleaning import BasicCleaner
 from image_gallery.cleaning.errors import CleanerStateError
 from image_gallery.dataset import Dataset
 from image_gallery.operators.computers.base import (
-    ComputeStage,
+    ExecutionMode,
     ParameterComputer,
     ParameterRequest,
     ParameterResult,
@@ -20,7 +20,7 @@ from image_gallery.operators.spec import OperatorSpec
 
 class CountingComputer(ParameterComputer):
     name = "counting_computer"
-    stage = ComputeStage.IMAGE_BATCH
+    execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset({"demo_score"})
 
     def __init__(self) -> None:
@@ -41,7 +41,7 @@ class CountingComputer(ParameterComputer):
             parameter_manifest={
                 "demo_score": {
                     "computer": self.name,
-                    "stage": self.stage.value,
+                    "execution_mode": self.execution_mode.value,
                     "config_hash": request.config_hash,
                 }
             },
@@ -147,7 +147,7 @@ def test_basic_cleaner_runs_shared_parameter_computer_and_exposes_results(tmp_pa
     assert pd.read_json(run_dir / "parameter_manifest.json", typ="series").to_dict()["demo_score"] == {
         "computer": "counting_computer",
         "config_hash": "default",
-        "stage": "image_batch",
+        "execution_mode": "per_image",
     }
     assert cleaner.preview().dropped_count == 1
     assert cleaner.state()["operator_name"].tolist() == ["quality.drop_check", "quality.review_check"]
@@ -208,6 +208,45 @@ def test_basic_cleaner_rejects_result_before_run() -> None:
 
     with pytest.raises(CleanerStateError):
         cleaner.result("quality.drop_check")
+
+
+def test_basic_cleaner_plan_auto_compiles_without_running_dataset(tmp_path: Path) -> None:
+    computer = CountingComputer()
+    cleaner = BasicCleaner(
+        [
+            {"quality.drop_check": {}},
+            {"quality.review_check": {}},
+        ],
+        registry=_registry(computer),
+    )
+
+    frame = cleaner.plan()
+
+    assert frame["computer_name"].tolist() == ["counting_computer"]
+    assert frame["execution_mode"].tolist() == ["per_image"]
+    assert frame["requested_parameters"].tolist() == ["demo_score"]
+    assert computer.calls == []
+    assert not (tmp_path / "cleaning").exists()
+
+
+def test_basic_cleaner_compile_returns_self_and_run_uses_cached_plan(tmp_path: Path) -> None:
+    computer = CountingComputer()
+    cleaner = BasicCleaner([{"quality.drop_check": {}}], registry=_registry(computer))
+
+    assert cleaner.compile() is cleaner
+    cleaner.run(_dataset(tmp_path), output_dir=tmp_path / "cleaning")
+
+    assert computer.calls == [({"demo_score"}, 2)]
+
+
+def test_basic_cleaner_config_invalidates_compiled_plan() -> None:
+    computer = CountingComputer()
+    cleaner = BasicCleaner([{"quality.drop_check": {}}], registry=_registry(computer))
+    assert cleaner.plan()["requested_parameters"].tolist() == ["demo_score"]
+
+    cleaner.config([{"quality.review_check": {}}])
+
+    assert cleaner.plan()["computer_name"].tolist() == ["counting_computer"]
 
 
 def test_basic_cleaner_config_marks_operator_stale_without_computer_call(tmp_path: Path) -> None:
