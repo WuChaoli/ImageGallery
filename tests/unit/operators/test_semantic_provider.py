@@ -51,9 +51,7 @@ def test_load_semantic_provider_rejects_unknown_provider_name() -> None:
         load_semantic_provider({"provider": "missing"}, {})
 
 
-def test_onnx_dinov2_provider_requires_existing_model_path(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_onnx_dinov2_provider_requires_existing_model_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     missing_path = tmp_path / "missing.onnx"
 
     real_import = __import__
