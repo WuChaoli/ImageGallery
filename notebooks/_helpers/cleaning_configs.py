@@ -17,3 +17,24 @@ def get_cleaning_v3_first_batch_operator_configs() -> list[dict[str, dict[str, o
         {"duplicate.exact_duplicate_check": {}},
         {"duplicate.perceptual_duplicate_check": {}},
     ]
+
+
+def get_cleaning_v3_quality_baseline_operator_configs() -> list[dict[str, dict[str, object]]]:
+    """Return low-risk second-batch operators suitable for baseline quality review."""
+    return [
+        {"quality.exposure_check": {}},
+        {"content.border_padding_check": {}},
+        {"content.mono_color_check": {}},
+    ]
+
+
+def get_cleaning_v3_light_risk_operator_configs() -> list[dict[str, dict[str, object]]]:
+    """Return all second-batch light-risk operators for exploratory review."""
+    return [
+        {"quality.exposure_check": {}},
+        {"content.border_padding_check": {}},
+        {"quality.noise_check": {}},
+        {"content.mono_color_check": {}},
+        {"format.animated_image_check": {}},
+        {"metadata.orientation_check": {}},
+    ]

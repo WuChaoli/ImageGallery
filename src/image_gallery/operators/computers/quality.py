@@ -102,7 +102,7 @@ class ImageQualityDetailComputer(ParameterComputer):
                 row[parameter] = values[parameter]
             rows.append(row)
 
-        manifest = {
+        manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
                 "execution_mode": self.execution_mode.value,

@@ -415,7 +415,8 @@ def evaluate_mono_color_check(parameter_table: pd.DataFrame, config: dict[str, o
 def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据边框留白比例生成边框检查结果。"""
     max_ratio = _as_float(config.get("max_ratio", 0.25))
-    colors = {str(color) for color in config.get("colors", ["white", "black", "solid"])}
+    raw_colors = config.get("colors", ["white", "black", "solid"])
+    colors = {str(color) for color in raw_colors} if isinstance(raw_colors, (list, tuple, set)) else {str(raw_colors)}
     action = str(config.get("action", "review"))
     ratios = pd.to_numeric(parameter_table["border_padding_ratio"], errors="coerce")
     sides = parameter_table["border_padding_sides"].fillna("").astype(str)
@@ -424,7 +425,9 @@ def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[st
     failed = ratios.notna() & (ratios > max_ratio) & (side_counts > 0) & border_colors.isin(colors)
     reasons = [
         f"border padding ratio above {max_ratio} sides={side_value} color={color_value}" if failed_value else ""
-        for side_value, color_value, failed_value in zip(sides.tolist(), border_colors.tolist(), failed.tolist(), strict=True)
+        for side_value, color_value, failed_value in zip(
+            sides.tolist(), border_colors.tolist(), failed.tolist(), strict=True
+        )
     ]
     return pd.DataFrame(
         {

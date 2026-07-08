@@ -33,7 +33,7 @@ class ImageBorderComputer(ParameterComputer):
                 row[parameter] = values[parameter]
             rows.append(row)
 
-        manifest = {
+        manifest: dict[str, dict[str, object]] = {
             parameter: {
                 "computer": self.name,
                 "execution_mode": self.execution_mode.value,
@@ -108,7 +108,7 @@ def _edge_median_color(rgb: NDArray[np.float64]) -> NDArray[np.float64]:
     left = rgb[:, 0, :]
     right = rgb[:, -1, :]
     edge_pixels = np.concatenate([top, bottom, left, right], axis=0)
-    return np.median(edge_pixels, axis=0)
+    return np.asarray(np.median(edge_pixels, axis=0), dtype=np.float64)
 
 
 def _leading_true_count(values: NDArray[np.bool_]) -> int:
