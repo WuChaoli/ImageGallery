@@ -2,6 +2,7 @@ from dataclasses import replace
 
 import pandas as pd
 
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.operators.computers.border import ImageBorderComputer
 from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.duplicate import DuplicateGroupComputer, PerceptualDuplicateGroupComputer
@@ -11,7 +12,6 @@ from image_gallery.operators.computers.quality import ImageQualityComputer, Imag
 from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider
-from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.operators.spec import OperatorSpec
 
 

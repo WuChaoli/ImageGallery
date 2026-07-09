@@ -34,9 +34,7 @@ class CleanerConfig:
         path_obj = Path(path)
         with path_obj.open("rb") as file:
             payload = tomllib.load(file)
-        if not isinstance(payload, Mapping):
-            raise ValueError("cleaning.toml root must be a mapping")
-        return cls.from_mapping(payload)
+        return cls.from_mapping(_as_mapping(payload, str(path_obj)))
 
     @classmethod
     def from_mapping(cls, payload: dict[str, object]) -> "CleanerConfig":
@@ -117,7 +115,7 @@ def _parse_operator_policies(raw: object) -> dict[str, NodePolicy]:
 
 def _parse_node_policy(raw: object, scope: str) -> NodePolicy:
     """解析单个 NodePolicy。"""
-    payload = _as_mapping(raw, scope)
+    payload = _as_mapping(raw, scope, allow_none=True)
     batch = _parse_batch_policy(payload.get("batch"), f"{scope}.batch")
     checkpoint = _parse_checkpoint_policy(payload.get("checkpoint"), f"{scope}.checkpoint")
     cache = _parse_cache_policy(payload.get("cache"), f"{scope}.cache")

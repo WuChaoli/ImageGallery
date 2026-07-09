@@ -120,9 +120,9 @@ def _select_operator_config(
     override: bool,
 ) -> dict[str, object]:
     """按优先级合并算子配置。"""
-    if inline_config is None and override_config is None:
-        return {}
     if inline_config is None:
+        if override_config is None:
+            return {}
         return dict(override_config)
     if override_config is None:
         return dict(inline_config)
