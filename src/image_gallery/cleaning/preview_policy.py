@@ -62,7 +62,7 @@ def resolve_preview_policy(
         actions=resolved_actions,
         include_all_actions=action_filter.include_all,
         caption_columns=resolved_caption_columns,
-        groupby=groupby,
+        groupby=policy.groupby if groupby is None else groupby,
         include_group_context=policy.include_group_context if include_group_context is None else include_group_context,
         sort_by=resolved_sort_by,
         ascending=policy.ascending if ascending is None else ascending,

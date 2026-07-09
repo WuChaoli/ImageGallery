@@ -96,14 +96,13 @@ class NodePolicy:
     @classmethod
     def merge(cls, base: "NodePolicy", override: "NodePolicy") -> "NodePolicy":
         """按 override 覆盖 base 的显式字段并返回新策略。"""
-        defaults = cls()
         return cls(
-            batch=override.batch if override.batch != defaults.batch else base.batch,
-            checkpoint=override.checkpoint if override.checkpoint != defaults.checkpoint else base.checkpoint,
-            cache=override.cache if override.cache != defaults.cache else base.cache,
-            failure=override.failure if override.failure != defaults.failure else base.failure,
-            resources=override.resources if override.resources != defaults.resources else base.resources,
-            artifacts=override.artifacts if override.artifacts != defaults.artifacts else base.artifacts,
+            batch=override.batch,
+            checkpoint=override.checkpoint,
+            cache=override.cache,
+            failure=override.failure,
+            resources=override.resources,
+            artifacts=override.artifacts,
         )
 
     @classmethod
