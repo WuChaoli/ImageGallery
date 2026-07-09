@@ -106,7 +106,7 @@ class CleanerExecution:
         if cache_root is None:
             cache_root = _default_cache_root()
         if runtime is None:
-            runtime = CleaningRuntime(cache_root)
+            runtime = CleaningRuntime(cache_root, registry=registry)
         object.__setattr__(self, "graph", graph)
         object.__setattr__(self, "registry", registry)
         object.__setattr__(self, "configured_operators", configured_operators)
@@ -126,6 +126,7 @@ class CleanerExecution:
         runtime_result = self.runtime.run_graph(
             graph=self.graph,
             dataset=dataset,
+            configured_operators=self.configured_operators,
             run_options=RunOptions(
                 run_id=_coerce_run_id(run_options),
                 retry_max_attempts=_coerce_retry_max_attempts(run_options),

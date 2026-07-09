@@ -18,6 +18,7 @@ class PreviewHtmlOptions:
     """HTML 预览参数。"""
 
     action: str | None = None
+    operator_name: str | None = None
     filters: dict[str, object] | None = None
     groupby: str | None = None
     include_group_context: bool = False
@@ -157,6 +158,7 @@ def _render_document(
     group_html = "\n".join(_render_group(group=group, dataset=dataset, options=options) for group in groups)
     summary_rows = [
         ("rows", len(frame)),
+        ("operator_name", options.operator_name or ""),
         ("action", options.action or ""),
         ("groupby", options.groupby or ""),
         ("sort_by", ", ".join(options.sort_by or [])),
