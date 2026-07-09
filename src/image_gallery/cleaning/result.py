@@ -216,6 +216,24 @@ class CleanerResult:
         destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return destination
 
+    def export_relation(self, relation_name: str, path: Path | str) -> Path:
+        """把指定 relation 表复制到用户路径，不暴露内部运行目录。"""
+        state_path = self._run_dir() / "state.json"
+        if not state_path.exists():
+            raise FileNotFoundError(f"state file missing: {state_path.name}")
+        state = JsonRunStateStore().load(state_path)
+        relation_path = state.relation_paths.get(relation_name)
+        if relation_path is None:
+            raise KeyError(f"unknown relation_name: {relation_name}")
+
+        source = Path(relation_path)
+        if not source.exists():
+            raise FileNotFoundError(f"relation table missing: {relation_name}")
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(source, destination)
+        return destination
+
     def export(self, kind: str, path: Path | str) -> Dataset:
         """按 kind 导出清洗产物并返回 Dataset。"""
         tables = CleaningTables(

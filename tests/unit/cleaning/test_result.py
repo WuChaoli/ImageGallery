@@ -111,6 +111,92 @@ def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path
     assert explanation["relation_names"] == ["dup_pairs"]
 
 
+def test_result_export_relation_writes_copy(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    tables_dir = run_dir / "tables"
+    relations_dir = run_dir / "relations"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    relations_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame({"image_id": ["img-1"], "image_uri": ["/tmp/one.png"]}).to_parquet(
+        tables_dir / "parameter_table.parquet",
+        index=False,
+    )
+    pd.DataFrame({"image_id": ["img-1"], "image_uri": ["/tmp/one.png"], "final_action": ["keep"]}).to_parquet(
+        tables_dir / "evaluation_table.parquet",
+        index=False,
+    )
+    relation_path = relations_dir / "duplicate_pairs.parquet"
+    pd.DataFrame(
+        {
+            "source_image_id": ["img-1"],
+            "target_image_id": ["img-2"],
+            "score": [1.0],
+        }
+    ).to_parquet(relation_path, index=False)
+    JsonRunStateStore().save(
+        CleanerRunState(
+            run_id="run-1",
+            dataset_fingerprint="fp",
+            cleaner_type="basic",
+            enabled_operator_configs=[],
+            operator_config_hashes={},
+            parameter_config_hashes={},
+            parameter_table_path=str(tables_dir / "parameter_table.parquet"),
+            evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
+            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
+            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            relation_paths={"duplicate_pairs": str(relation_path)},
+            artifact_paths={},
+            started_at="",
+            finished_at="",
+            status="succeeded",
+            operator_states=[],
+        ),
+        run_dir / "state.json",
+    )
+    result = CleanerResult(run_id="run-1", cache_root=tmp_path)
+
+    output = result.export_relation("duplicate_pairs", tmp_path / "exported_relation.parquet")
+
+    assert output == tmp_path / "exported_relation.parquet"
+    assert pd.read_parquet(output)["target_image_id"].tolist() == ["img-2"]
+
+
+def test_result_export_relation_rejects_unknown_relation(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    tables_dir = run_dir / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    JsonRunStateStore().save(
+        CleanerRunState(
+            run_id="run-1",
+            dataset_fingerprint="fp",
+            cleaner_type="basic",
+            enabled_operator_configs=[],
+            operator_config_hashes={},
+            parameter_config_hashes={},
+            parameter_table_path=str(tables_dir / "parameter_table.parquet"),
+            evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
+            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
+            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            relation_paths={},
+            artifact_paths={},
+            started_at="",
+            finished_at="",
+            status="succeeded",
+            operator_states=[],
+        ),
+        run_dir / "state.json",
+    )
+    result = CleanerResult(run_id="run-1", cache_root=tmp_path)
+
+    try:
+        result.export_relation("missing", tmp_path / "missing.parquet")
+    except KeyError as error:
+        assert "missing" in str(error)
+    else:
+        raise AssertionError("expected KeyError")
+
+
 def test_result_preview_html_applies_configured_operator_preview_policy(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
