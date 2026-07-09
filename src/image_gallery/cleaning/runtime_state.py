@@ -7,7 +7,7 @@ import sqlite3
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from image_gallery.cleaning.graph import CleaningStateGraph, GraphNode
 
@@ -39,6 +39,18 @@ class RuntimeEvent:
     timestamp: str | None = None
 
 
+@runtime_checkable
+class EventLike(Protocol):
+    """用于 event-style 对象兼容接入。"""
+
+    event_type: Any
+    run_id: str
+    node_id: str | None
+    message: str | None
+    payload: dict[str, Any] | None
+    timestamp: str | None
+
+
 class SQLiteRunStateStore:
     """面向单次运行的 SQLite 状态存储。"""
 
@@ -51,7 +63,7 @@ class SQLiteRunStateStore:
         self._connection.row_factory = sqlite3.Row
 
     @classmethod
-    def initialize(cls, run_dir: Path, run_record: RunRecord) -> "SQLiteRunStateStore":
+    def initialize(cls, run_dir: Path, run_record: RunRecord) -> SQLiteRunStateStore:
         """初始化数据库并写入运行记录，返回可复用状态存储实例。"""
         run_directory = Path(run_dir)
         run_directory.mkdir(parents=True, exist_ok=True)
@@ -304,13 +316,14 @@ class SQLiteRunStateStore:
                 timestamp=event.timestamp or _utcnow(),
             )
 
-        if hasattr(event, "event_type"):
+        if isinstance(event, EventLike):
             return RuntimeEvent(
-                event_type=str(getattr(event, "event_type")),
-                node_id=_optional_str(getattr(event, "node_id", None)),
-                message=message if message is not None else _optional_str(getattr(event, "message", None)),
-                payload=payload if payload is not None else _ensure_dict(getattr(event, "payload", {})),
-                timestamp=_optional_str(getattr(event, "timestamp", None)) or _utcnow(),
+                event_type=str(event.event_type),
+                run_id=event.run_id,
+                node_id=event.node_id,
+                message=message if message is not None else event.message,
+                payload=payload if payload is not None else _ensure_dict(event.payload),
+                timestamp=_optional_str(event.timestamp) or _utcnow(),
             )
 
         raise TypeError(f"unsupported event type: {type(event)!r}")

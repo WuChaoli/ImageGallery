@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
@@ -31,7 +31,7 @@ class ArtifactManifest:
     manifest_uri: str
 
     @classmethod
-    def from_path(cls, path: Path) -> "ArtifactManifest":
+    def from_path(cls, path: Path) -> ArtifactManifest:
         """从 manifest 文件反序列化。"""
         payload = json.loads(path.read_text(encoding="utf-8"))
         return cls(
@@ -47,7 +47,7 @@ class ArtifactManifest:
             checksum=str(payload["checksum"]),
             created_at=str(payload["created_at"]),
             commit_marker=str(payload["commit_marker"]),
-            manifest_uri=str(path),
+            manifest_uri=str(payload.get("manifest_uri", path)),
         )
 
 
@@ -68,7 +68,7 @@ class ArtifactManager:
         policy_hash: str,
     ) -> ArtifactManifest:
         """提交 DataFrame 为 parquet，并返回可审计 manifest。"""
-        target = self._root_dir / relative_path
+        target = self._resolve_path(relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         frame.to_parquet(target, index=False)
         checksum = _checksum_file(target)
@@ -88,11 +88,29 @@ class ArtifactManager:
             commit_marker="committed",
             manifest_uri=str(manifest_path.resolve()),
         )
+        persisted_manifest = asdict(manifest)
+        persisted_manifest.pop("manifest_uri")
         manifest_path.write_text(
-            json.dumps(asdict(manifest), ensure_ascii=False, indent=2),
+            json.dumps(persisted_manifest, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
         return manifest
+
+    def _resolve_path(self, relative_path: str) -> Path:
+        """将相对路径约束在根目录下，拒绝绝对路径和目录穿透。"""
+        candidate = Path(relative_path)
+        if candidate.is_absolute():
+            raise ValueError("artifact relative_path must not be absolute")
+        if ".." in candidate.parts:
+            raise ValueError("artifact relative_path must not contain parent traversal")
+
+        root = self._root_dir.resolve()
+        target = (self._root_dir / candidate).resolve()
+        try:
+            target.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("artifact relative_path must stay within manager root") from exc
+        return target
 
     def validate_manifest(self, manifest_path: Path) -> ArtifactManifest:
         """校验 manifest 文件存在并返回其内容。"""
