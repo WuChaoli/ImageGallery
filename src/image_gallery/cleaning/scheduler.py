@@ -1,5 +1,8 @@
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from io import BytesIO
+from pathlib import Path
 
 import pandas as pd
 from PIL import Image
@@ -58,7 +61,14 @@ class ParameterScheduler:
                 parameter_manifest={**current_tables.parameter_manifest, **result.parameter_manifest},
             )
             artifact_paths.update(result.artifact_refs)
-            relation_paths.update(write_relation_tables(result.relation_updates, context.paths))
+            written_relation_paths = write_relation_tables(result.relation_updates, context.paths)
+            relation_paths.update(written_relation_paths)
+            self._write_relation_manifests(
+                relation_updates=result.relation_updates,
+                relation_paths=written_relation_paths,
+                computer_name=step.computer_name,
+                config_hash=step.config_hash,
+            )
 
         return ParameterScheduleResult(
             tables=current_tables,
@@ -97,3 +107,35 @@ class ParameterScheduler:
             raise ValueError(
                 f"computer did not produce requested parameters: {step.computer_name} {missing_parameters}"
             )
+
+    def _write_relation_manifests(
+        self,
+        relation_updates: dict[str, pd.DataFrame],
+        relation_paths: dict[str, str],
+        computer_name: str,
+        config_hash: str,
+    ) -> None:
+        """为关系表写出最小 manifest，便于 resume/rerun 复用校验。"""
+        created_at = datetime.now(timezone.utc).isoformat()
+        for relation_name, frame in relation_updates.items():
+            relation_path = Path(relation_paths[relation_name])
+            manifest_path = relation_path.with_name(f"{relation_path.name}.manifest.json")
+            artifact_refs = []
+            if "artifact_ref" in frame.columns:
+                artifact_refs = sorted(
+                    {
+                        value
+                        for value in frame["artifact_ref"].fillna("").astype(str).tolist()
+                        if value
+                    }
+                )
+            payload = {
+                "artifact_schema_version": 1,
+                "relation_name": relation_name,
+                "computer_name": computer_name,
+                "config_hash": config_hash,
+                "row_count": int(len(frame)),
+                "artifact_refs": artifact_refs,
+                "created_at": created_at,
+            }
+            manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")

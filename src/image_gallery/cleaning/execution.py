@@ -6,14 +6,18 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import gettempdir
+from typing import cast
 from uuid import uuid4
 
 import pandas as pd
 
+from image_gallery.cleaning.config import OperatorConfigInput
 from image_gallery.cleaning.graph import CleaningStateGraph
+from image_gallery.cleaning.policy import NodePolicy
 from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.runtime import CleaningRuntime, RunOptions
+from image_gallery.cleaning.selection import select_operators
 from image_gallery.dataset import Dataset
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import ConfiguredOperatorSpec
@@ -86,6 +90,16 @@ def _coerce_retry_max_attempts(run_options: Mapping[str, object]) -> int:
     raise TypeError("retry_max_attempts must be int or str")
 
 
+def _coerce_sample_rule(run_options: Mapping[str, object]) -> dict[str, object] | None:
+    """解析 sample 规则，并保持稳定字典结构。"""
+    raw = run_options.get("sample")
+    if raw is None:
+        return None
+    if not isinstance(raw, Mapping):
+        raise TypeError("sample must be a mapping")
+    return {str(key): value for key, value in raw.items()}
+
+
 @dataclass(frozen=True)
 class CleanerExecution:
     """清洗执行实例，承载编译图和运行时状态。"""
@@ -95,6 +109,8 @@ class CleanerExecution:
     configured_operators: list[ConfiguredOperatorSpec]
     runtime: CleaningRuntime
     cache_root: Path
+    node_policy: NodePolicy | None
+    operator_policies: dict[str, NodePolicy] | None
 
     def __init__(
         self,
@@ -103,6 +119,8 @@ class CleanerExecution:
         configured_operators: list[ConfiguredOperatorSpec],
         runtime: CleaningRuntime | None = None,
         cache_root: Path | None = None,
+        node_policy: NodePolicy | None = None,
+        operator_policies: dict[str, NodePolicy] | None = None,
     ) -> None:
         if cache_root is None:
             cache_root = _default_cache_root()
@@ -113,6 +131,8 @@ class CleanerExecution:
         object.__setattr__(self, "configured_operators", configured_operators)
         object.__setattr__(self, "runtime", runtime)
         object.__setattr__(self, "cache_root", Path(cache_root))
+        object.__setattr__(self, "node_policy", node_policy)
+        object.__setattr__(self, "operator_policies", operator_policies)
 
     def plan(self) -> pd.DataFrame:
         """返回当前编译图的可视化计划。"""
@@ -131,6 +151,7 @@ class CleanerExecution:
             run_options=RunOptions(
                 run_id=_coerce_run_id(run_options),
                 retry_max_attempts=_coerce_retry_max_attempts(run_options),
+                sample_rule=_coerce_sample_rule(run_options),
             ),
         )
         return CleanerResult(
@@ -145,13 +166,19 @@ class CleanerExecution:
         dataset: Dataset,
         run_id: str | None = None,
         result: CleanerResult | None = None,
+        sample: Mapping[str, object] | None = None,
     ) -> CleanerResult:
         """恢复历史运行并继续执行。"""
+        if run_id is not None and result is not None and run_id != result.run_id:
+            raise ValueError("run_id and result.run_id must match")
         runtime_run_id = run_id or (result.run_id if result is not None else None)
         runtime_result = self.runtime.resume_graph(
             graph=self.graph,
             dataset=dataset,
             run_id=runtime_run_id,
+            result=result,
+            configured_operators=self.configured_operators,
+            sample_rule={str(key): value for key, value in sample.items()} if sample is not None else None,
         )
         return CleanerResult(
             run_id=runtime_result.run_id,
@@ -161,17 +188,33 @@ class CleanerExecution:
 
     def rerun(self, result: CleanerResult, operators: object, overwrite: bool = False) -> CleanerResult:
         """按结果做算子级重新运行（阶段1先返回最小壳）。"""
-        del operators
-        del overwrite
-        runtime_result = self.runtime.rerun_evaluation(self.graph, result)
+        configured_operators = select_operators(cast(list[object], cast(OperatorConfigInput, operators)), self.registry)
+        rerun_graph = CleaningStateGraph.compile(
+            configured_operators,
+            self.registry,
+            node_policy=self.node_policy,
+            operator_policies=self.operator_policies,
+        )
+        runtime_result = self.runtime.rerun_evaluation(
+            current_graph=self.graph,
+            rerun_graph=rerun_graph,
+            result=result,
+            configured_operators=configured_operators,
+            overwrite=overwrite,
+        )
         return CleanerResult(
             run_id=runtime_result.run_id,
             cache_root=runtime_result.cache_root,
-            operator_preview_policies=self._preview_policies(result),
+            operator_preview_policies=self._preview_policies(configured_operators=configured_operators),
         )
 
-    def _preview_policies(self, result: CleanerResult | None = None) -> dict[str, PreviewPolicy]:
+    def _preview_policies(
+        self,
+        result: CleanerResult | None = None,
+        configured_operators: list[ConfiguredOperatorSpec] | None = None,
+    ) -> dict[str, PreviewPolicy]:
         """按执行上下文构造可见的预览策略。"""
         if result is not None:
             return dict(result._operator_preview_policies)
-        return {spec.operator_name: spec.spec.preview_policy for spec in self.configured_operators}
+        target = self.configured_operators if configured_operators is None else configured_operators
+        return {spec.operator_name: spec.spec.preview_policy for spec in target}

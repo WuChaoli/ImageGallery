@@ -66,7 +66,7 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
         str(tmp_path / "raw.parquet"),
     )
 
-    cleaner = BasicCleaner(
+    execution = BasicCleaner(
         [
             {
                 "duplicate.semantic_duplicate_check": {
@@ -76,22 +76,26 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
                 }
             }
         ],
+        output_dir=tmp_path / "cleaning",
         semantic_providers={"deterministic": DeterministicSemanticProvider()},
-    )
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    ).compile()
+    result = execution.run(dataset)
 
-    full = cleaner.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
+    full = result.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
     assert full.loc["first", "semantic_duplicate_action"] == "keep"
     assert full.loc["near", "semantic_duplicate_action"] == "drop"
     assert full.loc["far", "semantic_duplicate_action"] == "keep"
 
-    run_dir = next((tmp_path / "cleaning").iterdir())
+    run_dir = (tmp_path / "cleaning") / result.run_id
     parameter_table = pd.read_parquet(run_dir / "parameter_table.parquet")
     assert "semantic_embedding_ref" in parameter_table.columns
     assert "semantic_duplicate_group_id" in parameter_table.columns
     assert (run_dir / "artifacts" / "semantic_embeddings" / "embeddings.npy").exists()
+    assert (run_dir / "artifacts" / "semantic_embeddings" / "manifest.json").exists()
     assert (run_dir / "artifacts" / "semantic_index" / "faiss.index").exists()
+    assert (run_dir / "artifacts" / "semantic_index" / "manifest.json").exists()
     assert (run_dir / "relations" / "semantic_duplicate_pairs.parquet").exists()
+    assert (run_dir / "relations" / "semantic_duplicate_pairs.parquet.manifest.json").exists()
 
     state_text = (run_dir / "state.json").read_text(encoding="utf-8")
     json.loads(state_text)

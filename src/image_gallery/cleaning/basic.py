@@ -55,6 +55,8 @@ class BasicCleaner(Cleaner):
             registry=self._registry,
             configured_operators=configured,
             cache_root=self._cache_root or _default_cache_root(),
+            node_policy=self._node_policy,
+            operator_policies=self._operator_policies,
         )
 
     def plan(self) -> pd.DataFrame:

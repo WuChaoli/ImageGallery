@@ -69,6 +69,7 @@ class SemanticEmbeddingComputer(ParameterComputer):
                     "computer": self.name,
                     "execution_mode": self.execution_mode.value,
                     "config_hash": request.config_hash,
+                    "artifact_ref": str(artifact_dir),
                 }
             },
         )

@@ -11,6 +11,7 @@ from typing import Any, Protocol, runtime_checkable
 
 from image_gallery.cleaning.events import RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph, GraphNode
+from image_gallery.operators.computers.base import ExecutionMode
 
 
 @dataclass(frozen=True)
@@ -64,6 +65,54 @@ class SQLiteRunStateStore:
         store._upsert_run_record(run_record)
         return store
 
+    @classmethod
+    def open_existing(cls, run_dir: Path, run_id: str) -> SQLiteRunStateStore:
+        """打开已有运行目录下的 SQLite 状态存储。"""
+        run_directory = Path(run_dir)
+        db_path = run_directory / cls._DATABASE_NAME
+        if not db_path.exists():
+            raise FileNotFoundError(f"run state database not found: {db_path}")
+
+        connection = sqlite3.connect(db_path)
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """
+            SELECT
+                run_id,
+                cleaner_type,
+                status,
+                dataset_fingerprint,
+                plan_hash,
+                label,
+                tags_json,
+                sample_size,
+                sample_rule_json
+            FROM cleaning_run
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchone()
+        if row is None:
+            connection.close()
+            raise KeyError(f"run not found: {run_id}")
+
+        return cls(
+            connection=connection,
+            run_dir=run_directory,
+            run_record=RunRecord(
+                run_id=row["run_id"],
+                cleaner_type=row["cleaner_type"],
+                status=row["status"],
+                dataset_fingerprint=row["dataset_fingerprint"],
+                plan_hash=row["plan_hash"],
+                label=row["label"],
+                tags=_loads_json(row["tags_json"], default=[]),
+                sample_size=row["sample_size"],
+                sample_rule=_loads_json(row["sample_rule_json"]),
+            ),
+        )
+
     def close(self) -> None:
         """关闭数据库连接。"""
         self._connection.close()
@@ -101,6 +150,11 @@ class SQLiteRunStateStore:
             sample_size=row["sample_size"],
             sample_rule=_loads_json(row["sample_rule_json"]),
         )
+
+    def save_run_record(self, run_record: RunRecord) -> None:
+        """公开保存运行主记录，并同步内存中的当前快照。"""
+        self._run_record = run_record
+        self._upsert_run_record(run_record)
 
     def record_graph(self, graph: CleaningStateGraph) -> None:
         """把 `CleaningStateGraph` 持久化到 `graph_node` 表。"""
@@ -251,6 +305,52 @@ class SQLiteRunStateStore:
             )
             for row in rows
         ]
+
+    def list_graph_nodes(self, run_id: str) -> list[GraphNode]:
+        """读取当前运行已持久化的图节点定义。"""
+        if run_id != self._run_record.run_id:
+            raise KeyError(f"run not found: {run_id}")
+        rows = self._connection.execute(
+            """
+            SELECT
+                node_id,
+                node_type,
+                operator_name,
+                computer_name,
+                stage_name,
+                execution_mode,
+                required_parameters_json,
+                produced_parameters_json,
+                config_hash,
+                policy_hash,
+                upstream_node_ids_json,
+                checkpoint_strategy
+            FROM graph_node
+            WHERE run_id = ?
+            ORDER BY node_id
+            """,
+            (run_id,),
+        ).fetchall()
+        nodes: list[GraphNode] = []
+        for row in rows:
+            execution_mode = row["execution_mode"]
+            nodes.append(
+                GraphNode(
+                    node_id=row["node_id"],
+                    node_type=row["node_type"],
+                    operator_name=row["operator_name"],
+                    computer_name=row["computer_name"],
+                    stage_name=row["stage_name"],
+                    execution_mode=ExecutionMode(execution_mode) if execution_mode else None,
+                    required_parameters=frozenset(_loads_json(row["required_parameters_json"], default=[])),
+                    produced_parameters=frozenset(_loads_json(row["produced_parameters_json"], default=[])),
+                    config_hash=row["config_hash"],
+                    policy_hash=row["policy_hash"],
+                    upstream_node_ids=tuple(_loads_json(row["upstream_node_ids_json"], default=[])),
+                    checkpoint_strategy=row["checkpoint_strategy"],
+                )
+            )
+        return nodes
 
     def _upsert_run_record(self, run_record: RunRecord) -> None:
         """把运行主记录持久化。"""

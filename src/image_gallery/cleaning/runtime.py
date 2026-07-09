@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, cast
-from uuid import uuid4
 
 from image_gallery.cleaning.artifacts import ArtifactManager
 from image_gallery.cleaning.config import ParsedOperatorConfig
-from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths
+from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths, build_run_paths
 from image_gallery.cleaning.evaluator import OperatorEvaluator
 from image_gallery.cleaning.events import ProgressReporter, RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.planner import CleaningRunPlanner
 from image_gallery.cleaning.preview import apply_final_action
+from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.runtime_state import RunRecord, SQLiteRunStateStore
 from image_gallery.cleaning.scheduler import ParameterScheduler
 from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore, OperatorRunState
@@ -23,6 +23,7 @@ from image_gallery.cleaning.tables import (
     CleaningTables,
     initialize_evaluation_table,
     initialize_parameter_table,
+    read_tables,
     write_tables,
 )
 from image_gallery.dataset import Dataset
@@ -37,6 +38,7 @@ class RunOptions:
 
     run_id: str
     retry_max_attempts: int = 1
+    sample_rule: dict[str, object] | None = None
 
 
 @dataclass(frozen=True)
@@ -72,40 +74,164 @@ class CleaningRuntime:
         if not configured_operators:
             return self.run_fake_stage_for_test(dataset=dataset, options=run_options, fail_first_attempt=False)
 
-        return self._run_planned_graph(graph=graph, dataset=dataset, run_options=run_options, configured_operators=configured_operators)
+        return self._run_planned_graph(
+            graph=graph,
+            dataset=dataset,
+            run_options=run_options,
+            configured_operators=configured_operators,
+        )
 
     def resume_graph(
         self,
         graph: CleaningStateGraph,
         dataset: Dataset,
         run_id: str | None = None,
+        result: CleanerResult | None = None,
+        configured_operators: list[ConfiguredOperatorSpec] | None = None,
+        sample_rule: dict[str, object] | None = None,
     ) -> RuntimeRunResult:
-        """占位：按 run_id 重放清洗执行。"""
-        del graph
-        resume_run_id = run_id or uuid4().hex
-        return self.run_fake_stage_for_test(dataset=dataset, options=RunOptions(run_id=resume_run_id))
+        """恢复历史运行；已完成运行直接复用，未完成运行回退到整次重跑。"""
+        resume_run_id, cache_root = self._resolve_run_reference(run_id=run_id, result=result)
+        run_dir = cache_root / resume_run_id
+        store = SQLiteRunStateStore.open_existing(run_dir, resume_run_id)
+        try:
+            run_record = store.load_run(resume_run_id)
+            self._validate_run_record(
+                run_record=run_record,
+                dataset=dataset,
+                graph=graph,
+                sample_rule=sample_rule,
+            )
+            self._validate_graph_nodes(store=store, run_id=resume_run_id, expected_graph=graph)
+            self._validate_run_outputs(run_dir=run_dir, run_record=run_record)
+            if run_record.status == "completed":
+                return RuntimeRunResult(
+                    run_id=resume_run_id,
+                    cache_root=cache_root,
+                    status="completed",
+                    attempt_count=1,
+                )
+        finally:
+            store.close()
+
+        if configured_operators is None:
+            raise ValueError("configured_operators is required when resuming an unfinished run")
+        return self._run_planned_graph(
+            graph=graph,
+            dataset=dataset,
+            run_options=RunOptions(run_id=resume_run_id, sample_rule=run_record.sample_rule),
+            configured_operators=configured_operators,
+        )
 
     def rerun_evaluation(
         self,
-        graph: CleaningStateGraph,
-        result: object,
+        current_graph: CleaningStateGraph,
+        rerun_graph: CleaningStateGraph,
+        result: CleanerResult,
+        configured_operators: list[ConfiguredOperatorSpec],
         operators: object | None = None,
         overwrite: bool = False,
     ) -> RuntimeRunResult:
-        """占位：按结果重跑算子阶段。"""
-        del graph
+        """复用现有参数表与 artifacts，仅重跑 evaluation/merge。"""
         del operators
         del overwrite
+        run_id, cache_root = self._resolve_run_reference(result=result)
+        run_dir = cache_root / run_id
+        store = SQLiteRunStateStore.open_existing(run_dir, run_id)
+        try:
+            run_record = store.load_run(run_id)
+            self._validate_run_record(
+                run_record=run_record,
+                dataset=Dataset.from_path(str(run_dir / "parameter_table.parquet")),
+                graph=current_graph,
+                sample_rule=run_record.sample_rule,
+                skip_dataset_validation=True,
+            )
+            self._validate_graph_nodes(store=store, run_id=run_id, expected_graph=current_graph)
+            self._validate_run_outputs(run_dir=run_dir, run_record=run_record)
+            self._validate_rerun_graph_change(current_graph=current_graph, rerun_graph=rerun_graph)
 
-        if not hasattr(result, "run_id"):
-            run_id = uuid4().hex
-            return RuntimeRunResult(run_id=run_id, cache_root=self._cache_root, status="completed", attempt_count=1)
+            planner = CleaningRunPlanner(self._registry)
+            rerun_plan = planner.compile(
+                [
+                    ParsedOperatorConfig(
+                        operator_name=operator_spec.operator_name,
+                        config=operator_spec.config,
+                        config_hash=operator_spec.operator_config_hash,
+                    )
+                    for operator_spec in configured_operators
+                ]
+            )
 
-        typed_result = cast(Any, result)
-        run_id = str(typed_result.run_id)
-        cache_root = typed_result.cache_root if hasattr(typed_result, "cache_root") else self._cache_root
-        if isinstance(cache_root, str):
-            cache_root = Path(cache_root)
+            state_path = build_run_paths(run_dir).state_path
+            state = JsonRunStateStore().load(state_path)
+            current_parameter_hashes = {
+                node.computer_name: node.config_hash
+                for node in current_graph.nodes
+                if node.node_type == "parameter" and node.computer_name is not None
+            }
+            next_parameter_hashes = {step.computer_name: step.config_hash for step in rerun_plan.parameter_plan.steps}
+            if current_parameter_hashes != next_parameter_hashes:
+                raise ValueError("parameter computer config changed; evaluation-only rerun is not allowed")
+
+            paths = build_run_paths(run_dir)
+            persisted_tables = read_tables(paths)
+            rerun_tables = CleaningTables(
+                parameter_table=persisted_tables.parameter_table,
+                evaluation_table=initialize_evaluation_table(persisted_tables.parameter_table),
+                operator_outputs={},
+                parameter_manifest=persisted_tables.parameter_manifest,
+            )
+            evaluator = OperatorEvaluator()
+            operator_states: list[OperatorRunState] = []
+            for resolved in rerun_plan.resolved_operator_runs:
+                rerun_tables, operator_state = evaluator.evaluate(resolved, rerun_tables)
+                operator_states.append(operator_state)
+            rerun_tables = CleaningTables(
+                parameter_table=rerun_tables.parameter_table,
+                evaluation_table=apply_final_action(rerun_tables.evaluation_table, rerun_tables.operator_outputs),
+                operator_outputs=rerun_tables.operator_outputs,
+                parameter_manifest=rerun_tables.parameter_manifest,
+            )
+            write_tables(tables=rerun_tables, paths=paths)
+
+            updated_record = RunRecord(
+                run_id=run_record.run_id,
+                cleaner_type=run_record.cleaner_type,
+                status="running",
+                dataset_fingerprint=run_record.dataset_fingerprint,
+                plan_hash=rerun_graph.plan_hash,
+                label=run_record.label,
+                tags=run_record.tags,
+                sample_size=run_record.sample_size,
+                sample_rule=run_record.sample_rule,
+            )
+            store.save_run_record(updated_record)
+            store.record_graph(rerun_graph)
+            JsonRunStateStore().save(
+                CleanerRunState(
+                    run_id=run_id,
+                    dataset_fingerprint=state.dataset_fingerprint,
+                    cleaner_type=state.cleaner_type,
+                    enabled_operator_configs=[{item.operator_name: dict(item.config)} for item in configured_operators],
+                    operator_config_hashes=rerun_plan.operator_config_hashes,
+                    parameter_config_hashes=next_parameter_hashes,
+                    parameter_table_path=state.parameter_table_path,
+                    evaluation_table_path=state.evaluation_table_path,
+                    operator_outputs_path=state.operator_outputs_path,
+                    parameter_manifest_path=state.parameter_manifest_path,
+                    relation_paths=state.relation_paths,
+                    artifact_paths=state.artifact_paths,
+                    started_at=state.started_at,
+                    finished_at=datetime.now(timezone.utc).isoformat(),
+                    status="completed",
+                    operator_states=operator_states,
+                ),
+                state_path,
+            )
+            store.update_run_status(run_id=run_id, status="completed")
+        finally:
+            store.close()
         return RuntimeRunResult(run_id=run_id, cache_root=cache_root, status="completed", attempt_count=1)
 
     def _run_planned_graph(
@@ -173,8 +299,8 @@ class CleaningRuntime:
                 plan_hash=graph.plan_hash,
                 label="basic-run",
                 tags=[],
-                sample_size=None,
-                sample_rule=None,
+                sample_size=_sample_size(run_options.sample_rule),
+                sample_rule=run_options.sample_rule,
             ),
         )
         self.state_store.record_graph(graph)
@@ -212,7 +338,9 @@ class CleaningRuntime:
                     cleaner_type="basic",
                     enabled_operator_configs=[{item.operator_name: dict(item.config)} for item in parsed_operators],
                     operator_config_hashes={item.operator_name: item.config_hash for item in parsed_operators},
-                    parameter_config_hashes={},
+                    parameter_config_hashes={
+                        step.computer_name: step.config_hash for step in plan.parameter_plan.steps
+                    },
                     parameter_table_path=str(paths.parameter_table_path),
                     evaluation_table_path=str(paths.evaluation_table_path),
                     operator_outputs_path=str(paths.operator_outputs_path),
@@ -253,6 +381,207 @@ class CleaningRuntime:
                 status="failed",
                 attempt_count=attempt_count,
             )
+
+    def _resolve_run_reference(
+        self,
+        *,
+        run_id: str | None = None,
+        result: CleanerResult | None = None,
+    ) -> tuple[str, Path]:
+        """从 run_id / CleanerResult 中解析运行目录。"""
+        resolved_run_id = run_id
+        cache_root = self._cache_root
+        if result is not None:
+            if resolved_run_id is not None and resolved_run_id != result.run_id:
+                raise ValueError("run_id and result.run_id must match")
+            resolved_run_id = result.run_id
+            cache_root = result._cache_root
+        if resolved_run_id is None:
+            raise ValueError("run_id or result is required")
+        return resolved_run_id, Path(cache_root)
+
+    def _validate_run_record(
+        self,
+        *,
+        run_record: RunRecord,
+        dataset: Dataset,
+        graph: CleaningStateGraph,
+        sample_rule: dict[str, object] | None,
+        skip_dataset_validation: bool = False,
+    ) -> None:
+        """校验 resume/rerun 是否仍指向同一份输入与图计划。"""
+        if not skip_dataset_validation and run_record.dataset_fingerprint != dataset.fingerprint():
+            raise ValueError("dataset fingerprint does not match the recorded run")
+        if run_record.plan_hash != graph.plan_hash:
+            raise ValueError("plan hash does not match the recorded run")
+        expected_sample_rule = run_record.sample_rule if sample_rule is None else sample_rule
+        if expected_sample_rule != run_record.sample_rule:
+            raise ValueError("sample rule does not match the recorded run")
+
+    def _validate_graph_nodes(
+        self,
+        *,
+        store: SQLiteRunStateStore,
+        run_id: str,
+        expected_graph: CleaningStateGraph,
+    ) -> None:
+        """校验持久化 graph node 与当前编译图完全一致。"""
+        persisted = {node.node_id: node for node in store.list_graph_nodes(run_id)}
+        expected = {node.node_id: node for node in expected_graph.nodes}
+        if persisted.keys() != expected.keys():
+            raise ValueError("graph nodes do not match the recorded run")
+        for node_id, expected_node in expected.items():
+            persisted_node = persisted[node_id]
+            if persisted_node != expected_node:
+                raise ValueError(f"graph node mismatch: {node_id}")
+
+    def _validate_run_outputs(self, *, run_dir: Path, run_record: RunRecord) -> None:
+        """校验运行目录里的表、artifact 和 manifest 仍然完整可复用。"""
+        del run_record
+        paths = build_run_paths(run_dir)
+        if not paths.parameter_table_path.exists():
+            raise FileNotFoundError(f"parameter table missing: {paths.parameter_table_path}")
+        if not paths.evaluation_table_path.exists():
+            raise FileNotFoundError(f"evaluation table missing: {paths.evaluation_table_path}")
+        if not paths.parameter_manifest_path.exists():
+            raise FileNotFoundError(f"parameter manifest missing: {paths.parameter_manifest_path}")
+        if not paths.state_path.exists():
+            raise FileNotFoundError(f"state file missing: {paths.state_path}")
+
+        parameter_manifest = json.loads(paths.parameter_manifest_path.read_text(encoding="utf-8"))
+        if not isinstance(parameter_manifest, dict):
+            raise ValueError("parameter manifest payload must be a JSON object")
+
+        state = JsonRunStateStore().load(paths.state_path)
+        for artifact_name, artifact_path in state.artifact_paths.items():
+            self._validate_artifact_ref(
+                artifact_name=artifact_name,
+                artifact_path=Path(artifact_path),
+                expected_config_hash=(
+                    state.parameter_config_hashes.get(owner)
+                    if (owner := _artifact_owner_computer(artifact_name)) is not None
+                    else None
+                ),
+            )
+        for relation_name, relation_path in state.relation_paths.items():
+            self._validate_relation_manifest(
+                relation_name=relation_name,
+                relation_path=Path(relation_path),
+                expected_config_hash=(
+                    state.parameter_config_hashes.get(owner)
+                    if (owner := _relation_owner_computer(relation_name)) is not None
+                    else None
+                ),
+            )
+        for manifest in parameter_manifest.values():
+            if not isinstance(manifest, dict):
+                continue
+            artifact_ref = manifest.get("artifact_ref")
+            if isinstance(artifact_ref, str) and artifact_ref:
+                self._validate_artifact_ref(
+                    artifact_name=str(manifest.get("computer", "artifact")),
+                    artifact_path=Path(artifact_ref),
+                    expected_config_hash=str(manifest.get("config_hash", "")) or None,
+                )
+
+    def _validate_artifact_ref(
+        self,
+        *,
+        artifact_name: str,
+        artifact_path: Path,
+        expected_config_hash: str | None,
+    ) -> None:
+        """按 artifact 类型检查语义 manifest / 通用 dataframe manifest。"""
+        if not artifact_path.exists():
+            raise FileNotFoundError(f"artifact missing: {artifact_path}")
+
+        manifest_path: Path | None = None
+        if artifact_path.is_dir():
+            manifest_path = artifact_path / "manifest.json"
+        elif artifact_path.suffix == ".parquet":
+            manifest_path = artifact_path.with_name(f"{artifact_path.name}.manifest.json")
+        elif artifact_path.name == "faiss.index":
+            manifest_path = artifact_path.parent / "manifest.json"
+
+        if manifest_path is None or not manifest_path.exists():
+            return
+
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        config_hash = payload.get("config_hash")
+        if expected_config_hash is not None and config_hash not in {None, expected_config_hash}:
+            raise ValueError(f"artifact manifest config hash mismatch: {artifact_name}")
+
+    def _validate_relation_manifest(
+        self,
+        *,
+        relation_name: str,
+        relation_path: Path,
+        expected_config_hash: str | None,
+    ) -> None:
+        """校验关系表及其 manifest。"""
+        if not relation_path.exists():
+            raise FileNotFoundError(f"relation table missing: {relation_path}")
+        manifest_path = relation_path.with_name(f"{relation_path.name}.manifest.json")
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"relation manifest missing: {manifest_path}")
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if payload.get("relation_name") != relation_name:
+            raise ValueError(f"relation manifest mismatch: {relation_name}")
+        if expected_config_hash is not None and payload.get("config_hash") != expected_config_hash:
+            raise ValueError(f"relation manifest config hash mismatch: {relation_name}")
+
+    def _validate_rerun_graph_change(
+        self,
+        *,
+        current_graph: CleaningStateGraph,
+        rerun_graph: CleaningStateGraph,
+    ) -> None:
+        """允许 evaluation config 变化，但拒绝图结构和参数节点变化。"""
+        current_nodes = {node.node_id: node for node in current_graph.nodes}
+        rerun_nodes = {node.node_id: node for node in rerun_graph.nodes}
+        if current_nodes.keys() != rerun_nodes.keys():
+            raise ValueError("graph changed; evaluation-only rerun is not allowed")
+
+        for node_id, current_node in current_nodes.items():
+            rerun_node = rerun_nodes[node_id]
+            if current_node.node_type == "parameter":
+                if current_node != rerun_node:
+                    if current_node.config_hash != rerun_node.config_hash:
+                        raise ValueError("parameter computer config changed; evaluation-only rerun is not allowed")
+                    raise ValueError("graph changed; evaluation-only rerun is not allowed")
+                continue
+            if current_node.node_type == "evaluation":
+                comparable_current = (
+                    current_node.node_id,
+                    current_node.node_type,
+                    current_node.operator_name,
+                    current_node.computer_name,
+                    current_node.stage_name,
+                    current_node.execution_mode,
+                    current_node.required_parameters,
+                    current_node.produced_parameters,
+                    current_node.policy_hash,
+                    current_node.upstream_node_ids,
+                    current_node.checkpoint_strategy,
+                )
+                comparable_rerun = (
+                    rerun_node.node_id,
+                    rerun_node.node_type,
+                    rerun_node.operator_name,
+                    rerun_node.computer_name,
+                    rerun_node.stage_name,
+                    rerun_node.execution_mode,
+                    rerun_node.required_parameters,
+                    rerun_node.produced_parameters,
+                    rerun_node.policy_hash,
+                    rerun_node.upstream_node_ids,
+                    rerun_node.checkpoint_strategy,
+                )
+                if comparable_current != comparable_rerun:
+                    raise ValueError("graph changed; evaluation-only rerun is not allowed")
+                continue
+            if current_node != rerun_node:
+                raise ValueError("graph changed; evaluation-only rerun is not allowed")
 
     def run_fake_stage_for_test(
         self,
@@ -377,3 +706,33 @@ class RunEventContext:
     """传递 run_id 的轻量上下文。"""
 
     run_id: str
+
+
+def _sample_size(sample_rule: dict[str, object] | None) -> int | None:
+    """从 sample 规则中提取最常见的样本数表示。"""
+    if sample_rule is None:
+        return None
+    raw = sample_rule.get("n")
+    if raw is None:
+        return None
+    if isinstance(raw, bool):
+        raise TypeError("sample.n must be an integer")
+    if isinstance(raw, (int, float, str, bytes)):
+        return int(raw)
+    raise TypeError("sample.n must be an integer")
+
+
+def _artifact_owner_computer(artifact_name: str) -> str | None:
+    """把已知 artifact 名映射回其 parameter computer。"""
+    return {
+        "semantic_embeddings": "semantic_embedding_computer",
+        "semantic_index": "semantic_duplicate_group_computer",
+    }.get(artifact_name)
+
+
+def _relation_owner_computer(relation_name: str) -> str | None:
+    """把已知 relation 名映射回其 parameter computer。"""
+    return {
+        "semantic_duplicate_pairs": "semantic_duplicate_group_computer",
+        "perceptual_duplicate_pairs": "perceptual_duplicate_group_computer",
+    }.get(relation_name)
