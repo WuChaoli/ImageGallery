@@ -7,7 +7,7 @@ from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore
 
 
 def test_result_export_table_writes_copy(tmp_path: Path) -> None:
-    run_dir = tmp_path / "run"
+    run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     tables_dir.mkdir(parents=True)
     pd.DataFrame({"image_id": ["img-1"], "decode_ok": [True]}).to_parquet(
@@ -25,11 +25,26 @@ def test_result_export_table_writes_copy(tmp_path: Path) -> None:
 def test_result_does_not_expose_work_dir() -> None:
     result = CleanerResult(run_id="run-1", cache_root=Path("/tmp/run"))
 
+    assert not hasattr(result, "cache_root")
     assert not hasattr(result, "work_dir")
 
 
+def test_cleanup_does_not_remove_fallback_candidate_when_run_id_mismatch(tmp_path: Path) -> None:
+    (tmp_path / "run-1" / "tables").mkdir(parents=True)
+    (tmp_path / "run-other" / "tables").mkdir(parents=True)
+    (tmp_path / "run-1" / "tables" / "parameter_table.parquet").write_text("")
+    protected = tmp_path / "run-other"
+
+    result = CleanerResult(run_id="run-missing", cache_root=tmp_path)
+    result.cleanup()
+
+    assert not (tmp_path / "run-missing").exists()
+    assert protected.exists()
+    assert (protected / "tables").exists()
+
+
 def test_result_export_full_returns_expected_rows(tmp_path: Path) -> None:
-    tables_dir = tmp_path / "run" / "tables"
+    tables_dir = tmp_path / "run-1" / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame(
         {
@@ -52,7 +67,7 @@ def test_result_export_full_returns_expected_rows(tmp_path: Path) -> None:
 
 
 def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path) -> None:
-    run_dir = tmp_path / "run"
+    run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"image_id": ["img-1"], "image_uri": ["/tmp/one.png"]}).to_parquet(

@@ -88,24 +88,16 @@ class CleanerResult:
     """清洗一次运行后的只读结果入口。"""
 
     run_id: str
-    cache_root: Path
+    _cache_root: Path
+
+    def __init__(self, run_id: str, cache_root: Path) -> None:
+        """构造函数。"""
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "_cache_root", Path(cache_root))
 
     def _run_dir(self) -> Path:
         """返回本次运行目录。"""
-        base_dir = Path(self.cache_root)
-        run_dir = base_dir / self.run_id
-        if run_dir.exists():
-            return run_dir
-        if (base_dir / "tables").exists():
-            return base_dir
-        candidates = [
-            path
-            for path in base_dir.iterdir()
-            if path.is_dir() and (path / "tables").exists()
-        ]
-        if len(candidates) == 1:
-            return candidates[0]
-        return run_dir
+        return self._cache_root / self.run_id
 
     def _table_file(self, filename: str) -> Path:
         """按新约定和兼容路径返回表文件。"""
@@ -182,7 +174,7 @@ class CleanerResult:
 
     def status(self) -> str:
         """返回运行状态。"""
-        return read_result_status(self.cache_root, self.run_id)
+        return read_result_status(self._cache_root, self.run_id)
 
     def export_table(self, kind: str, path: Path | str) -> Path:
         """把某张运行表拷贝到目标路径。"""
