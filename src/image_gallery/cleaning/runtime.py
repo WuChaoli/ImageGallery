@@ -45,7 +45,7 @@ class CleaningRuntime:
     ) -> RuntimeRunResult:
         """占位：当前阶段仅复用测试阶段虚拟节点执行。"""
         del graph
-        return self._run_fake_stage_for_test(dataset=dataset, options=run_options, fail_first_attempt=False)
+        return self.run_fake_stage_for_test(dataset=dataset, options=run_options, fail_first_attempt=False)
 
     def run_fake_stage_for_test(
         self,

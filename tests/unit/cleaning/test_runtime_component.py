@@ -1,9 +1,10 @@
 from pathlib import Path
 
 import pandas as pd
-from PIL import Image
 import pytest
+from PIL import Image
 
+from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.runtime import CleaningRuntime, RunOptions
 from image_gallery.dataset import Dataset
 
@@ -47,3 +48,16 @@ def test_runtime_retries_stage_once_then_completes(tmp_path: Path, tiny_dataset:
     assert result.attempt_count == 2
     assert runtime.state_store is not None
     assert runtime.state_store.list_events("run-1")[-1].event_type == "run_completed"
+
+
+def test_runtime_run_graph_completes_via_fake_stage(tmp_path: Path, tiny_dataset: Dataset) -> None:
+    runtime = CleaningRuntime(cache_root=tmp_path)
+    graph = CleaningStateGraph(nodes=tuple(), plan_hash="test-graph")
+
+    result = runtime.run_graph(
+        graph=graph,
+        dataset=tiny_dataset,
+        run_options=RunOptions(run_id="run-2"),
+    )
+
+    assert result.status == "completed"
