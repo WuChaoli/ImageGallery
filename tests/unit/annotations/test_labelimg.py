@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 from PIL import Image
 
-from image_gallery.annotations import LabelImgExporter
+from image_gallery.annotations import LabelImgExporter, LabelImgLoader
 from image_gallery.annotations.labelimg import (
     read_pascal_voc_xml,
     relative_bbox_to_voc_bbox,
@@ -157,3 +157,77 @@ def test_labelimg_exporter_rejects_existing_output_without_overwrite(tmp_path: P
 
     with pytest.raises(FileExistsError):
         dataset.export(LabelImgExporter(output_dir))
+
+
+def test_labelimg_loader_writes_labeled_dataset_with_relative_annotations(tmp_path: Path) -> None:
+    input_dir = tmp_path / "task"
+    annotations_dir = input_dir / "annotations"
+    annotations_dir.mkdir(parents=True)
+    Dataset.write(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "img-1",
+                    "image_uri": str(tmp_path / "img-1.png"),
+                    "width": 100,
+                    "height": 80,
+                }
+            ]
+        ),
+        str(input_dir / "raw.parquet"),
+    )
+    write_pascal_voc_xml(
+        xml_path=annotations_dir / "img-1.xml",
+        folder="images",
+        filename="img-1.png",
+        image_path=input_dir / "images" / "img-1.png",
+        width=100,
+        height=80,
+        depth=3,
+        annotations=[
+            {
+                "label": "person",
+                "bbox": {"x_min": 0.1, "y_min": 0.25, "x_max": 0.6, "y_max": 0.75},
+                "format": "relative_xyxy",
+            }
+        ],
+    )
+
+    dataset = Dataset.load(LabelImgLoader(input_dir))
+
+    frame = dataset.to_frame()
+    assert dataset.dataset_path == str(input_dir / "labeled.parquet")
+    assert frame.loc[0, "annotations"] == [
+        {
+            "label": "person",
+            "bbox": {"x_min": 0.1, "y_min": 0.25, "x_max": 0.6, "y_max": 0.75},
+            "format": "relative_xyxy",
+            "source": "labelimg_pascal_voc",
+            "difficult": 0,
+            "truncated": 0,
+            "pose": "Unspecified",
+        }
+    ]
+
+
+def test_labelimg_loader_rejects_unknown_xml_image_id(tmp_path: Path) -> None:
+    input_dir = tmp_path / "task"
+    annotations_dir = input_dir / "annotations"
+    annotations_dir.mkdir(parents=True)
+    Dataset.write(
+        pd.DataFrame([{"image_id": "img-1", "image_uri": "/tmp/img-1.png", "width": 100, "height": 80}]),
+        str(input_dir / "raw.parquet"),
+    )
+    write_pascal_voc_xml(
+        xml_path=annotations_dir / "unknown.xml",
+        folder="images",
+        filename="unknown.png",
+        image_path=input_dir / "images" / "unknown.png",
+        width=100,
+        height=80,
+        depth=3,
+        annotations=[],
+    )
+
+    with pytest.raises(ValueError, match="no matching image_id"):
+        Dataset.load(LabelImgLoader(input_dir))

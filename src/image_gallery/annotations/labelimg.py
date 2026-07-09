@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import math
 from dataclasses import dataclass
 from io import BytesIO
@@ -88,8 +89,60 @@ class LabelImgExporter:
         )
 
 
+@dataclass(frozen=True)
 class LabelImgLoader:
-    """LabelImg 加载器占位类，后续任务实现完整加载逻辑。"""
+    """从 LabelImg Pascal VOC 标注目录加载带 annotations 的 Dataset。"""
+
+    input_dir: str | Path
+    annotation_column: str = "annotations"
+    dataset_filename: str = "raw.parquet"
+    output_filename: str = "labeled.parquet"
+    strict: bool = True
+
+    def load(self) -> object:
+        """读取 raw.parquet 和 annotations/*.xml，写出 labeled.parquet。"""
+        from image_gallery.dataset.dataset import Dataset
+
+        input_dir = Path(self.input_dir)
+        raw_path = input_dir / self.dataset_filename
+        dataset = Dataset.load(str(raw_path))
+        frame = dataset.to_frame()
+        _require_columns(frame, ["image_id", "width", "height"])
+
+        rows_by_id = {str(row["image_id"]): index for index, row in frame.iterrows()}
+        annotations_by_id: dict[str, list[dict[str, object]]] = {image_id: [] for image_id in rows_by_id}
+        failures: list[dict[str, object]] = []
+
+        for xml_path in sorted((input_dir / "annotations").glob("*.xml")):
+            image_id = xml_path.stem
+            if image_id not in rows_by_id:
+                _record_or_raise(failures, self.strict, f"annotation xml has no matching image_id: {xml_path}")
+                continue
+            row = frame.loc[rows_by_id[image_id]]
+            parsed = read_pascal_voc_xml(xml_path)
+            width = _require_positive_int(row["width"], "width")
+            height = _require_positive_int(row["height"], "height")
+            if parsed.width != width or parsed.height != height:
+                _record_or_raise(
+                    failures,
+                    self.strict,
+                    (
+                        f"annotation size mismatch for image_id={image_id}: "
+                        f"dataset=({width},{height}), xml=({parsed.width},{parsed.height})"
+                    ),
+                )
+                continue
+            annotations_by_id[image_id] = parsed.annotations
+
+        frame[self.annotation_column] = [annotations_by_id[str(image_id)] for image_id in frame["image_id"]]
+        output_path = input_dir / self.output_filename
+        Dataset.write(frame, str(output_path), storage=dataset.storage)
+        if failures:
+            (input_dir / "labelimg_load_report.json").write_text(
+                json.dumps({"failures": failures}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+        return Dataset.load(str(output_path), storage=dataset.storage)
 
 
 def relative_bbox_to_voc_bbox(annotation: dict[str, object], width: int, height: int) -> tuple[int, int, int, int]:
@@ -335,3 +388,10 @@ def _image_depth(image_bytes: bytes) -> int:
         if image.mode in {"RGBA", "CMYK"}:
             return 4
         return 3
+
+
+def _record_or_raise(failures: list[dict[str, object]], strict: bool, message: str) -> None:
+    """按 strict 策略记录或抛出 LabelImg 加载错误。"""
+    if strict:
+        raise ValueError(message)
+    failures.append({"error_message": message})
