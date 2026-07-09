@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from uuid import uuid4
 
 from image_gallery.cleaning.artifacts import ArtifactManager
 from image_gallery.cleaning.events import ProgressReporter, RuntimeEvent
@@ -24,6 +25,8 @@ class RunOptions:
 class RuntimeRunResult:
     """运行结果摘要。"""
 
+    run_id: str
+    cache_root: Path
     status: str
     attempt_count: int
 
@@ -46,6 +49,40 @@ class CleaningRuntime:
         """占位：当前阶段仅复用测试阶段虚拟节点执行。"""
         del graph
         return self.run_fake_stage_for_test(dataset=dataset, options=run_options, fail_first_attempt=False)
+
+    def resume_graph(
+        self,
+        graph: CleaningStateGraph,
+        dataset: Dataset,
+        run_id: str | None = None,
+    ) -> RuntimeRunResult:
+        """占位：按 run_id 重放清洗执行。"""
+        del graph
+        resume_run_id = run_id or uuid4().hex
+        return self.run_fake_stage_for_test(dataset=dataset, options=RunOptions(run_id=resume_run_id))
+
+    def rerun_evaluation(
+        self,
+        graph: CleaningStateGraph,
+        result: object,
+        operators: object | None = None,
+        overwrite: bool = False,
+    ) -> RuntimeRunResult:
+        """占位：按结果重跑算子阶段。"""
+        del graph
+        del operators
+        del overwrite
+
+        if not hasattr(result, "run_id"):
+            run_id = uuid4().hex
+            run_dir = self._cache_root / run_id
+            return RuntimeRunResult(run_id=run_id, cache_root=run_dir, status="completed", attempt_count=1)
+
+        run_id = str(getattr(result, "run_id"))
+        cache_root = getattr(result, "cache_root", self._cache_root)
+        if isinstance(cache_root, str):
+            cache_root = Path(cache_root)
+        return RuntimeRunResult(run_id=run_id, cache_root=cache_root / run_id, status="completed", attempt_count=1)
 
     def run_fake_stage_for_test(
         self,
@@ -112,7 +149,12 @@ class CleaningRuntime:
                 message="run completed",
                 payload={"attempt_count": attempt},
             )
-            return RuntimeRunResult(status="completed", attempt_count=attempt_count)
+            return RuntimeRunResult(
+                run_id=run_id,
+                cache_root=run_dir,
+                status="completed",
+                attempt_count=attempt_count,
+            )
 
         self._report(
             RunEventContext(run_id),
@@ -121,7 +163,12 @@ class CleaningRuntime:
             message="run failed",
             payload={"attempt_count": attempt_count},
         )
-        return RuntimeRunResult(status="failed", attempt_count=attempt_count)
+        return RuntimeRunResult(
+            run_id=run_id,
+            cache_root=run_dir,
+            status="failed",
+            attempt_count=attempt_count,
+        )
 
     def _report(
         self,

@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+import pandas as pd
 
 from image_gallery.cleaning.config import hash_config
 from image_gallery.cleaning.policy import ComputerRuntimePolicy, NodePolicy
@@ -48,6 +49,28 @@ class CleaningStateGraph:
             registry=registry,
             node_policy=node_policy,
             operator_policies=operator_policies,
+        )
+
+    def to_frame(self) -> pd.DataFrame:
+        """将图节点序列化为可展示 DataFrame。"""
+        return pd.DataFrame(
+            [
+                {
+                    "node_id": node.node_id,
+                    "node_type": node.node_type,
+                    "operator_name": node.operator_name,
+                    "computer_name": node.computer_name,
+                    "stage_name": node.stage_name,
+                    "execution_mode": node.execution_mode.value if node.execution_mode else None,
+                    "required_parameters": sorted(node.required_parameters),
+                    "produced_parameters": sorted(node.produced_parameters),
+                    "upstream_node_ids": sorted(node.upstream_node_ids),
+                    "config_hash": node.config_hash,
+                    "policy_hash": node.policy_hash,
+                    "checkpoint_strategy": node.checkpoint_strategy,
+                }
+                for node in self.nodes
+            ]
         )
 
 

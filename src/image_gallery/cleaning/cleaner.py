@@ -12,7 +12,7 @@ class Cleaner(ABC):
     """清洗策略基类。"""
 
     @abstractmethod
-    def compile(self) -> "Cleaner":
+    def compile(self) -> object:
         """编译当前 Cleaner 配置，不读取 dataset，不写运行产物。"""
 
     @abstractmethod
@@ -23,9 +23,8 @@ class Cleaner(ABC):
     def run(
         self,
         dataset: Dataset,
-        output_dir: str | Path | None = None,
-        overwrite: bool = False,
-    ) -> "Cleaner":
+        **run_options: object,
+    ) -> object:
         """执行当前 Cleaner 配置的全部算子。"""
 
     @abstractmethod
