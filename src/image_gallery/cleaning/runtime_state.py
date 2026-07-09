@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
+from image_gallery.cleaning.events import RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph, GraphNode
 
 
@@ -25,18 +26,6 @@ class RunRecord:
     tags: list[str]
     sample_size: int | None
     sample_rule: dict[str, Any] | None
-
-
-@dataclass(frozen=True)
-class RuntimeEvent:
-    """运行时事件，作为 `record_event` 的运行时输入输出形式。"""
-
-    event_type: str
-    run_id: str = ""
-    node_id: str | None = None
-    message: str | None = None
-    payload: dict[str, Any] | None = None
-    timestamp: str | None = None
 
 
 @runtime_checkable
