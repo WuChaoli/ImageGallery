@@ -1,6 +1,7 @@
 import json
 from dataclasses import asdict, dataclass
 from hashlib import sha256
+
 import pandas as pd
 
 from image_gallery.cleaning.config import hash_config

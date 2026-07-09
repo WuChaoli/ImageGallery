@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, cast
 from uuid import uuid4
 
 from image_gallery.cleaning.artifacts import ArtifactManager
@@ -75,14 +76,14 @@ class CleaningRuntime:
 
         if not hasattr(result, "run_id"):
             run_id = uuid4().hex
-            run_dir = self._cache_root / run_id
-            return RuntimeRunResult(run_id=run_id, cache_root=run_dir, status="completed", attempt_count=1)
+            return RuntimeRunResult(run_id=run_id, cache_root=self._cache_root, status="completed", attempt_count=1)
 
-        run_id = str(getattr(result, "run_id"))
-        cache_root = getattr(result, "cache_root", self._cache_root)
+        typed_result = cast(Any, result)
+        run_id = str(typed_result.run_id)
+        cache_root = typed_result.cache_root if hasattr(typed_result, "cache_root") else self._cache_root
         if isinstance(cache_root, str):
             cache_root = Path(cache_root)
-        return RuntimeRunResult(run_id=run_id, cache_root=cache_root / run_id, status="completed", attempt_count=1)
+        return RuntimeRunResult(run_id=run_id, cache_root=cache_root, status="completed", attempt_count=1)
 
     def run_fake_stage_for_test(
         self,
@@ -142,19 +143,20 @@ class CleaningRuntime:
                 message="stage completed",
                 payload={"attempt": attempt},
             )
-            self._report(
-                RunEventContext(run_id),
-                "run_completed",
-                "runtime",
-                message="run completed",
-                payload={"attempt_count": attempt},
-            )
-            return RuntimeRunResult(
-                run_id=run_id,
-                cache_root=run_dir,
-                status="completed",
-                attempt_count=attempt_count,
-            )
+        self._report(
+            RunEventContext(run_id),
+            "run_completed",
+            "runtime",
+            message="run completed",
+            payload={"attempt_count": attempt},
+        )
+        self._set_run_status(run_id=run_id, status="completed")
+        return RuntimeRunResult(
+            run_id=run_id,
+            cache_root=self._cache_root,
+            status="completed",
+            attempt_count=attempt_count,
+        )
 
         self._report(
             RunEventContext(run_id),
@@ -163,12 +165,19 @@ class CleaningRuntime:
             message="run failed",
             payload={"attempt_count": attempt_count},
         )
+        self._set_run_status(run_id=run_id, status="failed")
         return RuntimeRunResult(
             run_id=run_id,
-            cache_root=run_dir,
+            cache_root=self._cache_root,
             status="failed",
             attempt_count=attempt_count,
         )
+
+    def _set_run_status(self, run_id: str, status: str) -> None:
+        """同步运行主状态到 SQLite。"""
+        if self.state_store is None:
+            raise RuntimeError("state store not initialized")
+        self.state_store.update_run_status(run_id=run_id, status=status)
 
     def _report(
         self,

@@ -161,6 +161,18 @@ class SQLiteRunStateStore:
         )
         self._connection.commit()
 
+    def update_run_status(self, run_id: str, status: str) -> None:
+        """更新运行状态。"""
+        self._connection.execute(
+            """
+            UPDATE cleaning_run
+            SET status = ?
+            WHERE run_id = ?
+            """,
+            (status, run_id),
+        )
+        self._connection.commit()
+
     def record_node_started(self, node_id: str) -> None:
         """将节点标记为开始运行。"""
         now = _utcnow()

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from tempfile import gettempdir
-from typing import Mapping
 from uuid import uuid4
 
 import pandas as pd
@@ -71,7 +71,18 @@ def _coerce_retry_max_attempts(run_options: Mapping[str, object]) -> int:
     raw = run_options.get("retry_max_attempts", 1)
     if raw is None:
         return 1
-    return int(raw)
+    if isinstance(raw, bool):
+        raise TypeError("retry_max_attempts must be int or str")
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, float):
+        return int(raw)
+    if isinstance(raw, str):
+        try:
+            return int(raw)
+        except ValueError as error:
+            raise TypeError("retry_max_attempts must be int or str") from error
+    raise TypeError("retry_max_attempts must be int or str")
 
 
 @dataclass(frozen=True)

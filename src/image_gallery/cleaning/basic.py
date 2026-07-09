@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import cast
+
 import pandas as pd
 
 from image_gallery.cleaning.cleaner import Cleaner
@@ -10,7 +12,8 @@ from image_gallery.cleaning.execution import CleanerExecution, _default_cache_ro
 from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.policy import NodePolicy
 from image_gallery.cleaning.preview import PreviewResult
-from image_gallery.cleaning.selection import select_operators
+from image_gallery.cleaning.result import CleanerResult
+from image_gallery.cleaning.selection import OperatorSelectorInput, select_operators
 from image_gallery.dataset import Dataset
 from image_gallery.operators.builtin import create_default_registry
 from image_gallery.operators.registry import OperatorRegistry
@@ -29,7 +32,7 @@ class BasicCleaner(Cleaner):
         node_policy: NodePolicy | None = None,
         operator_policies: dict[str, NodePolicy] | None = None,
     ) -> None:
-        self._operators = operator_configs
+        self._operators: OperatorSelectorInput = cast(OperatorSelectorInput, operator_configs)
         self._registry = registry if registry is not None else create_default_registry(semantic_providers)
         self._cache_root = Path(output_dir) if output_dir is not None else None
         self._node_policy = node_policy
@@ -58,7 +61,7 @@ class BasicCleaner(Cleaner):
         """返回当前编译计划 DataFrame。"""
         return self.compile().plan()
 
-    def run(self, dataset: Dataset, **run_options: object):
+    def run(self, dataset: Dataset, **run_options: object) -> CleanerResult:
         """执行清洗图并返回运行结果。"""
         if not isinstance(dataset, Dataset):
             raise CleanerStateError("dataset must be a Dataset instance")
@@ -106,15 +109,15 @@ class BasicCleaner(Cleaner):
         """返回算子运行状态：Task7 提供正式实现。"""
         raise NotImplementedError("state is implemented in task7")
 
-    def config(self, operator_configs: OperatorConfigInput) -> "BasicCleaner":
+    def config(self, operator_configs: OperatorConfigInput) -> BasicCleaner:
         """更新算子配置，下一次编译将基于新配置。"""
-        self._operators = operator_configs
+        self._operators = cast(OperatorSelectorInput, operator_configs)
         return self
 
-    def rerun(self, operator_configs: OperatorConfigInput) -> "BasicCleaner":
-        """按新配置重跑：阶段1返回 self 表示重建入口。"""
-        self._operators = operator_configs
-        return self
+    def rerun(self, operator_configs: OperatorConfigInput) -> BasicCleaner:
+        """按新配置重跑。"""
+        del operator_configs
+        raise NotImplementedError("rerun is implemented in task7")
 
     def result(self, operator_name: str) -> pd.DataFrame:
         """返回算子执行结果：Task7 提供正式实现。"""

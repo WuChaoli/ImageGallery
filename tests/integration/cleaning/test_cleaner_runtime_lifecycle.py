@@ -30,5 +30,5 @@ def test_basic_cleaner_run_returns_result_and_hides_process_outputs(tmp_path: Pa
     dataset = _tiny_dataset(tmp_path)
     result = BasicCleaner([{"format.decode_check": {}}]).run(dataset, label="smoke")
 
-    assert result.status() in {"completed", "running"}
+    assert result.status() == "completed"
     assert not (tmp_path / "parameter_table.parquet").exists()
