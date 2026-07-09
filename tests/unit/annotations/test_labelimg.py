@@ -1,13 +1,17 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
+from PIL import Image
 
+from image_gallery.annotations import LabelImgExporter
 from image_gallery.annotations.labelimg import (
     read_pascal_voc_xml,
     relative_bbox_to_voc_bbox,
     voc_bbox_to_annotation,
     write_pascal_voc_xml,
 )
+from image_gallery.dataset import Dataset
 
 
 def test_relative_bbox_to_voc_bbox_uses_image_dimensions() -> None:
@@ -95,3 +99,61 @@ def test_invalid_relative_bbox_is_rejected() -> None:
 
     with pytest.raises(ValueError, match="invalid bbox"):
         relative_bbox_to_voc_bbox(annotation, width=100, height=80)
+
+
+def _write_image(path: Path, size: tuple[int, int] = (10, 8), color: tuple[int, int, int] = (10, 20, 30)) -> bytes:
+    Image.new("RGB", size, color=color).save(path)
+    return path.read_bytes()
+
+
+def test_labelimg_exporter_writes_images_dataset_and_existing_xml(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.png"
+    image_bytes = _write_image(image_path, size=(100, 80))
+    dataset = Dataset.write(
+        pd.DataFrame(
+            [
+                {
+                    "image_id": "img-1",
+                    "image_uri": str(image_path),
+                    "width": 100,
+                    "height": 80,
+                    "file_extension": ".png",
+                    "source_uri": "/camera/source.png",
+                    "annotations": [
+                        {
+                            "label": "person",
+                            "bbox": {"x_min": 0.1, "y_min": 0.25, "x_max": 0.6, "y_max": 0.75},
+                            "format": "relative_xyxy",
+                        }
+                    ],
+                }
+            ]
+        ),
+        str(tmp_path / "raw.parquet"),
+    )
+    output_dir = tmp_path / "labelimg"
+
+    result = dataset.export(LabelImgExporter(output_dir))
+
+    assert result.output_dir == str(output_dir)
+    assert result.image_count == 1
+    assert result.annotation_count == 1
+    assert (output_dir / "raw.parquet").exists()
+    assert (output_dir / "images" / "img-1.png").read_bytes() == image_bytes
+    parsed = read_pascal_voc_xml(output_dir / "annotations" / "img-1.xml")
+    assert parsed.filename == "img-1.png"
+    assert parsed.annotations[0]["label"] == "person"
+
+
+def test_labelimg_exporter_rejects_existing_output_without_overwrite(tmp_path: Path) -> None:
+    image_path = tmp_path / "source.png"
+    _write_image(image_path)
+    dataset = Dataset.write(
+        pd.DataFrame([{"image_id": "img-1", "image_uri": str(image_path), "width": 10, "height": 8}]),
+        str(tmp_path / "raw.parquet"),
+    )
+    output_dir = tmp_path / "labelimg"
+    output_dir.mkdir()
+
+    with pytest.raises(FileExistsError):
+        dataset.export(LabelImgExporter(output_dir))
