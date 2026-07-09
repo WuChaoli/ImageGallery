@@ -26,7 +26,7 @@ def _write_draw_dataset(tmp_path: Path) -> Dataset:
         ),
         dataset_path,
     )
-    return Dataset.from_path(dataset_path)
+    return Dataset.load(dataset_path)
 
 
 def test_dataset_draw_filters_rows(tmp_path: Path) -> None:
@@ -69,7 +69,7 @@ def test_dataset_draw_requires_image_uri_column(tmp_path: Path) -> None:
     Dataset.write(pd.DataFrame([{"image_id": "img-1"}]), dataset_path)
 
     with pytest.raises(ValueError, match="image_uri"):
-        Dataset.from_path(dataset_path).draw()
+        Dataset.load(dataset_path).draw()
 
 
 def test_dataset_draw_rejects_invalid_sort_direction(tmp_path: Path) -> None:

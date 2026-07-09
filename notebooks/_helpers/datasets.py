@@ -21,7 +21,7 @@ def load_default_minio_sample_1000_dataset() -> Dataset:
     raw_path = get_default_minio_sample_1000_raw_path()
     if not raw_path.exists():
         raise RuntimeError(f"sample raw dataset not found: {raw_path}")
-    return Dataset.from_path(str(raw_path), storage=load_minio_storage())
+    return Dataset.load(str(raw_path), storage=load_minio_storage())
 
 
 def load_default_minio_sample_1000_frame() -> pd.DataFrame:

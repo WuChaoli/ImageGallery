@@ -4,6 +4,7 @@ import json
 import math
 from dataclasses import dataclass
 from io import BytesIO
+from numbers import Real
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -233,8 +234,8 @@ def write_pascal_voc_xml(
         obj = ElementTree.SubElement(root, "object")
         ElementTree.SubElement(obj, "name").text = str(annotation["label"])
         ElementTree.SubElement(obj, "pose").text = str(annotation.get("pose", "Unspecified"))
-        ElementTree.SubElement(obj, "truncated").text = str(int(annotation.get("truncated", 0)))
-        ElementTree.SubElement(obj, "difficult").text = str(int(annotation.get("difficult", 0)))
+        ElementTree.SubElement(obj, "truncated").text = str(_int_value(annotation.get("truncated", 0), "truncated"))
+        ElementTree.SubElement(obj, "difficult").text = str(_int_value(annotation.get("difficult", 0), "difficult"))
         box = ElementTree.SubElement(obj, "bndbox")
         ElementTree.SubElement(box, "xmin").text = str(xmin)
         ElementTree.SubElement(box, "ymin").text = str(ymin)
@@ -325,10 +326,19 @@ def _require_non_empty(value: object, name: str) -> str:
 
 def _require_positive_int(value: object, name: str) -> int:
     """读取正整数尺寸字段。"""
-    number = int(value)
+    number = _int_value(value, name)
     if number <= 0:
         raise ValueError(f"{name} must be positive: {value}")
     return number
+
+
+def _int_value(value: object, name: str) -> int:
+    """把常见表格/XML 数字值转换为 int。"""
+    if isinstance(value, str):
+        return int(value)
+    if isinstance(value, Real):
+        return int(float(value))
+    raise ValueError(f"{name} must be an integer-compatible value: {value}")
 
 
 def _annotation_list(value: object) -> list[dict[str, object]]:

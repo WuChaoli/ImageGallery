@@ -23,7 +23,7 @@ FIRST_BATCH_OPERATORS = get_cleaning_v3_first_batch_operator_configs()
 
 
 def _build_sample_1000_dataset() -> Dataset:
-    return Dataset.from_path(str(SAMPLE_DATASET_PATH), storage=load_minio_storage())
+    return Dataset.load(str(SAMPLE_DATASET_PATH), storage=load_minio_storage())
 
 
 def _write_image(path: Path, size: tuple[int, int] = (20, 20)) -> None:

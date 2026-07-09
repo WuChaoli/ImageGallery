@@ -12,13 +12,13 @@ def test_dataset_fingerprint_is_stable_for_same_content(tmp_path: Path) -> None:
     frame.to_parquet(first_path, index=False)
     frame.to_parquet(second_path, index=False)
 
-    assert Dataset.from_path(first_path).fingerprint() == Dataset.from_path(second_path).fingerprint()
+    assert Dataset.load(first_path).fingerprint() == Dataset.load(second_path).fingerprint()
 
 
 def test_dataset_fingerprint_handles_list_values_after_parquet_roundtrip(tmp_path: Path) -> None:
     dataset_path = str(tmp_path / "raw.parquet")
     pd.DataFrame([{"image_id": "img-1", "tags": ["dataset/project_a"]}]).to_parquet(dataset_path, index=False)
 
-    fingerprint = Dataset.from_path(dataset_path).fingerprint()
+    fingerprint = Dataset.load(dataset_path).fingerprint()
 
     assert len(fingerprint) == 64

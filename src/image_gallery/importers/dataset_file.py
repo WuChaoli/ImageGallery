@@ -26,7 +26,7 @@ class DatasetParser:
         if not self.source_uri_column:
             raise ValueError("source_uri_column must not be empty")
 
-        frame = Dataset.from_path(self.dataset_path).to_frame()
+        frame = Dataset.load(self.dataset_path).to_frame()
         if self.image_uri_column not in frame.columns:
             raise ValueError(f"missing image uri column: {self.image_uri_column}")
 

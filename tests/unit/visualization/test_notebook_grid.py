@@ -26,7 +26,7 @@ def test_render_image_grid_from_dataset_uses_file_uri_and_caption(tmp_path: Path
         dataset_path,
     )
 
-    html = render_image_grid(Dataset.from_path(dataset_path), caption_columns=["image_id", "width"])
+    html = render_image_grid(Dataset.load(dataset_path), caption_columns=["image_id", "width"])
 
     assert image_path.as_uri() in html
     assert "img-1" in html

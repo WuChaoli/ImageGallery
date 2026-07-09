@@ -27,7 +27,7 @@ def test_import_pipeline_accepts_local_path_shortcut_and_writes_outputs(tmp_path
 
     result = pipeline.run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame()
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame()
     failure_frame = pd.read_json(result.failure_manifest_path, lines=True)
     managed_path = Path(raw_frame.iloc[0]["image_uri"])
     today = datetime.now().date().isoformat()
@@ -64,7 +64,7 @@ def test_import_pipeline_accepts_local_path_parser_and_rolls_over_shards(tmp_pat
 
     result = pipeline.run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame().sort_values("source_file_name")
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame().sort_values("source_file_name")
     image_paths = [Path(image_uri) for image_uri in raw_frame["image_uri"]]
     today = datetime.now().date().isoformat()
 
@@ -97,7 +97,7 @@ def test_import_pipeline_accepts_custom_raw_object_prefix(tmp_path: Path) -> Non
         prefix="datasets/project_a/raw",
     ).run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame()
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame()
     managed_path = Path(raw_frame.iloc[0]["image_uri"])
     today = datetime.now().date().isoformat()
 
@@ -113,7 +113,7 @@ def test_import_pipeline_allows_empty_prefix(tmp_path: Path) -> None:
 
     result = ImportPipeline(source=source_dir, storage=storage, output_dir=tmp_path / "outputs", prefix="").run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame()
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame()
     managed_path = Path(raw_frame.iloc[0]["image_uri"])
     today = datetime.now().date().isoformat()
 
@@ -136,7 +136,7 @@ def test_import_pipeline_accepts_dataset_parser_with_custom_image_column(tmp_pat
         output_dir=tmp_path / "outputs",
     ).run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame()
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame()
     assert raw_frame.iloc[0]["source_uri"] == "original://a"
     assert raw_frame.iloc[0]["source_type"] == "dataset"
     assert result.report == {"success_count": 1, "failure_count": 0}
@@ -171,7 +171,7 @@ def test_import_pipeline_accepts_url_path_parser(tmp_path: Path, monkeypatch: py
         output_dir=tmp_path / "outputs",
     ).run()
 
-    raw_frame = Dataset.from_path(result.raw_dataset_path).to_frame()
+    raw_frame = Dataset.load(result.raw_dataset_path).to_frame()
     assert raw_frame.iloc[0]["source_uri"] == "https://example.com/a.jpg"
     assert raw_frame.iloc[0]["source_type"] == "url_path"
     assert result.report == {"success_count": 1, "failure_count": 0}

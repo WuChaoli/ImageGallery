@@ -15,7 +15,7 @@ def main() -> None:
 
     storage = FileSystemStorage(storage_name="local_main").connect(root=work_dir / "storage")
     result = ImportPipeline(source=source_dir, storage=storage, output_dir=work_dir / "outputs").run()
-    raw_dataset = Dataset.from_path(result.raw_dataset_path)
+    raw_dataset = Dataset.load(result.raw_dataset_path)
     print(raw_dataset.count())
     print(result.report["success_count"])
     print(result.report["failure_count"])
