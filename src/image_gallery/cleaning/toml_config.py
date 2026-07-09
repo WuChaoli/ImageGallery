@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 try:
     import tomllib
@@ -17,6 +18,9 @@ from image_gallery.cleaning.policy import (
     ResourcePolicy,
     RetryPolicy,
 )
+from image_gallery.cleaning.selection import OperatorSelectorInput, select_operators
+from image_gallery.operators.builtin import create_default_registry
+from image_gallery.operators.registry import OperatorRegistry
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,42 @@ class CleanerConfig:
         )
 
 
+def build_cleaner_toml_template(
+    operators: object,
+    *,
+    registry: OperatorRegistry | None = None,
+) -> str:
+    """为给定 selectors 构造不含密钥的 cleaner TOML 模板。"""
+    selected_registry = registry if registry is not None else create_default_registry()
+    normalized_operators = _normalize_template_operators(operators)
+    configured = select_operators(cast(OperatorSelectorInput, normalized_operators), selected_registry)
+
+    lines = [
+        "[cleaner]",
+        f"operators = {_format_toml_list(normalized_operators)}",
+        "",
+        "[node_policy.batch]",
+        "size = 128",
+        "",
+        "[node_policy.failure]",
+        "fail_fast = false",
+        "max_errors = 100",
+    ]
+    for operator in configured:
+        lines.extend(
+            [
+                "",
+                "[[operator]]",
+                f'name = "{operator.operator_name}"',
+            ]
+        )
+        for key, value in operator.config.items():
+            if value is None:
+                continue
+            lines.append(f"{key} = {_format_toml_value(value)}")
+    return "\n".join(lines) + "\n"
+
+
 def _parse_operator_configs(raw: object) -> dict[str, dict[str, object]]:
     """解析 [[operator]] 中的业务配置。"""
     if raw is None:
@@ -85,6 +125,40 @@ def _parse_operator_configs(raw: object) -> dict[str, dict[str, object]]:
             raise ValueError(f"operator config for {name} must be a mapping")
         parsed[name] = config
     return parsed
+
+
+def _normalize_template_operators(raw: object) -> list[str]:
+    """把模板输入归一化为 selectors 列表。"""
+    if isinstance(raw, str):
+        return [raw]
+    if not isinstance(raw, list) or not raw:
+        raise ValueError("template operators must be a non-empty string or list of strings")
+    normalized: list[str] = []
+    for item in raw:
+        if not isinstance(item, str) or not item:
+            raise ValueError("template operators entries must be non-empty strings")
+        normalized.append(item)
+    return normalized
+
+
+def _format_toml_list(values: list[str]) -> str:
+    """格式化字符串列表为 TOML 数组。"""
+    return "[" + ", ".join(f'"{value}"' for value in values) + "]"
+
+
+def _format_toml_value(value: object) -> str:
+    """把基础 Python 值格式化为 TOML 字面量。"""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, str):
+        return f'"{value}"'
+    if isinstance(value, (int, float)):
+        return repr(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
+    if isinstance(value, tuple):
+        return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
+    raise TypeError(f"unsupported TOML template value: {value!r}")
 
 
 def _parse_operators(raw: object) -> str | list[object]:

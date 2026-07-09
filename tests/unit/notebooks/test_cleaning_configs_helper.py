@@ -2,6 +2,8 @@ from notebooks._helpers.cleaning_configs import (
     get_cleaning_v3_first_batch_operator_configs,
     get_cleaning_v3_light_risk_operator_configs,
     get_cleaning_v3_quality_baseline_operator_configs,
+    get_cleaning_v3_result_api_snippet,
+    get_cleaning_v3_toml_examples,
 )
 
 
@@ -51,3 +53,20 @@ def test_light_risk_operator_configs_include_all_second_batch_operators() -> Non
         "format.animated_image_check",
         "metadata.orientation_check",
     ]
+
+
+def test_cleaning_v3_toml_examples_cover_selector_inputs() -> None:
+    examples = get_cleaning_v3_toml_examples()
+
+    assert '[cleaner]\noperators = ["ALL"]' in examples["all"]
+    assert 'operators = ["QUALITY", "DUPLICATE"]' in examples["quality_duplicate"]
+    assert 'name = "quality.blur_check"' in examples["quality_duplicate"]
+    assert 'name = "duplicate.exact_duplicate_check"' in examples["quality_duplicate"]
+
+
+def test_cleaning_v3_result_api_snippet_uses_result_surface() -> None:
+    snippet = get_cleaning_v3_result_api_snippet()
+
+    assert 'result = BasicCleaner(configs).run(dataset, progress="auto")' in snippet
+    assert 'result.preview_html(' in snippet
+    assert 'result.export_table("parameter"' in snippet
