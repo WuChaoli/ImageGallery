@@ -277,3 +277,19 @@ def test_default_registry_can_find_metadata_computer_for_builtin_parameters() ->
     )
 
     assert [computer.name for computer in computers] == ["image_metadata_computer"]
+
+
+def test_builtin_specs_have_preview_policy() -> None:
+    registry = create_default_registry()
+
+    for spec in registry.list_operator_specs():
+        assert spec.preview_policy is not None
+
+
+def test_duplicate_specs_group_preview_by_duplicate_group() -> None:
+    registry = create_default_registry()
+
+    spec = registry.get_operator("duplicate.semantic_duplicate_check")
+
+    assert spec.preview_policy.groupby == "semantic_duplicate_group_id"
+    assert spec.preview_policy.include_group_context is True

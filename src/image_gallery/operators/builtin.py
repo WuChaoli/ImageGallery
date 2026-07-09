@@ -1,3 +1,5 @@
+from dataclasses import replace
+
 import pandas as pd
 
 from image_gallery.operators.computers.border import ImageBorderComputer
@@ -9,6 +11,7 @@ from image_gallery.operators.computers.quality import ImageQualityComputer, Imag
 from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.operators.spec import OperatorSpec
 
 
@@ -36,7 +39,7 @@ def create_default_registry(
 
 def _builtin_specs() -> list[OperatorSpec]:
     """返回第一批 v3 内置逻辑算子规格。"""
-    return [
+    specs = [
         OperatorSpec(
             name="format.decode_check",
             category="format",
@@ -270,6 +273,18 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_semantic_duplicate_check,
         ),
     ]
+
+    return [_to_builtin_preview_spec(spec) for spec in specs]
+
+
+def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
+    """为内置算子补齐预览策略默认值。"""
+    if spec.name == "duplicate.semantic_duplicate_check":
+        return replace(
+            spec,
+            preview_policy=PreviewPolicy(groupby="semantic_duplicate_group_id", include_group_context=True),
+        )
+    return spec
 
 
 def evaluate_decode_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:

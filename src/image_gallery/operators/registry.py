@@ -46,6 +46,14 @@ class OperatorRegistry:
         """返回当前可用算子名称。"""
         return sorted(self._operators)
 
+    def list_operator_specs(self) -> list[OperatorSpec]:
+        """按注册顺序返回当前可用逻辑算子规格。"""
+        return list(self._operators.values())
+
+    def list_categories(self) -> list[str]:
+        """返回当前 registry 的逻辑算子 category（去重并排序）。"""
+        return sorted({spec.category for spec in self._operators.values()})
+
     def list_parameter_computers(self) -> list[ParameterComputer]:
         """返回注册顺序下的参数计算单元。"""
         return list(self._parameter_computers.values())
