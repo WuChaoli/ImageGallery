@@ -185,6 +185,30 @@ BasicCleaner(operators=[custom_operator_spec])
 
 直接传入 `OperatorSpec` 或 `ConfiguredOperatorSpec` 时，运行时把它作为临时 registry 条目并启用。若同名 spec 已在 registry 中存在，默认报错；只有显式 `override=True` 时才允许替换。
 
+## ConfiguredOperatorSpec
+
+`OperatorSpec` 是静态定义，只描述逻辑算子的参数需求、评估输出、默认配置和 preview policy。用户本次运行的业务配置不写回 `OperatorSpec`。
+
+`ConfiguredOperatorSpec` 是运行时输入归一化后的对象：
+
+```python
+ConfiguredOperatorSpec(
+    spec=blur_check_spec,
+    config={"min_score": 100.0, "action": "drop"},
+    source="toml" | "python" | "selector",
+)
+```
+
+归一化规则：
+
+1. 传入 operator name：从 registry 查找 `OperatorSpec`，合并 `default_config` 和用户配置。
+2. 传入 selector：展开为多个 name，再按 name 规则归一化。
+3. 传入 `OperatorSpec`：使用该 spec 的 `default_config`。
+4. 传入 `ConfiguredOperatorSpec`：使用对象携带的 config。
+5. 传入 TOML：先解析为 name + config，再归一化。
+
+`ConfiguredOperatorSpec` 负责提供 `operator_config_hash`。该 hash 只覆盖业务配置，不包含 `NodePolicy`。
+
 ## CleaningStateGraph
 
 `CleaningStateGraph` 是阶段级依赖 DAG。图结构不由用户传入逻辑算子的顺序决定，而由 parameter、artifact、relation 和 evaluation 的依赖决定。用户顺序只作为展示顺序和同层 tie-breaker。
@@ -316,6 +340,36 @@ result.preview_html(
 
 用户显式参数覆盖默认 policy。
 
+### 内置算子 PreviewPolicy 默认值
+
+内置逻辑算子必须声明默认 `PreviewPolicy`。第一版默认值：
+
+| 算子 | 默认预览结构 |
+| --- | --- |
+| `format.decode_check` | `default_actions=["drop"]`，caption 包含 `decode_reason` |
+| `format.animated_image_check` | `default_actions=["review"]`，caption 包含 `frame_count`、`animated_reason` |
+| `size.dimension_check` | `default_actions=["drop"]`，caption 包含 `width`、`height`、`dimension_reason` |
+| `size.aspect_ratio_check` | `default_actions=["review"]`，caption 包含 `aspect_ratio`，按 `aspect_ratio` 排序 |
+| `size.megapixel_check` | `default_actions=["review"]`，caption 包含 `megapixels`，按 `megapixels` 排序 |
+| `quality.blur_check` | `default_actions=["drop", "review"]`，caption 包含 `blur_score`、`blur_reason`，按 `blur_score` 升序 |
+| `quality.brightness_check` | `default_actions=["review"]`，caption 包含 `brightness_score`、`brightness_reason`，优先展示两端异常样本 |
+| `quality.contrast_check` | `default_actions=["review"]`，caption 包含 `contrast_score`、`contrast_reason`，按 `contrast_score` 升序 |
+| `quality.exposure_check` | `default_actions=["review"]`，caption 包含 `dark_pixel_ratio`、`bright_pixel_ratio`、`clipped_pixel_ratio`、`exposure_reason` |
+| `quality.noise_check` | `default_actions=["review"]`，caption 包含 `noise_score`、`noise_reason`，按 `noise_score` 降序 |
+| `content.blank_image_check` | `default_actions=["drop", "review"]`，caption 包含 `blank_score`、`blank_reason`，按 `blank_score` 降序 |
+| `content.mono_color_check` | `default_actions=["review"]`，caption 包含 `mono_color_score`、`mono_color_reason`，按 `mono_color_score` 降序 |
+| `content.border_padding_check` | `default_actions=["review"]`，caption 包含 `border_padding_ratio`、`border_padding_sides`、`border_padding_color`、`border_padding_reason` |
+| `metadata.orientation_check` | `default_actions=["review"]`，caption 包含 `exif_orientation`、`orientation_risk`、`orientation_reason` |
+| `duplicate.exact_duplicate_check` | `default_actions=["drop", "review"]`，按 `exact_duplicate_group_id` 分组，`include_group_context=True` |
+| `duplicate.perceptual_duplicate_check` | `default_actions=["drop", "review"]`，按 `perceptual_duplicate_group_id` 分组，caption 包含 `perceptual_duplicate_distance`，`include_group_context=True` |
+| `duplicate.semantic_duplicate_check` | `default_actions=["drop", "review"]`，按 `semantic_duplicate_group_id` 分组，caption 包含 `semantic_duplicate_score`、`semantic_duplicate_nearest_image_id`，`include_group_context=True` |
+
+默认策略规则：
+
+1. 单算子 `PreviewPolicy.default_actions` 未配置时，默认展示该算子的非 keep 样本。
+2. 整体预览未指定 actions 时，默认展示 `drop` 和 `review`。
+3. `actions="full"` 才展示完整结果。
+
 ## Action 筛选
 
 `preview()` 和 `preview_html()` 使用 `actions` 作为统一动作筛选参数。
@@ -345,7 +399,31 @@ review
 full
 ```
 
-`clean` 表示该视图下保留的样本；整体视图中可映射为 `final_action == "keep"`，单算子视图中可映射为该算子的 keep/clean action。
+存储层 action 词表使用：
+
+```text
+keep
+drop
+review
+```
+
+用户 API 词表使用：
+
+```text
+clean
+drop
+review
+full
+```
+
+映射规则：
+
+1. `clean` 是用户友好别名，等价于存储层 `keep`。
+2. `export("clean")` 导出 `final_action == "keep"` 的样本。
+3. `preview(actions="clean")` 筛选 keep 样本。
+4. `full` 不是存储层 action，只是“不按 action 过滤”的特殊别名。
+5. `full` 不能和 `clean`、`drop`、`review` 混用。
+6. evaluator 输出仍然使用 `keep`、`drop`、`review`，避免和现有运行结果语义冲突。
 
 ## NodePolicy
 
@@ -381,6 +459,79 @@ NodePolicy(
 ```
 
 `ParameterComputer` 或 stage 还需要声明 capability，例如支持的 checkpoint strategy、是否支持 batch、是否允许 retry。用户配置和 capability 冲突时，compile 阶段直接失败。
+
+### ParameterComputer RuntimePolicy
+
+`ParameterComputer` 和 stage 可以声明默认运行策略和能力约束：
+
+```python
+ComputerRuntimePolicy(
+    batch=BatchPolicy(size=128),
+    checkpoint=CheckpointPolicy(strategy="batch"),
+    failure=FailurePolicy(...),
+    resources=ResourcePolicy(...),
+    artifacts=ArtifactPolicy(...),
+)
+```
+
+```python
+ComputerCapability(
+    checkpoint_strategies={"batch", "stage", "whole_node"},
+    supports_batch=True,
+    supports_retry=True,
+    produces_artifacts=False,
+    produces_relations=False,
+)
+```
+
+默认策略：
+
+| computer 类型 | 默认策略 |
+| --- | --- |
+| `PER_IMAGE` | `checkpoint=batch`，`supports_batch=True`，支持 retry，默认 batch size 128 |
+| `TABLE` | `checkpoint=whole_node`，通常不做单行 retry |
+| `DATASET_AGGREGATE` | 有 stages 时 `checkpoint=stage`，无 stages 时 `checkpoint=whole_node` |
+
+内置 computer 第一版建议：
+
+| computer | 默认 runtime policy |
+| --- | --- |
+| `image_metadata_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_format_detail_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_quality_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_quality_detail_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_border_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_hash_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `image_perceptual_hash_computer` | `PER_IMAGE`，batch checkpoint，支持 image-level failure |
+| `table_derived_computer` | `TABLE`，whole-node checkpoint |
+| `duplicate_group_computer` | `DATASET_AGGREGATE`，whole-node checkpoint，produces relation |
+| `perceptual_duplicate_group_computer` | `DATASET_AGGREGATE`，whole-node checkpoint，produces relation |
+| `semantic_embedding_computer` | `PER_IMAGE`，batch checkpoint，resource hint 支持 `device="auto"`，produces embedding artifact |
+| `semantic_duplicate_group_computer` | `DATASET_AGGREGATE`，stage checkpoint，produces index artifact 和 relation |
+
+`semantic_duplicate_group_computer` 的推荐 stages：
+
+```text
+read_embeddings
+build_index
+find_pairs
+write_relations
+```
+
+### OperatorPolicy 投影与冲突
+
+`operator_policies` 是面向逻辑算子的用户配置，但 graph 中可能存在多个 operator 共享同一个 parameter node。
+
+投影规则：
+
+1. operator policy 先绑定到该 operator 的 evaluation node。
+2. 该 operator 独占的 parameter nodes 可以继承 operator policy。
+3. 多个 operator 共享同一个 parameter node 时，所有投影 policy 必须兼容。
+4. 兼容表示字段相同或缺省；例如两个 operator 都未指定 batch size，使用 computer 默认值。
+5. 不兼容时 compile 失败，错误信息显示冲突 operator、内部 node id 和冲突字段。
+6. 普通用户第一版不需要直接配置 node id；错误信息可以提示改用全局 `node_policy` 或调整 `operator_policies`。
+
+示例：`quality.blur_check` 和 `quality.contrast_check` 都依赖 `image_quality_computer`。如果二者分别配置 batch size 64 和 256，则 compile 失败，要求用户在全局 `node_policy.batch.size` 中明确指定一个值。
 
 ## 进度输出
 
@@ -438,6 +589,8 @@ semantic_embedding.extract  batch 5/30
 semantic_index.build
 evaluation.duplicate.semantic_duplicate_check
 ```
+
+progress event 是运行时事件流；关键事件同时写入 SQLite `run_event`。UI adapter 只消费事件并负责展示，不决定节点状态，也不参与 resume 判断。
 
 ## Retry、Resume 与 Rerun
 
@@ -596,6 +749,44 @@ write tmp artifact
 
 只有 SQLite 状态和 artifact manifest 都完成时，节点才视为 completed。
 
+### Artifact Contract
+
+每个正式 artifact 必须有 manifest。artifact manifest 最小字段：
+
+```text
+artifact_id
+artifact_type
+owner_node_id
+schema_version
+schema_hash
+config_hash
+policy_hash
+row_count
+part_files
+checksum
+created_at
+commit_marker
+```
+
+relation artifact 额外记录：
+
+```text
+relation_name
+relation_type
+source_node_id
+row_count
+columns
+checksum
+```
+
+语义约束：
+
+1. SQLite `artifact.status == completed` 但 manifest 缺失时，resume 视为 artifact 不可用。
+2. manifest 存在但 checksum、row count 或 commit marker 校验失败时，resume 视为 artifact 不可用。
+3. artifact manifest 不保存敏感信息。
+4. semantic duplicate 的 embedding、index 和 relation 必须分别有 artifact manifest。
+5. `parameter_manifest.json` 记录参数到 computer、config hash、policy hash 和 artifact ref 的映射。
+
 ## Result 导出
 
 普通用户不会看到内部缓存路径。所有外部产物都通过 `CleanerResult` 显式导出。
@@ -627,6 +818,21 @@ diagnostics = execution.dry_run(dataset)
 ```
 
 `plan()` 不读取 dataset，只展示编译后的 graph。`dry_run(dataset)` 可以读取 dataset fingerprint 和 schema，但不执行参数计算；它用于校验 TOML、算子选择、依赖图、policy capability、输出预览配置和 resume 兼容性。
+
+`dry_run()` 返回结构：
+
+```text
+selected_operators
+expanded_selectors
+graph_nodes
+policy_overrides
+warnings
+errors
+estimated_artifacts
+preview_policies
+```
+
+`dry_run()` 有 errors 时不允许进入 `run()`；warnings 不阻塞运行，但必须在 Notebook 和 CLI 入口中可见。
 
 ### 配置模板导出
 
@@ -670,6 +876,15 @@ result.explain("image_id")
 
 `explain()` 返回该图片触发的逻辑算子、action/reason、关键分数、relation group 和最终 `final_action`。它只读取 result backing files，不重新执行计算。
 
+`explain()` 字段来源：
+
+1. action 和 reason 来自该算子的 `action_column` 和 `reason_column`。
+2. 分数字段优先来自 `PreviewPolicy.caption_columns`。
+3. relation group 来自该算子声明或产出的 relation artifact。
+4. 最终结论来自 merge node 产出的 `final_action`、`final_reason` 和 `triggered_operator_names`。
+
+第一版不新增独立 `ExplainPolicy`；先复用 `PreviewPolicy.caption_columns`、`OperatorSpec` action/reason 和 relation manifest。后续如解释需求变复杂，再增加 `ExplainPolicy`。
+
 ### sample run
 
 ```python
@@ -677,6 +892,15 @@ execution.run(dataset, sample=100)
 ```
 
 `sample` 用于快速试配置。sample run 必须在 run metadata 中标记 `sample_size` 和 sample 规则，避免和正式全量 run 混淆。
+
+采样规则：
+
+1. `sample=100` 表示稳定采样 100 行。
+2. 默认采样 seed 由 dataset fingerprint 和 plan hash 推导。
+3. 显式采样可以写成 `sample={"n": 100, "random_state": 20260709}`。
+4. sample run 的 `cleaning_run.sample_size` 和 `sample_rule_json` 必须写入 SQLite。
+5. resume sample run 时必须校验 sample rule。
+6. sample result 的 summary 和 debug bundle 必须标记它不是全量 run。
 
 ## 错误处理
 
@@ -703,6 +927,10 @@ execution.run(dataset, sample=100)
 9. TOML 配置能解析为 `CleanerConfig`，业务配置和 `operator_policies` 分离。
 10. `ALL`、category selector、name 和 spec list 能展开为确定的 operator 配置。
 11. `progress` callback 能收到 run/node/batch/stage/retry 事件。
+12. 内置 `OperatorSpec.preview_policy` 默认值覆盖 format、size、quality、content、metadata 和 duplicate 算子。
+13. `ParameterComputer` runtime policy、capability 和 operator policy 投影冲突规则可被独立测试。
+14. artifact manifest 缺失、checksum 错误或 commit marker 缺失会使 resume 拒绝复用 artifact。
+15. `dry_run()` 返回 selected operators、expanded selectors、graph nodes、policy overrides、warnings、errors、estimated artifacts 和 preview policies。
 
 ### 集成测试
 
@@ -717,6 +945,8 @@ execution.run(dataset, sample=100)
 9. `BasicCleaner.from_toml(...).run(dataset)` 和 Python API 产生等价 graph。
 10. `execution.run(..., label=..., tags=...)` 把 metadata 写入 SQLite 和 summary。
 11. `result.explain(image_id)` 返回触发算子、关键分数和 final action。
+12. sample run 写入 `sample_size` 和 `sample_rule_json`，resume 时校验 sample rule。
+13. semantic duplicate 的 embedding、index 和 relation artifact 都能通过 manifest 校验。
 
 ### Notebook 验证
 
@@ -736,3 +966,4 @@ execution.run(dataset, sample=100)
 6. `preview()` 和 `preview_html()` 支持 `actions` 单选、多选和 `full`。
 7. retry、checkpoint、resume 和 evaluation-only rerun 语义清晰且可测试。
 8. TOML、selector、spec list、progress、label/tags、dry_run、template、explain 和 sample run 形成完整的用户友好入口。
+9. 内置逻辑算子 preview policy、computer runtime policy、artifact contract 和 action 词表均有明确默认规则。
