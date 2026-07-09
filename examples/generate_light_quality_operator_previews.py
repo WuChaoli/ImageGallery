@@ -92,8 +92,8 @@ def generate_previews(output_root: Path) -> dict[str, Path]:
         case_dir.mkdir(parents=True, exist_ok=True)
         dataset = _write_case_dataset(case.operator_name, case_dir)
         cleaner = BasicCleaner([{case.operator_name: case.config}])
-        cleaner.run(dataset, output_dir=case_dir / "cleaning")
-        preview_paths[case.operator_name] = cleaner.preview_html(
+        result = cleaner.run(dataset, output_dir=case_dir / "cleaning")
+        preview_paths[case.operator_name] = result.preview_html(
             str(case_dir / "preview.html"),
             action="review",
             caption_columns=case.caption_columns,

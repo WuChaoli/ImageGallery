@@ -100,6 +100,16 @@ def _coerce_sample_rule(run_options: Mapping[str, object]) -> dict[str, object] 
     return {str(key): value for key, value in raw.items()}
 
 
+def _coerce_output_dir(run_options: Mapping[str, object]) -> Path | None:
+    """解析可选的运行产物目录覆盖。"""
+    raw = run_options.get("output_dir")
+    if raw is None:
+        return None
+    if not isinstance(raw, (str, Path)):
+        raise TypeError("output_dir must be a str or Path")
+    return Path(raw)
+
+
 @dataclass(frozen=True)
 class CleanerExecution:
     """清洗执行实例，承载编译图和运行时状态。"""
@@ -144,7 +154,9 @@ class CleanerExecution:
 
     def run(self, dataset: Dataset, **run_options: object) -> CleanerResult:
         """按已编译图执行一次清洗运行。"""
-        runtime_result = self.runtime.run_graph(
+        output_dir = _coerce_output_dir(run_options)
+        runtime = self.runtime if output_dir is None else CleaningRuntime(output_dir, registry=self.registry)
+        runtime_result = runtime.run_graph(
             graph=self.graph,
             dataset=dataset,
             configured_operators=self.configured_operators,

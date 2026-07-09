@@ -79,9 +79,9 @@ def test_basic_cleaner_runs_builtin_operators_on_s3_dataset(tmp_path: Path) -> N
         ]
     )
 
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset, output_dir=tmp_path / "cleaning")
 
     parameter_table = pd.read_parquet(next((tmp_path / "cleaning").iterdir()) / "parameter_table.parquet")
     assert {"width", "height", "decode_ok", "decode_error"}.issubset(parameter_table.columns)
-    assert cleaner.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep"]
-    assert cleaner.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review"]
+    assert result.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep"]
+    assert result.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review"]

@@ -11,7 +11,6 @@ from image_gallery.cleaning.errors import CleanerStateError
 from image_gallery.cleaning.execution import CleanerExecution, _default_cache_root
 from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.policy import NodePolicy
-from image_gallery.cleaning.preview import PreviewResult
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.selection import OperatorOverrides, OperatorSelectorInput, select_operators
 from image_gallery.cleaning.toml_config import CleanerConfig, build_cleaner_toml_template
@@ -96,66 +95,8 @@ class BasicCleaner(Cleaner):
             raise CleanerStateError("dataset must be a Dataset instance")
         return self.compile().run(dataset, **run_options)
 
-    def preview(self, limit: int = 20) -> PreviewResult:
-        """阶段性结果预览：Task7 提供正式实现。"""
-        del limit
-        raise NotImplementedError("preview is implemented in task7")
-
-    def preview_html(
-        self,
-        path: str | Path,
-        *,
-        action: str | None = None,
-        filters: dict[str, object] | None = None,
-        groupby: str | None = None,
-        include_group_context: bool = False,
-        sort_by: list[str] | None = None,
-        ascending: bool | list[bool] = True,
-        caption_columns: list[str] | None = None,
-        max_rows: int = 200,
-        max_groups: int = 50,
-        max_items_per_group: int = 20,
-        thumbnail_size: int = 320,
-        columns_per_row: int = 6,
-    ) -> Path:
-        """阶段性 HTML 预览：Task7 提供正式实现。"""
-        del path
-        del action
-        del filters
-        del groupby
-        del include_group_context
-        del sort_by
-        del ascending
-        del caption_columns
-        del max_rows
-        del max_groups
-        del max_items_per_group
-        del thumbnail_size
-        del columns_per_row
-        raise NotImplementedError("preview_html is implemented in task7")
-
-    def state(self) -> pd.DataFrame:
-        """返回算子运行状态：Task7 提供正式实现。"""
-        raise NotImplementedError("state is implemented in task7")
-
     def config(self, operator_configs: OperatorConfigInput) -> BasicCleaner:
         """更新算子配置，下一次编译将基于新配置。"""
         self._operators = cast(OperatorSelectorInput, operator_configs)
         self._operator_config_overrides = None
         return self
-
-    def rerun(self, operator_configs: OperatorConfigInput) -> BasicCleaner:
-        """按新配置重跑。"""
-        del operator_configs
-        raise NotImplementedError("rerun is implemented in task7")
-
-    def result(self, operator_name: str) -> pd.DataFrame:
-        """返回算子执行结果：Task7 提供正式实现。"""
-        del operator_name
-        raise NotImplementedError("result is implemented in task7")
-
-    def export(self, kind: str, path: str) -> Dataset:
-        """导出结果：Task7 提供正式实现。"""
-        del kind
-        del path
-        raise NotImplementedError("export is implemented in task7")

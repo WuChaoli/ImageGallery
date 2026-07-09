@@ -33,15 +33,15 @@ def test_basic_cleaner_exports_builtin_views_and_preserves_counts(tmp_path: Path
             {"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}},
         ]
     )
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset, output_dir=tmp_path / "cleaning")
 
-    full = cleaner.export("full", str(tmp_path / "full.parquet"))
-    clean = cleaner.export("clean", str(tmp_path / "clean.parquet"))
-    review = cleaner.export("review", str(tmp_path / "review.parquet"))
-    dropped = cleaner.export("dropped", str(tmp_path / "dropped.parquet"))
-    parameters = cleaner.export("parameters", str(tmp_path / "parameters.parquet"))
-    evaluations = cleaner.export("evaluations", str(tmp_path / "evaluations.parquet"))
-    preview = cleaner.preview()
+    full = result.export("full", str(tmp_path / "full.parquet"))
+    clean = result.export("clean", str(tmp_path / "clean.parquet"))
+    review = result.export("review", str(tmp_path / "review.parquet"))
+    dropped = result.export("dropped", str(tmp_path / "dropped.parquet"))
+    parameters = result.export("parameters", str(tmp_path / "parameters.parquet"))
+    evaluations = result.export("evaluations", str(tmp_path / "evaluations.parquet"))
+    preview = result.preview()
 
     assert full.count() == 3
     assert clean.count() == 1
@@ -69,11 +69,12 @@ def test_basic_cleaner_writes_html_preview(tmp_path: Path) -> None:
         str(tmp_path / "raw.parquet"),
     )
     cleaner = BasicCleaner([{"format.decode_check": {"action": "drop"}}])
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset, output_dir=tmp_path / "cleaning")
 
-    output_path = cleaner.preview_html(
+    output_path = result.preview_html(
         tmp_path / "preview.html",
         action="drop",
+        caption_columns=["image_id"],
     )
 
     html = output_path.read_text(encoding="utf-8")
