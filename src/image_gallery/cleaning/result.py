@@ -7,16 +7,17 @@ import shutil
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 
 from image_gallery.cleaning.context import CleanerRunPaths
 from image_gallery.cleaning.export import export_cleaning_result
 from image_gallery.cleaning.html_preview import PreviewHtmlOptions, write_preview_html
-from image_gallery.cleaning.preview import build_preview
+from image_gallery.cleaning.preview import PreviewResult, build_preview
 from image_gallery.cleaning.preview_policy import PreviewPolicy, resolve_preview_policy
 from image_gallery.cleaning.state import JsonRunStateStore, build_state_frame
-from image_gallery.cleaning.tables import CleaningTables, initialize_evaluation_table, initialize_parameter_table
+from image_gallery.cleaning.tables import CleaningTables, initialize_evaluation_table
 from image_gallery.dataset import Dataset
 from image_gallery.operators.builtin import create_default_registry
 
@@ -44,7 +45,12 @@ def _read_json_or_empty(path: Path, default: dict[str, object] | list[object]) -
     """读取 JSON 文件；文件不存在时返回默认值。"""
     if not path.exists():
         return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(raw, dict):
+        return cast(dict[str, object], raw)
+    if isinstance(raw, list):
+        return cast(list[object], raw)
+    return default
 
 
 def _normalize_value(value: object) -> object:
@@ -52,6 +58,29 @@ def _normalize_value(value: object) -> object:
     if pd.isna(value):
         return ""
     return value
+
+
+def _deduplicate_columns(columns: list[str]) -> list[str]:
+    """去重并保留列顺序。"""
+    seen: set[str] = set()
+    deduplicated: list[str] = []
+    for column in columns:
+        if column in seen:
+            continue
+        seen.add(column)
+        deduplicated.append(column)
+    return deduplicated
+
+
+def _ensure_str_list(values: list[object], *, context: str) -> list[str]:
+    """按上下文过滤并校验 JSON 列表值。"""
+    normalized: list[str] = []
+    for value in values:
+        if isinstance(value, str):
+            normalized.append(value)
+        else:
+            raise ValueError(f"invalid {context}: {value!r}")
+    return normalized
 
 
 @dataclass(frozen=True)
@@ -105,21 +134,29 @@ class CleanerResult:
     def _load_operator_outputs(self) -> dict[str, list[str]]:
         """读取 operator_outputs.json（兼容文件不存在）。"""
         raw_outputs = _read_json_or_empty(self._run_paths().operator_outputs_path, default={})
-        return {
-            str(operator_name): list(columns)
-            for operator_name, columns in raw_outputs.items()
-            if isinstance(columns, list)
-        }
+        if not isinstance(raw_outputs, dict):
+            return {}
+        parsed: dict[str, list[str]] = {}
+        for operator_name, columns in raw_outputs.items():
+            if not isinstance(columns, list):
+                continue
+            parsed[str(operator_name)] = _ensure_str_list(
+                columns,
+                context="operator_outputs columns",
+            )
+        return parsed
 
     def _load_parameter_manifest(self) -> dict[str, dict[str, object]]:
         """读取 parameter_manifest.json（兼容文件不存在）。"""
         raw_manifest = _read_json_or_empty(self._run_paths().parameter_manifest_path, default={})
         if not isinstance(raw_manifest, dict):
             return {}
-        return {
-            str(parameter_name): value if isinstance(value, dict) else {}
-            for parameter_name, value in raw_manifest.items()
-        }
+        parsed: dict[str, dict[str, object]] = {}
+        for parameter_name, value in raw_manifest.items():
+            if not isinstance(value, dict):
+                continue
+            parsed[str(parameter_name)] = value
+        return parsed
 
     def _load_parameter_table(self) -> pd.DataFrame:
         """按文件加载 parameter_table，不存在时给出最小骨架。"""
@@ -135,12 +172,13 @@ class CleanerResult:
             return pd.read_parquet(path)
         return initialize_evaluation_table(self._load_parameter_table())
 
-    def _load_state_relation_paths(self) -> dict[str, str]:
-        """优先从 state.json 读取 relation 路径映射。"""
+    def _load_relation_names(self) -> list[str]:
+        """优先从 state.json 读取 relation 名称。"""
         state_path = self._run_paths().state_path
         if not state_path.exists():
-            return {}
-        return dict(JsonRunStateStore().load(state_path).relation_paths)
+            return []
+        state = JsonRunStateStore().load(state_path)
+        return sorted(state.relation_paths.keys())
 
     def status(self) -> str:
         """返回运行状态。"""
@@ -183,10 +221,14 @@ class CleanerResult:
             operator_outputs=self._load_operator_outputs(),
             parameter_manifest=self._load_parameter_manifest(),
         )
-        export_cleaning_result(normalized=str(kind).strip().lower(), tables=tables, output_path=str(path))
+        export_cleaning_result(
+            kind=str(kind).strip().lower(),
+            tables=tables,
+            output_path=str(path),
+        )
         return Dataset.from_path(str(path))
 
-    def preview(self, limit: int = 20):
+    def preview(self, limit: int = 20) -> PreviewResult:
         """返回 preview 概览。"""
         return build_preview(
             evaluation_table=self._load_evaluation_table(),
@@ -230,19 +272,26 @@ class CleanerResult:
         operator_outputs = self._load_operator_outputs()
         evaluation_table = self._load_evaluation_table()
         policy = self._preview_policy(operator_name)
-
+        action_column: str | None = None
         if operator_name is not None and operator_name not in operator_outputs:
             raise KeyError(f"unknown operator_name: {operator_name}")
         if operator_name is not None:
             selected = operator_outputs[operator_name]
-            keep_columns = ["image_id", "image_uri", "final_action"] + selected
+            action_columns = [column for column in selected if column.endswith("_action")]
+            if not action_columns:
+                raise ValueError(f"operator has no action column: {operator_name}")
+            action_column = action_columns[0]
+            keep_columns = _deduplicate_columns(["image_id", "image_uri", "final_action", action_column] + selected)
+            for required in keep_columns:
+                if required not in evaluation_table.columns:
+                    raise KeyError(f"missing required operator column: {required}")
             frame = evaluation_table[keep_columns]
         else:
             frame = evaluation_table.copy()
 
         resolved = resolve_preview_policy(
             policy=policy,
-            actions=requested_actions,
+            actions=list(requested_actions) if isinstance(requested_actions, tuple) else requested_actions,
             caption_columns=caption_columns,
             groupby=groupby,
             include_group_context=include_group_context,
@@ -254,7 +303,9 @@ class CleanerResult:
                 if column in frame.columns:
                     frame = frame[frame[column] == value]
 
-        if not resolved.include_all_actions:
+        if action_column is not None and not resolved.include_all_actions:
+            frame = frame[frame[action_column].isin(resolved.actions)]
+        elif not resolved.include_all_actions:
             frame = frame[frame["final_action"].isin(resolved.actions)]
 
         options = PreviewHtmlOptions(
@@ -295,7 +346,11 @@ class CleanerResult:
         if operator_name not in operator_outputs:
             raise KeyError(f"unknown operator_name: {operator_name}")
         table = self._load_evaluation_table()
-        columns = [column for column in ["image_id", "image_uri", *operator_outputs[operator_name]] if column in table.columns]
+        columns = [
+            column
+            for column in ["image_id", "image_uri", *operator_outputs[operator_name]]
+            if column in table.columns
+        ]
         return table[columns].copy()
 
     def explain(self, image_id: str) -> dict[str, object]:
@@ -318,7 +373,7 @@ class CleanerResult:
             "parameters": {_normalize_value(key): _normalize_value(value) for key, value in parameter_payload.items()},
             "operator_outputs": self._load_operator_outputs(),
             "parameter_manifest": self._load_parameter_manifest(),
-            "relation_paths": self._load_state_relation_paths(),
+            "relation_names": self._load_relation_names(),
         }
         return explanation
 
