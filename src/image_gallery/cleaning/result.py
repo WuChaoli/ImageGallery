@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import shutil
 import sqlite3
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import cast
@@ -232,6 +233,46 @@ class CleanerResult:
         destination = Path(path)
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(source, destination)
+        return destination
+
+    def export_relations(self, path: Path | str) -> Path:
+        """把全部 relation 表复制到用户目录。"""
+        destination = Path(path)
+        destination.mkdir(parents=True, exist_ok=True)
+        state_path = self._run_dir() / "state.json"
+        if not state_path.exists():
+            raise FileNotFoundError(f"state file missing: {state_path.name}")
+        state = JsonRunStateStore().load(state_path)
+        for relation_name in sorted(state.relation_paths):
+            self.export_relation(relation_name, destination / f"{relation_name}.parquet")
+        return destination
+
+    def export_debug_bundle(self, path: Path | str) -> Path:
+        """导出只读调试包，包含表、manifest、状态和 relation 副本。"""
+        destination = Path(path)
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        run_dir = self._run_dir()
+        with zipfile.ZipFile(destination, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for archive_name, source in (
+                ("tables/parameter_table.parquet", self._table_file("parameter_table.parquet")),
+                ("tables/evaluation_table.parquet", self._table_file("evaluation_table.parquet")),
+                ("operator_outputs.yaml", self._run_paths().operator_outputs_path),
+                ("parameter_manifest.json", self._run_paths().parameter_manifest_path),
+                ("state.json", run_dir / "state.json"),
+            ):
+                if source.exists():
+                    archive.write(source, archive_name)
+
+            state_path = run_dir / "state.json"
+            if state_path.exists():
+                state = JsonRunStateStore().load(state_path)
+                for relation_name, relation_path in sorted(state.relation_paths.items()):
+                    source = Path(relation_path)
+                    if source.exists():
+                        archive.write(source, f"relations/{relation_name}.parquet")
+                    manifest_path = source.with_name(f"{source.name}.manifest.json")
+                    if manifest_path.exists():
+                        archive.write(manifest_path, f"relations/{relation_name}.parquet.manifest.json")
         return destination
 
     def export(self, kind: str, path: Path | str) -> Dataset:

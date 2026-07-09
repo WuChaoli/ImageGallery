@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pandas as pd
+
 from image_gallery.cleaning.artifacts import ArtifactManager
 from image_gallery.cleaning.config import ParsedOperatorConfig
 from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths, build_run_paths
@@ -711,6 +713,13 @@ class CleaningRuntime:
         parameter_manifest = json.loads(paths.parameter_manifest_path.read_text(encoding="utf-8"))
         if not isinstance(parameter_manifest, dict):
             raise ValueError("parameter manifest payload must be a JSON object")
+        parameter_table_columns = set(pd.read_parquet(paths.parameter_table_path).columns)
+        missing_parameter_columns = sorted(set(trusted_parameter_owners) - parameter_table_columns)
+        if missing_parameter_columns:
+            raise ValueError(f"parameter table missing graph-produced columns: {missing_parameter_columns}")
+        missing_manifest_entries = sorted(set(trusted_parameter_owners) - set(parameter_manifest))
+        if missing_manifest_entries:
+            raise ValueError(f"parameter manifest missing graph-produced entries: {missing_manifest_entries}")
 
         state = JsonRunStateStore().load(paths.state_path)
         if state.parameter_config_hashes != trusted_parameter_hashes:
@@ -1017,12 +1026,18 @@ def _parameter_config_hashes_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]
 
 
 def _parameter_owner_computers_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]) -> dict[str, str]:
-    """从已验证 graph nodes 提取 parameter -> computer 映射。"""
+    """从已验证 graph nodes 提取本次运行实际消费的 parameter -> computer 映射。"""
+    consumed_parameters = {
+        parameter_name
+        for node in graph_nodes
+        if node.node_type in {"parameter", "evaluation"}
+        for parameter_name in node.required_parameters
+    }
     owners: dict[str, str] = {}
     for node in graph_nodes:
         if node.node_type != "parameter" or node.computer_name is None:
             continue
-        for parameter_name in node.produced_parameters:
+        for parameter_name in node.produced_parameters & consumed_parameters:
             owners[parameter_name] = node.computer_name
     return owners
 

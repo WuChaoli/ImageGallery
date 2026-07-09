@@ -421,3 +421,17 @@ def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: P
 
     with pytest.raises(ValueError, match="config hash"):
         execution.resume(dataset=dataset, run_id=result.run_id)
+
+
+def test_resume_rejects_missing_parameter_manifest_entry(tmp_path: Path) -> None:
+    dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
+    execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    result = execution.run(dataset)
+    run_dir = (tmp_path / "cleaning") / result.run_id
+    manifest_path = run_dir / "parameter_manifest.json"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest.pop("decode_error")
+    _write_json(manifest_path, manifest)
+
+    with pytest.raises(ValueError, match="parameter manifest missing"):
+        execution.resume(dataset=dataset, run_id=result.run_id)
