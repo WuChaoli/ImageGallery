@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore
 
@@ -108,3 +109,62 @@ def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path
 
     assert "relation_paths" not in explanation
     assert explanation["relation_names"] == ["dup_pairs"]
+
+
+def test_result_preview_html_applies_configured_operator_preview_policy(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    tables_dir = run_dir / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+
+    pd.DataFrame(
+        {
+            "image_id": ["img-one", "img-two"],
+            "image_uri": ["/tmp/img-one.png", "/tmp/img-two.png"],
+            "final_action": ["keep", "keep"],
+            "final_reason": ["", ""],
+            "triggered_operator_names": ["custom.custom_check", "custom.custom_check"],
+            "custom_action": ["keep", "drop"],
+            "custom_reason": ["", ""],
+        }
+    ).to_parquet(tables_dir / "evaluation_table.parquet", index=False)
+    pd.DataFrame(
+        {
+            "image_id": ["img-one", "img-two"],
+            "image_uri": ["/tmp/img-one.png", "/tmp/img-two.png"],
+        }
+    ).to_parquet(tables_dir / "parameter_table.parquet", index=False)
+    (run_dir / "operator_outputs.yaml").write_text(
+        '{"custom.custom_check": ["custom_action", "custom_reason"]}',
+        encoding="utf-8",
+    )
+    (run_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
+
+    result = CleanerResult(
+        run_id="run-1",
+        cache_root=tmp_path,
+        operator_preview_policies={
+            "custom.custom_check": PreviewPolicy(
+                max_rows=1,
+                columns_per_row=2,
+                thumbnail_size=32,
+            ),
+        },
+    )
+
+    html = result.preview_html(
+        tmp_path / "preview.html",
+        operator_name="custom.custom_check",
+    ).read_text(encoding="utf-8")
+
+    assert "/tmp/img-one.png" in html
+    assert "/tmp/img-two.png" not in html
+    assert "grid-template-columns: repeat(2, minmax(0, 1fr));" in html
+
+    html_all = result.preview_html(
+        tmp_path / "preview_all.html",
+        operator_name="custom.custom_check",
+        max_rows=2,
+    ).read_text(encoding="utf-8")
+
+    assert "/tmp/img-one.png" in html_all
+    assert "/tmp/img-two.png" in html_all

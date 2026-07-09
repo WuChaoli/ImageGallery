@@ -11,6 +11,7 @@ from uuid import uuid4
 import pandas as pd
 
 from image_gallery.cleaning.graph import CleaningStateGraph
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.runtime import CleaningRuntime, RunOptions
 from image_gallery.dataset import Dataset
@@ -132,7 +133,11 @@ class CleanerExecution:
                 retry_max_attempts=_coerce_retry_max_attempts(run_options),
             ),
         )
-        return CleanerResult(run_id=runtime_result.run_id, cache_root=runtime_result.cache_root)
+        return CleanerResult(
+            run_id=runtime_result.run_id,
+            cache_root=runtime_result.cache_root,
+            operator_preview_policies=self._preview_policies(),
+        )
 
     def resume(
         self,
@@ -148,11 +153,25 @@ class CleanerExecution:
             dataset=dataset,
             run_id=runtime_run_id,
         )
-        return CleanerResult(run_id=runtime_result.run_id, cache_root=runtime_result.cache_root)
+        return CleanerResult(
+            run_id=runtime_result.run_id,
+            cache_root=runtime_result.cache_root,
+            operator_preview_policies=self._preview_policies(result),
+        )
 
     def rerun(self, result: CleanerResult, operators: object, overwrite: bool = False) -> CleanerResult:
         """按结果做算子级重新运行（阶段1先返回最小壳）。"""
         del operators
         del overwrite
         runtime_result = self.runtime.rerun_evaluation(self.graph, result)
-        return CleanerResult(run_id=runtime_result.run_id, cache_root=runtime_result.cache_root)
+        return CleanerResult(
+            run_id=runtime_result.run_id,
+            cache_root=runtime_result.cache_root,
+            operator_preview_policies=self._preview_policies(result),
+        )
+
+    def _preview_policies(self, result: CleanerResult | None = None) -> dict[str, PreviewPolicy]:
+        """按执行上下文构造可见的预览策略。"""
+        if result is not None:
+            return dict(result._operator_preview_policies)
+        return {spec.operator_name: spec.spec.preview_policy for spec in self.configured_operators}

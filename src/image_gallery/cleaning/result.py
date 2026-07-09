@@ -19,7 +19,6 @@ from image_gallery.cleaning.preview_policy import PreviewPolicy, resolve_preview
 from image_gallery.cleaning.state import JsonRunStateStore, build_state_frame
 from image_gallery.cleaning.tables import CleaningTables, initialize_evaluation_table
 from image_gallery.dataset import Dataset
-from image_gallery.operators.builtin import create_default_registry
 
 
 def read_result_status(cache_root: Path, run_id: str) -> str:
@@ -89,11 +88,23 @@ class CleanerResult:
 
     run_id: str
     _cache_root: Path
+    _operator_preview_policies: dict[str, PreviewPolicy]
 
-    def __init__(self, run_id: str, cache_root: Path) -> None:
+    def __init__(
+        self,
+        run_id: str,
+        cache_root: Path,
+        *,
+        operator_preview_policies: dict[str, PreviewPolicy] | None = None,
+    ) -> None:
         """构造函数。"""
         object.__setattr__(self, "run_id", run_id)
         object.__setattr__(self, "_cache_root", Path(cache_root))
+        object.__setattr__(
+            self,
+            "_operator_preview_policies",
+            dict(operator_preview_policies or {}),
+        )
 
     def _run_dir(self) -> Path:
         """返回本次运行目录。"""
@@ -232,10 +243,7 @@ class CleanerResult:
         """按算子名读取 preview 策略，缺省则回退默认策略。"""
         if operator_name is None:
             return PreviewPolicy()
-        try:
-            return create_default_registry().get_operator(operator_name).preview_policy
-        except Exception:
-            return PreviewPolicy()
+        return self._operator_preview_policies.get(operator_name, PreviewPolicy())
 
     def preview_html(
         self,
@@ -249,11 +257,11 @@ class CleanerResult:
         sort_by: list[str] | None = None,
         ascending: bool | list[bool] = True,
         caption_columns: list[str] | None = None,
-        max_rows: int = 200,
-        max_groups: int = 50,
-        max_items_per_group: int = 20,
-        thumbnail_size: int = 320,
-        columns_per_row: int = 6,
+        max_rows: int | None = None,
+        max_groups: int | None = None,
+        max_items_per_group: int | None = None,
+        thumbnail_size: int | None = None,
+        columns_per_row: int | None = None,
         action: str | None = None,
     ) -> Path:
         """把预览结果渲染到 HTML。"""
@@ -290,6 +298,13 @@ class CleanerResult:
             sort_by=sort_by,
             ascending=ascending,
         )
+        resolved_max_rows = resolved.max_rows if max_rows is None else max_rows
+        resolved_max_groups = resolved.max_groups if max_groups is None else max_groups
+        resolved_max_items_per_group = (
+            resolved.max_items_per_group if max_items_per_group is None else max_items_per_group
+        )
+        resolved_thumbnail_size = resolved.thumbnail_size if thumbnail_size is None else thumbnail_size
+        resolved_columns_per_row = resolved.columns_per_row if columns_per_row is None else columns_per_row
         if filters is not None:
             for column, value in filters.items():
                 if column in frame.columns:
@@ -308,11 +323,11 @@ class CleanerResult:
             sort_by=resolved.sort_by,
             ascending=resolved.ascending,
             caption_columns=resolved.caption_columns,
-            max_rows=max_rows,
-            max_groups=max_groups,
-            max_items_per_group=max_items_per_group,
-            thumbnail_size=thumbnail_size,
-            columns_per_row=columns_per_row,
+            max_rows=resolved_max_rows,
+            max_groups=resolved_max_groups,
+            max_items_per_group=resolved_max_items_per_group,
+            thumbnail_size=resolved_thumbnail_size,
+            columns_per_row=resolved_columns_per_row,
             operator_name=operator_name,
         )
         if resolved.sort_by:
@@ -321,7 +336,12 @@ class CleanerResult:
         dataset_frame = self._load_parameter_table()[["image_id", "image_uri"]]
         dataset_path = self._run_dir() / "_result_preview_dataset.parquet"
         dataset = Dataset.write(dataset_frame, str(dataset_path))
-        return write_preview_html(frame=frame.head(max_rows), path=path, dataset=dataset, options=options)
+        return write_preview_html(
+            frame=frame.head(resolved_max_rows),
+            path=path,
+            dataset=dataset,
+            options=options,
+        )
 
     def state(self) -> pd.DataFrame:
         """返回算子运行状态矩阵。"""

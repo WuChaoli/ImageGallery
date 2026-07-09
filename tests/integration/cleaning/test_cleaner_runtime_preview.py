@@ -1,10 +1,16 @@
 import json
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
 from PIL import Image
 
+from image_gallery.cleaning import BasicCleaner
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
+from image_gallery.dataset import Dataset
+from image_gallery.operators.builtin import create_default_registry
+from image_gallery.operators.registry import OperatorRegistry
 
 
 def _build_image(path: Path, color: tuple[int, int, int]) -> str:
@@ -88,3 +94,47 @@ def test_result_preview_html_full_without_operator_action_filter(tmp_path: Path)
     html = output.read_text(encoding="utf-8")
     assert "first.png" in html
     assert "second.png" in html
+
+
+def test_result_preview_html_uses_execution_preview_policies(tmp_path: Path) -> None:
+    def custom_registry() -> OperatorRegistry:
+        registry = create_default_registry()
+        registry.register_operator(
+            replace(
+                registry.get_operator("format.decode_check"),
+                preview_policy=PreviewPolicy(max_rows=1, columns_per_row=1),
+            )
+        )
+        return registry
+
+    first = _build_image(tmp_path / "first.png", (20, 20, 20))
+    second = _build_image(tmp_path / "second.png", (40, 40, 40))
+    dataset = Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["first", "second"],
+                "image_uri": [first, second],
+            }
+        ),
+        str(tmp_path / "raw.parquet"),
+    )
+
+    cleaner = BasicCleaner([{"format.decode_check": {}}], registry=custom_registry())
+    result = cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    output = result.preview_html(
+        tmp_path / "preview.html",
+        operator_name="format.decode_check",
+    ).read_text(encoding="utf-8")
+
+    assert "first.png" in output
+    assert "second.png" not in output
+    assert "grid-template-columns: repeat(1, minmax(0, 1fr));" in output
+
+    output_all = result.preview_html(
+        tmp_path / "preview_all.html",
+        operator_name="format.decode_check",
+        max_rows=2,
+    ).read_text(encoding="utf-8")
+
+    assert "first.png" in output_all
+    assert "second.png" in output_all
