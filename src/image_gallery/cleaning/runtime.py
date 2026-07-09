@@ -133,6 +133,8 @@ class CleaningRuntime:
                     message="simulated failure",
                     payload={"attempt": attempt},
                 )
+                if attempt >= options.retry_max_attempts:
+                    break
                 continue
 
             _ = dataset.count()
@@ -143,20 +145,20 @@ class CleaningRuntime:
                 message="stage completed",
                 payload={"attempt": attempt},
             )
-        self._report(
-            RunEventContext(run_id),
-            "run_completed",
-            "runtime",
-            message="run completed",
-            payload={"attempt_count": attempt},
-        )
-        self._set_run_status(run_id=run_id, status="completed")
-        return RuntimeRunResult(
-            run_id=run_id,
-            cache_root=self._cache_root,
-            status="completed",
-            attempt_count=attempt_count,
-        )
+            self._report(
+                RunEventContext(run_id),
+                "run_completed",
+                "runtime",
+                message="run completed",
+                payload={"attempt_count": attempt},
+            )
+            self._set_run_status(run_id=run_id, status="completed")
+            return RuntimeRunResult(
+                run_id=run_id,
+                cache_root=self._cache_root,
+                status="completed",
+                attempt_count=attempt_count,
+            )
 
         self._report(
             RunEventContext(run_id),

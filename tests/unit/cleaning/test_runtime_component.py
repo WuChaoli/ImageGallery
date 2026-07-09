@@ -50,6 +50,23 @@ def test_runtime_retries_stage_once_then_completes(tmp_path: Path, tiny_dataset:
     assert runtime.state_store.list_events("run-1")[-1].event_type == "run_completed"
 
 
+def test_runtime_retries_stage_once_but_fails_when_no_retry_budget(tmp_path: Path, tiny_dataset: Dataset) -> None:
+    runtime = CleaningRuntime(cache_root=tmp_path)
+    options = RunOptions(run_id="run-3", retry_max_attempts=1)
+
+    result = runtime.run_fake_stage_for_test(
+        dataset=tiny_dataset,
+        options=options,
+        fail_first_attempt=True,
+    )
+
+    assert result.status == "failed"
+    assert result.attempt_count == 1
+    assert runtime.state_store is not None
+    assert runtime.state_store.list_events("run-3")[-1].event_type == "run_failed"
+    assert runtime.state_store.load_run("run-3").status == "failed"
+
+
 def test_runtime_run_graph_completes_via_fake_stage(tmp_path: Path, tiny_dataset: Dataset) -> None:
     runtime = CleaningRuntime(cache_root=tmp_path)
     graph = CleaningStateGraph(nodes=tuple(), plan_hash="test-graph")
