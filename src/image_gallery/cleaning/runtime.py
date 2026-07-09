@@ -12,7 +12,7 @@ from image_gallery.cleaning.config import ParsedOperatorConfig
 from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths, build_run_paths
 from image_gallery.cleaning.evaluator import OperatorEvaluator
 from image_gallery.cleaning.events import ProgressReporter, RuntimeEvent
-from image_gallery.cleaning.graph import CleaningStateGraph
+from image_gallery.cleaning.graph import CleaningStateGraph, GraphNode
 from image_gallery.cleaning.planner import CleaningRunPlanner, CompiledCleaningPlan
 from image_gallery.cleaning.preview import apply_final_action
 from image_gallery.cleaning.result import CleanerResult
@@ -102,8 +102,13 @@ class CleaningRuntime:
                 graph=graph,
                 sample_rule=sample_rule,
             )
-            self._validate_graph_nodes(store=store, run_id=resume_run_id, expected_graph=graph)
-            self._validate_run_outputs(run_dir=run_dir, run_record=run_record)
+            graph_nodes = self._validate_graph_nodes(store=store, run_id=resume_run_id, expected_graph=graph)
+            self._validate_run_outputs(
+                run_dir=run_dir,
+                run_record=run_record,
+                trusted_parameter_hashes=_parameter_config_hashes_from_graph_nodes(graph_nodes),
+                trusted_parameter_owners=_parameter_owner_computers_from_graph_nodes(graph_nodes),
+            )
             if run_record.status == "completed":
                 return RuntimeRunResult(
                     run_id=resume_run_id,
@@ -148,8 +153,13 @@ class CleaningRuntime:
                 sample_rule=run_record.sample_rule,
                 skip_dataset_validation=True,
             )
-            self._validate_graph_nodes(store=store, run_id=run_id, expected_graph=current_graph)
-            self._validate_run_outputs(run_dir=run_dir, run_record=run_record)
+            graph_nodes = self._validate_graph_nodes(store=store, run_id=run_id, expected_graph=current_graph)
+            self._validate_run_outputs(
+                run_dir=run_dir,
+                run_record=run_record,
+                trusted_parameter_hashes=_parameter_config_hashes_from_graph_nodes(graph_nodes),
+                trusted_parameter_owners=_parameter_owner_computers_from_graph_nodes(graph_nodes),
+            )
             self._validate_rerun_graph_change(current_graph=current_graph, rerun_graph=rerun_graph)
 
             planner = CleaningRunPlanner(self._registry)
@@ -666,7 +676,7 @@ class CleaningRuntime:
         store: SQLiteRunStateStore,
         run_id: str,
         expected_graph: CleaningStateGraph,
-    ) -> None:
+    ) -> tuple[GraphNode, ...]:
         """校验持久化 graph node 与当前编译图完全一致。"""
         persisted = {node.node_id: node for node in store.list_graph_nodes(run_id)}
         expected = {node.node_id: node for node in expected_graph.nodes}
@@ -676,8 +686,16 @@ class CleaningRuntime:
             persisted_node = persisted[node_id]
             if persisted_node != expected_node:
                 raise ValueError(f"graph node mismatch: {node_id}")
+        return tuple(persisted[node.node_id] for node in expected_graph.nodes)
 
-    def _validate_run_outputs(self, *, run_dir: Path, run_record: RunRecord) -> None:
+    def _validate_run_outputs(
+        self,
+        *,
+        run_dir: Path,
+        run_record: RunRecord,
+        trusted_parameter_hashes: dict[str, str],
+        trusted_parameter_owners: dict[str, str],
+    ) -> None:
         """校验运行目录里的表、artifact 和 manifest 仍然完整可复用。"""
         del run_record
         paths = build_run_paths(run_dir)
@@ -695,35 +713,47 @@ class CleaningRuntime:
             raise ValueError("parameter manifest payload must be a JSON object")
 
         state = JsonRunStateStore().load(paths.state_path)
+        if state.parameter_config_hashes != trusted_parameter_hashes:
+            raise ValueError("state parameter config hashes do not match the recorded graph")
         for artifact_name, artifact_path in state.artifact_paths.items():
+            owner = _artifact_owner_computer(artifact_name)
             self._validate_artifact_ref(
                 artifact_name=artifact_name,
                 artifact_path=Path(artifact_path),
-                expected_config_hash=(
-                    state.parameter_config_hashes.get(owner)
-                    if (owner := _artifact_owner_computer(artifact_name)) is not None
-                    else None
+                expected_config_hash=_expected_owner_config_hash(
+                    trusted_parameter_hashes,
+                    owner,
+                    f"artifact manifest config hash mismatch: {artifact_name}",
                 ),
             )
         for relation_name, relation_path in state.relation_paths.items():
+            owner = _relation_owner_computer(relation_name)
             self._validate_relation_manifest(
                 relation_name=relation_name,
                 relation_path=Path(relation_path),
-                expected_config_hash=(
-                    state.parameter_config_hashes.get(owner)
-                    if (owner := _relation_owner_computer(relation_name)) is not None
-                    else None
+                expected_config_hash=_expected_owner_config_hash(
+                    trusted_parameter_hashes,
+                    owner,
+                    f"relation manifest config hash mismatch: {relation_name}",
                 ),
             )
-        for manifest in parameter_manifest.values():
+        for parameter_name, manifest in parameter_manifest.items():
             if not isinstance(manifest, dict):
-                continue
+                raise ValueError(f"parameter manifest entry must be a JSON object: {parameter_name}")
+            owner = trusted_parameter_owners.get(parameter_name)
+            expected_config_hash = _expected_owner_config_hash(
+                trusted_parameter_hashes,
+                owner,
+                f"parameter manifest config hash mismatch: {parameter_name}",
+            )
+            if expected_config_hash is not None and manifest.get("config_hash") != expected_config_hash:
+                raise ValueError(f"parameter manifest config hash mismatch: {parameter_name}")
             artifact_ref = manifest.get("artifact_ref")
             if isinstance(artifact_ref, str) and artifact_ref:
                 self._validate_artifact_ref(
-                    artifact_name=str(manifest.get("computer", "artifact")),
+                    artifact_name=parameter_name,
                     artifact_path=Path(artifact_ref),
-                    expected_config_hash=str(manifest.get("config_hash", "")) or None,
+                    expected_config_hash=expected_config_hash,
                 )
 
     def _validate_artifact_ref(
@@ -975,6 +1005,40 @@ def _sample_size(sample_rule: dict[str, object] | None) -> int | None:
     if isinstance(raw, (int, float, str, bytes)):
         return int(raw)
     raise TypeError("sample.n must be an integer")
+
+
+def _parameter_config_hashes_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]) -> dict[str, str]:
+    """从已验证 graph nodes 提取可信 parameter computer config_hash。"""
+    return {
+        node.computer_name: node.config_hash
+        for node in graph_nodes
+        if node.node_type == "parameter" and node.computer_name is not None
+    }
+
+
+def _parameter_owner_computers_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]) -> dict[str, str]:
+    """从已验证 graph nodes 提取 parameter -> computer 映射。"""
+    owners: dict[str, str] = {}
+    for node in graph_nodes:
+        if node.node_type != "parameter" or node.computer_name is None:
+            continue
+        for parameter_name in node.produced_parameters:
+            owners[parameter_name] = node.computer_name
+    return owners
+
+
+def _expected_owner_config_hash(
+    trusted_parameter_hashes: dict[str, str],
+    owner: str | None,
+    mismatch_message: str,
+) -> str | None:
+    """按 owner 返回可信 config_hash；缺失 owner 时直接失败。"""
+    if owner is None:
+        return None
+    expected_config_hash = trusted_parameter_hashes.get(owner)
+    if not expected_config_hash:
+        raise ValueError(mismatch_message)
+    return expected_config_hash
 
 
 def _artifact_owner_computer(artifact_name: str) -> str | None:

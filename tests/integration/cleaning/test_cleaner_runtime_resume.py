@@ -3,15 +3,18 @@ import sqlite3
 from pathlib import Path
 from typing import ClassVar
 
+import numpy as np
 import pandas as pd
 import pytest
 from PIL import Image
 
 from image_gallery.cleaning import BasicCleaner
+from image_gallery.dataset import Dataset
 from image_gallery.operators.builtin import evaluate_perceptual_duplicate_check
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
 from image_gallery.operators.computers.duplicate import PerceptualDuplicateGroupComputer
 from image_gallery.operators.registry import OperatorRegistry
+from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider, SemanticEmbeddingResult
 from image_gallery.operators.spec import OperatorSpec
 
 
@@ -33,8 +36,6 @@ def _tiny_dataset(tmp_path: Path) -> object:
 
 
 def _write_dataset(tmp_path: Path, name: str, frame: pd.DataFrame):
-    from image_gallery.dataset import Dataset
-
     return Dataset.write(frame, str(tmp_path / name))
 
 
@@ -137,6 +138,79 @@ def _mark_run_as_partial(run_dir: Path, run_id: str) -> None:
     payload["status"] = "running"
     payload["finished_at"] = ""
     state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+class DeterministicSemanticProvider(SemanticEmbeddingProvider):
+    """测试用固定语义向量 provider。"""
+
+    provider_name = "deterministic"
+    provider_version = "1"
+    model_id = "deterministic"
+    model_path = ""
+    base_model = "deterministic"
+    embedding_dimension = 3
+    embedding_source = "test"
+    normalized = True
+
+    def embed_images(self, images: list[Image.Image]) -> SemanticEmbeddingResult:
+        embeddings = np.array(
+            [
+                [1.0, 0.0, 0.0],
+                [0.99, 0.01, 0.0],
+                [0.0, 1.0, 0.0],
+            ],
+            dtype=np.float32,
+        )[: len(images)]
+        embeddings = embeddings / np.linalg.norm(embeddings, axis=1, keepdims=True)
+        return SemanticEmbeddingResult(
+            embeddings=embeddings.astype(np.float32),
+            provider_name=self.provider_name,
+            provider_version=self.provider_version,
+            model_id=self.model_id,
+            model_path=self.model_path,
+            base_model=self.base_model,
+            embedding_dimension=self.embedding_dimension,
+            embedding_source=self.embedding_source,
+            normalized=self.normalized,
+        )
+
+
+def _build_semantic_dataset(tmp_path: Path) -> Dataset:
+    first = tmp_path / "first.png"
+    near = tmp_path / "near.png"
+    far = tmp_path / "far.png"
+    _write_image(first, size=(16, 16), color=(255, 0, 0))
+    _write_image(near, size=(16, 16), color=(250, 5, 5))
+    _write_image(far, size=(16, 16), color=(0, 255, 0))
+    return Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["first", "near", "far"],
+                "image_uri": [str(first), str(near), str(far)],
+            }
+        ),
+        str(tmp_path / "semantic.parquet"),
+    )
+
+
+def _build_semantic_execution(tmp_path: Path):
+    return BasicCleaner(
+        [
+            {
+                "duplicate.semantic_duplicate_check": {
+                    "threshold": 0.9,
+                    "action": "drop",
+                    "provider": "deterministic",
+                }
+            }
+        ],
+        output_dir=tmp_path / "cleaning",
+        semantic_providers={"deterministic": DeterministicSemanticProvider()},
+    ).compile()
+
+
+def _write_json(path: Path, payload: object) -> None:
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 class FixedPerceptualHashComputer(ParameterComputer):
@@ -309,3 +383,41 @@ def test_resume_reuses_completed_parameter_node_for_unfinished_run(tmp_path: Pat
     assert resumed.status() == "completed"
     assert resumed.run_id == result.run_id
     assert CountingArtifactComputer.call_count == before_resume_calls
+
+
+def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: Path) -> None:
+    dataset = _build_semantic_dataset(tmp_path)
+    execution = _build_semantic_execution(tmp_path)
+    result = execution.run(dataset)
+    run_dir = (tmp_path / "cleaning") / result.run_id
+    stale_hash = "stale-config-hash"
+
+    state_path = run_dir / "state.json"
+    state_payload = json.loads(state_path.read_text(encoding="utf-8"))
+    state_payload["parameter_config_hashes"]["semantic_embedding_computer"] = stale_hash
+    state_payload["parameter_config_hashes"]["semantic_duplicate_group_computer"] = stale_hash
+    _write_json(state_path, state_payload)
+
+    parameter_manifest_path = run_dir / "parameter_manifest.json"
+    parameter_manifest = json.loads(parameter_manifest_path.read_text(encoding="utf-8"))
+    for parameter_name in (
+        "semantic_embedding_ref",
+        "semantic_duplicate_group_id",
+        "semantic_duplicate_count",
+        "semantic_duplicate_score",
+        "semantic_duplicate_nearest_image_id",
+    ):
+        parameter_manifest[parameter_name]["config_hash"] = stale_hash
+    _write_json(parameter_manifest_path, parameter_manifest)
+
+    for manifest_path in (
+        run_dir / "artifacts" / "semantic_embeddings" / "manifest.json",
+        run_dir / "artifacts" / "semantic_index" / "manifest.json",
+        run_dir / "relations" / "semantic_duplicate_pairs.parquet.manifest.json",
+    ):
+        payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+        payload["config_hash"] = stale_hash
+        _write_json(manifest_path, payload)
+
+    with pytest.raises(ValueError, match="config hash"):
+        execution.resume(dataset=dataset, run_id=result.run_id)
