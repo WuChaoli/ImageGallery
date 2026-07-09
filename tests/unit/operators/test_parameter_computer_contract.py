@@ -3,11 +3,11 @@ from pathlib import Path
 import pandas as pd
 
 from image_gallery.operators.computers.base import (
+    ComputerCapability,
+    ComputerRuntimePolicy,
     ExecutionMode,
     ImageBatch,
     ImageBatchItem,
-    ComputerCapability,
-    ComputerRuntimePolicy,
     ParameterComputer,
     ParameterRequest,
     ParameterResult,
@@ -54,14 +54,22 @@ def test_parameter_computer_contract_defaults_support_expected_checkpoint_modes(
 
         def compute(self, request: ParameterRequest) -> ParameterResult:
             return ParameterResult(
-                parameter_updates=pd.DataFrame({"image_id": request.parameter_table["image_id"], "demo_group": ["g1"]}),
+                parameter_updates=pd.DataFrame(
+                    {
+                        "image_id": request.parameter_table["image_id"],
+                        "demo_group": ["g1"] * len(request.parameter_table),
+                    }
+                ),
                 relation_updates={},
                 artifact_refs={},
                 parameter_manifest={},
             )
 
     assert "batch" in DemoComputer().capability.checkpoint_strategies
-    assert "whole_node" in AggregateComputer().capability.checkpoint_strategies or "stage" in AggregateComputer().capability.checkpoint_strategies
+    assert (
+        "whole_node" in AggregateComputer().capability.checkpoint_strategies
+        or "stage" in AggregateComputer().capability.checkpoint_strategies
+    )
 
 
 def test_parameter_computer_contract_uses_shared_image_batch(tmp_path: Path) -> None:

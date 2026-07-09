@@ -1,9 +1,9 @@
-from dataclasses import asdict, dataclass
 import json
+from dataclasses import asdict, dataclass
 from hashlib import sha256
 
 from image_gallery.cleaning.config import hash_config
-from image_gallery.cleaning.policy import NodePolicy
+from image_gallery.cleaning.policy import ComputerRuntimePolicy, NodePolicy
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import ConfiguredOperatorSpec
@@ -69,21 +69,54 @@ def _select_evaluation_node_policy(
 def _select_parameter_node_policies(
     configured_operators: list[ConfiguredOperatorSpec],
     registry: OperatorRegistry,
-    node_policies_by_operator: dict[str, NodePolicy],
+    upstream_by_computer: dict[str, set[str]],
+    node_policy: NodePolicy | None,
+    operator_policies: dict[str, NodePolicy] | None,
 ) -> dict[str, NodePolicy]:
     """把算子策略映射到参数 computer，并检测同一 computer 的冲突。"""
     policy_by_computer: dict[str, NodePolicy] = {}
+
     for configured in configured_operators:
-        policy = node_policies_by_operator[configured.spec.name]
+        operator_policy = operator_policies.get(configured.spec.name) if operator_policies else None
+
+        operator_scope: set[str] = set()
+
         for parameter_name in configured.spec.required_parameters:
-            computer = registry.get_parameter_producer(parameter_name)
+            root_computer = registry.get_parameter_producer(parameter_name)
+            stack = [root_computer.name]
+            while stack:
+                computer_name = stack.pop()
+                if computer_name in operator_scope:
+                    continue
+                operator_scope.add(computer_name)
+                stack.extend(upstream_by_computer.get(computer_name, set()))
+
+        for computer_name in operator_scope:
+            computer = registry.get_parameter_computer(computer_name)
+            runtime_node_policy = _runtime_policy_to_node_policy(computer.runtime_policy)
+            merged_policy = runtime_node_policy
+            if node_policy is not None:
+                merged_policy = NodePolicy.merge(merged_policy, node_policy)
+            if operator_policy is not None:
+                merged_policy = NodePolicy.merge(merged_policy, operator_policy)
             prior = policy_by_computer.get(computer.name)
             if prior is None:
-                policy_by_computer[computer.name] = policy
+                policy_by_computer[computer.name] = merged_policy
                 continue
-            if prior != policy:
+            if prior != merged_policy:
                 raise ValueError(f"conflicting operator policy for parameter computer: {computer.name}")
     return policy_by_computer
+
+
+def _runtime_policy_to_node_policy(runtime_policy: ComputerRuntimePolicy) -> NodePolicy:
+    """将参数计算单元运行策略映射为节点策略。"""
+    return NodePolicy(
+        batch=runtime_policy.batch,
+        checkpoint=runtime_policy.checkpoint,
+        failure=runtime_policy.failure,
+        resources=runtime_policy.resources,
+        artifacts=runtime_policy.artifacts,
+    )
 
 
 def _collect_parameter_plan(
@@ -190,8 +223,23 @@ def _topological_computers(
     return ordered
 
 
-def _checkpoint_strategy(execution_mode: ExecutionMode, computer: ParameterComputer) -> str:
-    """按能力与执行模式推断 checkpoint 策略。"""
+def _checkpoint_strategy(
+    execution_mode: ExecutionMode,
+    computer: ParameterComputer,
+    policy: NodePolicy,
+) -> str:
+    """按能力与策略推断参数节点 checkpoint。"""
+    if not policy.checkpoint.enabled:
+        return "none"
+
+    requested_strategy = policy.checkpoint.strategy
+    if requested_strategy != "auto" and requested_strategy not in computer.capability.checkpoint_strategies:
+        raise ValueError(
+            f"unsupported checkpoint strategy '{requested_strategy}' for parameter computer: {computer.name}"
+        )
+    if requested_strategy != "auto":
+        return requested_strategy
+
     if execution_mode == ExecutionMode.DATASET_AGGREGATE:
         if "whole_node" in computer.capability.checkpoint_strategies:
             return "whole_node"
@@ -247,20 +295,22 @@ def compile_state_graph(
         )
         for configured in configured_operators
     }
-    parameter_node_policies = _select_parameter_node_policies(
-        configured_operators,
-        registry,
-        operator_policies_by_operator,
-    )
 
     ordered_computer_names, upstream_by_computer, config_hash_by_computer = (
         _collect_parameter_plan(configured_operators, registry)
+    )
+    parameter_node_policies = _select_parameter_node_policies(
+        configured_operators,
+        registry,
+        upstream_by_computer=upstream_by_computer,
+        node_policy=node_policy,
+        operator_policies=operator_policies,
     )
 
     parameter_nodes: list[GraphNode] = []
     for computer_name in ordered_computer_names:
         computer = registry.get_parameter_computer(computer_name)
-        policy = parameter_node_policies.get(computer_name, default_node_policy)
+        policy = parameter_node_policies[computer_name]
         parameter_nodes.append(
             GraphNode(
                 node_id=f"parameter.{computer_name}",
@@ -276,7 +326,7 @@ def compile_state_graph(
                 upstream_node_ids=tuple(
                     sorted(f"parameter.{upstream}" for upstream in upstream_by_computer[computer_name])
                 ),
-                checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer),
+                checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
             )
         )
 
