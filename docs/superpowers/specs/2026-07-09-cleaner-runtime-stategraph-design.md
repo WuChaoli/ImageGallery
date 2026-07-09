@@ -23,6 +23,7 @@
 5. 通过 `CleanerResult` 提供只读查询和显式导出 API。
 6. 为每个逻辑算子定义 `PreviewPolicy`，作为该算子最常用的预览结构。
 7. 保留 `BasicCleaner.run(dataset)` 快捷入口，但它只代理 `compile().run(dataset)` 并返回 `CleanerResult`。
+8. 支持 TOML 配置、算子 selector、Notebook 进度输出和用户友好的配置诊断。
 
 ## 非目标
 
@@ -51,11 +52,20 @@ cleaner = BasicCleaner(
 )
 ```
 
+`operators` 支持四类输入：
+
+```python
+BasicCleaner(operators=[{"quality.blur_check": {"threshold": 100.0}}])
+BasicCleaner(operators=["QUALITY", "DUPLICATE"])
+BasicCleaner(operators="ALL")
+BasicCleaner(operators=[blur_check_spec.with_config({"threshold": 100.0})])
+```
+
 `compile()` 返回不可变 `CleanerExecution`：
 
 ```python
 execution = cleaner.compile()
-result = execution.run(dataset)
+result = execution.run(dataset, progress="auto", label="sample-1000-smoke", tags=["sample_1000"])
 ```
 
 `BasicCleaner.run(dataset)` 保留为 Notebook 和脚本快捷入口：
@@ -73,7 +83,7 @@ result = BasicCleaner(operators).compile().run(dataset)
 `CleanerExecution` 负责运行控制：
 
 ```python
-result = execution.run(dataset)
+result = execution.run(dataset, progress="auto")
 resumed = execution.resume(dataset=dataset, run_id=result.run_id)
 resumed = execution.resume(dataset=dataset, result=result)
 rerun_result = execution.rerun(result, operators=[...])
@@ -99,6 +109,81 @@ result.cleanup()
 ```
 
 `CleanerResult` 不公开 `work_dir`、`parameter_table_path`、`evaluation_table_path` 或 artifact 目录路径。调试和 Notebook 验证通过只读导出 API 复制过程产物。
+
+## TOML 配置
+
+Python API 是运行时事实 API；TOML 是用户友好的配置入口。TOML 解析后统一变成 `CleanerConfig`，再构造 `BasicCleaner`。
+
+```python
+config = CleanerConfig.from_toml("cleaning.toml")
+cleaner = BasicCleaner.from_config(config)
+result = cleaner.run(dataset)
+```
+
+也提供快捷入口：
+
+```python
+result = BasicCleaner.from_toml("cleaning.toml").run(dataset)
+```
+
+TOML 示例：
+
+```toml
+[cleaner]
+operators = ["QUALITY", "DUPLICATE"]
+
+[node_policy.batch]
+size = 128
+
+[node_policy.failure]
+fail_fast = false
+max_errors = 100
+
+[[operator]]
+name = "quality.blur_check"
+threshold = 100.0
+action = "drop"
+
+[[operator]]
+name = "duplicate.semantic_duplicate_check"
+threshold = 0.9
+action = "review"
+
+[operator_policies."duplicate.semantic_duplicate_check".batch]
+size = 32
+```
+
+TOML 解析要求：
+
+1. `cleaner.operators` 可以使用 selector，例如 `ALL`、`QUALITY`、`DUPLICATE`。
+2. `[[operator]]` 用于覆盖指定算子的业务配置。
+3. `operator_policies` 只保存运行策略，不和业务配置混写。
+4. 未知算子、未知 category、重复冲突配置、类型错误应给出带路径的错误信息，例如 `operator[1].threshold`。
+5. 第一版不在 TOML 中保存 Storage secret 或访问 token。
+
+## 算子选择
+
+算子选择支持 name、category selector、`ALL` 和 spec list。
+
+```python
+BasicCleaner(operators="ALL")
+BasicCleaner(operators=["QUALITY", "DUPLICATE"])
+BasicCleaner(operators=["quality.blur_check", "DUPLICATE"])
+BasicCleaner(operators=[custom_operator_spec])
+```
+
+选择语义：
+
+1. `ALL` 启用当前 registry 中所有逻辑算子。
+2. `QUALITY` 启用 category 为 `quality` 的所有逻辑算子。
+3. `DUPLICATE` 启用 category 为 `duplicate` 的所有逻辑算子。
+4. 其他 category selector 使用 registry 中的 category 大写形式。
+5. 显式 name 和 category selector 可以混用。
+6. 重复算子去重。
+7. selector 展开顺序使用 registry 默认顺序；该顺序只影响展示和同层 tie-breaker，不决定执行依赖。
+8. selector 使用算子的默认业务配置；如需覆盖，使用显式 operator 配置或 TOML `[[operator]]`。
+
+直接传入 `OperatorSpec` 或 `ConfiguredOperatorSpec` 时，运行时把它作为临时 registry 条目并启用。若同名 spec 已在 registry 中存在，默认报错；只有显式 `override=True` 时才允许替换。
 
 ## CleaningStateGraph
 
@@ -297,6 +382,63 @@ NodePolicy(
 
 `ParameterComputer` 或 stage 还需要声明 capability，例如支持的 checkpoint strategy、是否支持 batch、是否允许 retry。用户配置和 capability 冲突时，compile 阶段直接失败。
 
+## 进度输出
+
+`run()`、`resume()` 和 `rerun()` 支持进度输出：
+
+```python
+execution.run(dataset, progress="auto")
+execution.run(dataset, progress=True)
+execution.run(dataset, progress=False)
+execution.run(dataset, progress=callback)
+```
+
+语义：
+
+1. `progress="auto"`：检测到 Notebook 时显示进度；普通脚本保持简洁日志或静默。
+2. `progress=True`：强制显示进度。
+3. `progress=False`：完全关闭进度输出。
+4. `progress=callback`：向用户回调运行事件，适合自定义 UI 或日志系统。
+
+运行时内核只产生事件，不绑定具体渲染库。Notebook adapter 可以把事件渲染为进度条。
+
+事件类型：
+
+```text
+run_started
+node_started
+batch_completed
+stage_completed
+node_completed
+retry_started
+run_completed
+run_failed
+```
+
+事件 payload 至少包含：
+
+```text
+run_id
+node_id
+node_label
+node_type
+stage_name
+batch_id
+completed
+total
+message
+created_at
+```
+
+Notebook 展示示例：
+
+```text
+image_quality  batch 12/80
+semantic_embedding.extract  batch 5/30
+semantic_index.build
+evaluation.duplicate.semantic_duplicate_check
+```
+
 ## Retry、Resume 与 Rerun
 
 `RetryPolicy` 是同一次运行内的失败重试。`resume()` 是进程中断或 run 停止后的恢复。
@@ -332,6 +474,10 @@ SQLite 是运行状态事实来源。`state.json` 仅是用户可读摘要，不
 cleaning_run
   run_id
   cleaner_type
+  label
+  tags_json
+  sample_size
+  sample_rule_json
   status
   dataset_fingerprint
   plan_hash
@@ -406,6 +552,8 @@ run_event
 
 SQLite 不保存图片二进制、缩略图二进制、大规模 DataFrame 内容、MinIO secret key 或访问 token。
 
+`label` 和 `tags_json` 只用于人类识别、Notebook 展示和未来 run list 筛选，不参与 `plan_hash`、`config_hash` 或 cache 判断。
+
 ## Cache 与 Artifact
 
 过程产物默认写入系统缓存目录：
@@ -466,6 +614,70 @@ result.export_debug_bundle("debug-cleaning-run.zip")
 
 `cleanup()` 清理内部缓存后，result 进入 `cleaned` 状态。已导出的用户文件不受影响；未导出的内容之后不可再导出。
 
+## 用户友好工具
+
+第一版建议提供以下辅助能力。
+
+### dry_run 与 plan
+
+```python
+execution = cleaner.compile()
+plan_frame = execution.plan()
+diagnostics = execution.dry_run(dataset)
+```
+
+`plan()` 不读取 dataset，只展示编译后的 graph。`dry_run(dataset)` 可以读取 dataset fingerprint 和 schema，但不执行参数计算；它用于校验 TOML、算子选择、依赖图、policy capability、输出预览配置和 resume 兼容性。
+
+### 配置模板导出
+
+```python
+BasicCleaner.export_config_template("cleaning.toml", operators=["QUALITY"])
+```
+
+模板应包含选中算子的默认业务配置、默认 preview policy 摘要和常用 `node_policy` 字段。模板不包含密钥。
+
+### 策略预设
+
+```python
+NodePolicy.preset("fast")
+NodePolicy.preset("balanced")
+NodePolicy.preset("strict")
+```
+
+预设语义：
+
+1. `fast`：较大 batch、较少中间保留、适合快速 smoke。
+2. `balanced`：默认推荐策略。
+3. `strict`：更严格错误阈值、保留更多 debug manifest、适合正式验收。
+
+### run label 与 tags
+
+```python
+result = execution.run(
+    dataset,
+    label="semantic-threshold-0.90",
+    tags=["sample_1000", "semantic", "tuning"],
+)
+```
+
+`label` 和 `tags` 不影响执行图、不影响 hash、不影响缓存，仅用于识别和筛选。
+
+### 结果解释
+
+```python
+result.explain("image_id")
+```
+
+`explain()` 返回该图片触发的逻辑算子、action/reason、关键分数、relation group 和最终 `final_action`。它只读取 result backing files，不重新执行计算。
+
+### sample run
+
+```python
+execution.run(dataset, sample=100)
+```
+
+`sample` 用于快速试配置。sample run 必须在 run metadata 中标记 `sample_size` 和 sample 规则，避免和正式全量 run 混淆。
+
 ## 错误处理
 
 1. compile 阶段发现未知算子、缺少 producer、依赖环、policy capability 冲突时直接失败。
@@ -473,6 +685,8 @@ result.export_debug_bundle("debug-cleaning-run.zip")
 3. retry 耗尽后，如果 `fail_fast=True`，run 立即失败。
 4. `fail_fast=False` 时，允许可标记失败的 image-level 错误继续；node-level 不可恢复错误仍会停止 run。
 5. artifact manifest 缺失或 checksum 不一致时，resume 视为该节点不可用，并按 checkpoint strategy 重跑或报错。
+6. TOML 配置错误必须指向具体配置路径，并尽量给出可用算子或 category 建议。
+7. selector 展开为空时直接失败，并提示当前 registry 中可用 category。
 
 ## 测试策略
 
@@ -486,6 +700,9 @@ result.export_debug_bundle("debug-cleaning-run.zip")
 6. `actions` 支持单值、多值和 `full`，未知 action 或 `full` 混用时报错。
 7. SQLite store 能记录 run、node、stage、batch、artifact 和 event。
 8. Artifact manager 能完成 tmp -> manifest -> committed -> SQLite 状态提交。
+9. TOML 配置能解析为 `CleanerConfig`，业务配置和 `operator_policies` 分离。
+10. `ALL`、category selector、name 和 spec list 能展开为确定的 operator 配置。
+11. `progress` callback 能收到 run/node/batch/stage/retry 事件。
 
 ### 集成测试
 
@@ -497,12 +714,17 @@ result.export_debug_bundle("debug-cleaning-run.zip")
 6. batch/stage 失败触发 `RetryPolicy`，重试事件写入 SQLite。
 7. evaluation-only `rerun()` 复用 parameter artifacts；parameter config 或 policy 变化时拒绝 rerun。
 8. `cleanup()` 后未导出的 result 内容不可再导出。
+9. `BasicCleaner.from_toml(...).run(dataset)` 和 Python API 产生等价 graph。
+10. `execution.run(..., label=..., tags=...)` 把 metadata 写入 SQLite 和 summary。
+11. `result.explain(image_id)` 返回触发算子、关键分数和 final action。
 
 ### Notebook 验证
 
 1. 更新清洗 v3 Notebook，使用 `result = BasicCleaner(configs).run(dataset)`。
 2. 使用 `result.preview_html(..., operator_name=...)` 导出各逻辑算子预览。
 3. 使用 `result.export_table()` 和 `result.export_manifest()` 显式导出调试产物，而不是读取缓存路径。
+4. Notebook 中 `progress="auto"` 能显示节点、stage 和 batch 进度。
+5. Notebook 示例包含 TOML 配置加载和 `ALL` / category selector 示例。
 
 ## 成功标准
 
@@ -513,3 +735,4 @@ result.export_debug_bundle("debug-cleaning-run.zip")
 5. 每个逻辑算子可以声明 `PreviewPolicy`，单算子 HTML 预览无需重复手写常用展示参数。
 6. `preview()` 和 `preview_html()` 支持 `actions` 单选、多选和 `full`。
 7. retry、checkpoint、resume 和 evaluation-only rerun 语义清晰且可测试。
+8. TOML、selector、spec list、progress、label/tags、dry_run、template、explain 和 sample run 形成完整的用户友好入口。
