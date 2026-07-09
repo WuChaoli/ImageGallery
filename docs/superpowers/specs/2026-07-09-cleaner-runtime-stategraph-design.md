@@ -914,47 +914,100 @@ execution.run(dataset, sample=100)
 
 ## 测试策略
 
-### 单元测试
+本次重构范围较大，测试需要覆盖 API、状态机、文件契约、失败恢复和真实数据验收。测试按六层组织。
 
-1. `BasicCleaner.compile()` 返回 `CleanerExecution`，不读取 dataset，不写产物。
-2. `CleaningStateGraph` 根据 parameter 依赖排序，不按用户算子顺序排序。
-3. `CleaningStateGraph` 对依赖环、缺少 producer、policy capability 冲突报错。
-4. `NodePolicy` 合并优先级正确。
-5. `PreviewPolicy` 在单算子 `preview_html()` 中作为默认值生效，显式参数能覆盖默认值。
-6. `actions` 支持单值、多值和 `full`，未知 action 或 `full` 混用时报错。
-7. SQLite store 能记录 run、node、stage、batch、artifact 和 event。
-8. Artifact manager 能完成 tmp -> manifest -> committed -> SQLite 状态提交。
-9. TOML 配置能解析为 `CleanerConfig`，业务配置和 `operator_policies` 分离。
-10. `ALL`、category selector、name 和 spec list 能展开为确定的 operator 配置。
-11. `progress` callback 能收到 run/node/batch/stage/retry 事件。
-12. 内置 `OperatorSpec.preview_policy` 默认值覆盖 format、size、quality、content、metadata 和 duplicate 算子。
-13. `ParameterComputer` runtime policy、capability 和 operator policy 投影冲突规则可被独立测试。
-14. artifact manifest 缺失、checksum 错误或 commit marker 缺失会使 resume 拒绝复用 artifact。
-15. `dry_run()` 返回 selected operators、expanded selectors、graph nodes、policy overrides、warnings、errors、estimated artifacts 和 preview policies。
+### 测试分层
 
-### 集成测试
+1. Contract tests：验证核心数据契约，例如 `ConfiguredOperatorSpec`、`CleaningStateGraph`、`NodePolicy`、`PreviewPolicy`、artifact manifest 和 SQLite schema。
+2. Unit tests：验证 TOML parser、selector expansion、policy merge、state store、artifact manager、progress event、actions filter 和 preview policy resolver。
+3. Runtime component tests：使用 fake dataset 和 fake computer 模拟 batch、stage、retry、失败和 resume，不跑真实图片算法。
+4. Integration tests：使用小型本地图片 dataset 跑真实 `BasicCleaner(...).run(dataset)`，验证 Result API、export、preview、debug bundle、cleanup、rerun 和 resume。
+5. Notebook smoke tests：验证 Notebook 入口，包括 `progress="auto"`、TOML、`ALL` / `QUALITY` / `DUPLICATE`、单算子 HTML 预览和只读导出。
+6. Real data acceptance tests：使用 `sample_1000` / MinIO dataset 做慢速验收，验证语义去重、感知去重、HTML 预览和 artifact manifest 真实可用。该层不进入默认快速测试，可作为手动或 nightly。
 
-1. `BasicCleaner(...).run(dataset)` 返回 `CleanerResult`，默认不在用户目录写过程产物。
-2. `CleanerResult.export("clean" / "dropped" / "full")` 写出正确 Dataset。
-3. `CleanerResult.export_table()`、`export_manifest()`、`export_relations()` 写出只读副本。
-4. 单逻辑算子 `preview_html(operator_name=...)` 能按该算子 action/reason 和 preview policy 导出。
-5. 中断后 `execution.resume(dataset=..., run_id=...)` 或 `execution.resume(dataset=..., result=...)` 跳过已完成节点并继续未完成节点。
-6. batch/stage 失败触发 `RetryPolicy`，重试事件写入 SQLite。
-7. evaluation-only `rerun()` 复用 parameter artifacts；parameter config 或 policy 变化时拒绝 rerun。
-8. `cleanup()` 后未导出的 result 内容不可再导出。
-9. `BasicCleaner.from_toml(...).run(dataset)` 和 Python API 产生等价 graph。
-10. `execution.run(..., label=..., tags=...)` 把 metadata 写入 SQLite 和 summary。
-11. `result.explain(image_id)` 返回触发算子、关键分数和 final action。
-12. sample run 写入 `sample_size` 和 `sample_rule_json`，resume 时校验 sample rule。
-13. semantic duplicate 的 embedding、index 和 relation artifact 都能通过 manifest 校验。
+### 测试矩阵
 
-### Notebook 验证
+| 功能域 | 必测内容 | 测试类型 |
+| --- | --- | --- |
+| Builder API | `BasicCleaner.run` 快捷入口、`compile()` 返回 `CleanerExecution`、compile 不读取 dataset | contract / integration |
+| Operator input | dict、name、`OperatorSpec`、`ConfiguredOperatorSpec`、TOML、`ALL`、category selector | unit / contract |
+| StateGraph | 参数依赖排序、evaluation 和 merge 入图、依赖环、共享 node、用户顺序 tie-breaker | contract |
+| Policy | computer 默认 policy、capability、operator policy 投影、共享 node 冲突报错 | unit / contract |
+| Runtime state | SQLite run/node/stage/batch/artifact/event 状态写入和读取 | component |
+| Checkpoint / resume | completed 跳过、failed 重试、manifest 损坏拒绝复用、sample rule 校验 | component / integration |
+| Result | `state()`、`result()`、`export()`、`preview()`、`preview_html()`、`explain()`、`cleanup()` | integration |
+| Preview | per-operator policy、actions 单选/多选/`full`、group context、caption columns | unit / integration / notebook |
+| Artifacts | tmp -> manifest -> committed、checksum、commit marker、debug bundle | component / integration |
+| Progress | callback 事件、关键事件写入 SQLite、Notebook adapter 展示 | unit / notebook |
+| TOML | 错误路径、策略分离、Python API 等价、未知 selector 提示 | unit / integration |
+| Sample run | stable sample、sample metadata、resume 校验、summary 标记 sample run | unit / integration |
 
-1. 更新清洗 v3 Notebook，使用 `result = BasicCleaner(configs).run(dataset)`。
-2. 使用 `result.preview_html(..., operator_name=...)` 导出各逻辑算子预览。
-3. 使用 `result.export_table()` 和 `result.export_manifest()` 显式导出调试产物，而不是读取缓存路径。
-4. Notebook 中 `progress="auto"` 能显示节点、stage 和 batch 进度。
-5. Notebook 示例包含 TOML 配置加载和 `ALL` / category selector 示例。
+### 失败注入场景
+
+必须覆盖以下失败路径：
+
+1. batch 处理中第 N 张图片 read/decode 失败。
+2. computer 第一次 stage 失败，retry 后成功。
+3. retry 耗尽且 `fail_fast=True`，run 立即失败。
+4. retry 耗尽但属于可标记的 image-level failure，run 继续并记录失败。
+5. SQLite 显示 artifact completed，但 artifact manifest 缺失。
+6. artifact manifest checksum、row count 或 commit marker 不匹配。
+7. parameter config hash 不匹配时拒绝 resume。
+8. node policy hash 不匹配时拒绝 resume。
+9. sample rule 不匹配时拒绝 resume。
+10. `operator_policies` 对共享 parameter node 配置冲突。
+11. `actions=["full", "drop"]` 报错。
+12. TOML 未知 category、未知 operator、类型错误时返回带路径的错误信息。
+
+### 验证命令
+
+默认快速验证：
+
+```bash
+.venv/bin/python -m pytest tests/unit/cleaning tests/unit/operators -q
+.venv/bin/python -m pytest tests/integration/cleaning -q
+.venv/bin/python -m pytest tests/unit/notebooks -q
+.venv/bin/python -m ruff check src tests
+.venv/bin/python -m mypy src/image_gallery
+```
+
+语义去重和 artifact 验证可以作为聚焦慢速命令：
+
+```bash
+PYTHONPATH=src:. .venv/bin/python -m pytest tests/integration/cleaning/test_basic_cleaner_semantic_duplicate.py -q
+```
+
+Notebook 执行作为手动或慢速验收：
+
+```bash
+.venv/bin/python -m jupyter nbconvert --to notebook --execute notebooks/cleaning_v3_sample_1000_test.ipynb --inplace
+```
+
+### 验收产物检查
+
+除了测试命令通过，还必须检查以下产物契约：
+
+1. `result.export("full")` 行数等于输入行数。
+2. `result.export("clean")` 和 `result.export("dropped")` 能由 `full` 的 final action 解释。
+3. `result.export_table("parameter")` 不缺本次 graph 所需参数列。
+4. `result.export_table("evaluation")` 包含所有启用算子的 action/reason 列和 final merge 列。
+5. `result.export_manifest("artifacts")` 中每个 artifact 都有 checksum、row count 和 commit marker。
+6. duplicate 类算子的 `export_relations(...)` 非空或在无重复样本时结构正确。
+7. `preview_html(operator_name=...)` 包含该算子的 action、reason 和 preview caption columns。
+8. `export_debug_bundle(...)` 不包含内部绝对 cache 路径和 secret。
+9. `state()` 和 `summary()` 能显示 label、tags、sample 标记、节点状态和失败摘要。
+
+### 分阶段门禁
+
+实施计划必须按阶段验收，前一阶段测试通过后再进入下一阶段。
+
+1. Phase 1：API skeleton、`ConfiguredOperatorSpec`、TOML、selector、policy contract tests。
+2. Phase 2：`CleaningStateGraph`、SQLite store、artifact manager component tests。
+3. Phase 3：runtime run/resume/rerun integration tests。
+4. Phase 4：`CleanerResult` export/preview/explain/debug bundle tests。
+5. Phase 5：Notebook smoke 和 `sample_1000` real data acceptance。
+
+每个 phase 都要求新增或调整测试先通过，再进入下一 phase。若某个慢速验收无法在本机完成，必须在最终说明中记录未运行原因、替代验证和剩余风险。
 
 ## 成功标准
 
