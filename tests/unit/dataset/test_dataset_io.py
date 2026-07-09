@@ -24,11 +24,11 @@ def test_dataset_write_and_read_parquet(tmp_path: Path) -> None:
     ]
 
 
-def test_dataset_from_path_reads_existing_file(tmp_path: Path) -> None:
+def test_dataset_load_reads_existing_file(tmp_path: Path) -> None:
     output_path = str(tmp_path / "raw.parquet")
     pd.DataFrame([{"image_id": "img-1", "image_uri": "/tmp/a.jpg"}]).to_parquet(output_path, index=False)
 
-    dataset = Dataset.from_path(output_path)
+    dataset = Dataset.load(output_path)
 
     assert dataset.count() == 1
 
@@ -45,13 +45,13 @@ def test_dataset_scan_selects_columns_and_filters_rows(tmp_path: Path) -> None:
         output_path,
     )
 
-    frame = Dataset.from_path(output_path).scan(columns=["image_id"], filters={"import_status": "imported"})
+    frame = Dataset.load(output_path).scan(columns=["image_id"], filters={"import_status": "imported"})
 
     assert frame.to_dict("records") == [{"image_id": "img-1"}]
 
 
 def test_dataset_validate_readable_rejects_missing_file(tmp_path: Path) -> None:
-    missing = Dataset.from_path(str(tmp_path / "missing.parquet"))
+    missing = Dataset.load(str(tmp_path / "missing.parquet"))
 
     with pytest.raises(FileNotFoundError):
         missing.validate_readable()

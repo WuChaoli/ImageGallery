@@ -8,6 +8,7 @@ import pandas as pd
 from PIL import Image
 
 from image_gallery.dataset.fingerprint import dataframe_fingerprint
+from image_gallery.dataset.io import DatasetExporter, DatasetExportResult, DatasetLoader
 from image_gallery.storage.base import Storage
 from image_gallery.storage.uri import file_image_uri_to_path
 
@@ -73,8 +74,11 @@ class Dataset:
     storage: Storage | None = field(default=None, compare=False, repr=False)
 
     @classmethod
-    def from_path(cls, dataset_path: str, storage: Storage | None = None) -> "Dataset":
-        """从已有数据集路径创建 Dataset 对象，不立即读取文件内容。"""
+    def load(cls, source: str | Path | DatasetLoader, storage: Storage | None = None) -> "Dataset":
+        """从表格文件或 DatasetLoader 加载 Dataset。"""
+        if isinstance(source, DatasetLoader):
+            return source.load()
+        dataset_path = str(source)
         return cls(dataset_path=dataset_path, format=_format_from_path(dataset_path), storage=storage)
 
     @classmethod
@@ -222,16 +226,11 @@ class Dataset:
             columns=columns,
         )
 
-    def export(self, output_dataset_path: str, address_policy: str = "keep") -> "Dataset":
-        """导出数据集；默认保留 image_uri 并移除 source_uri。"""
-        # address_policy 当前只支持 keep：保留 image_uri，不复制或改写图片地址。
-        if address_policy != "keep":
-            raise ValueError(f"unsupported address_policy: {address_policy}")
-        # frame 是待导出的数据；source_uri 默认属于追溯字段，对外导出时移除。
-        frame = self.to_frame()
-        if "source_uri" in frame.columns:
-            frame = frame.drop(columns=["source_uri"])
-        return Dataset.write(frame, output_dataset_path)
+    def export(self, exporter: DatasetExporter) -> DatasetExportResult:
+        """使用指定 exporter 导出 Dataset。"""
+        if not isinstance(exporter, DatasetExporter):
+            raise TypeError("exporter must implement DatasetExporter")
+        return exporter.export(self)
 
 
 def _format_from_path(dataset_path: str) -> str:
