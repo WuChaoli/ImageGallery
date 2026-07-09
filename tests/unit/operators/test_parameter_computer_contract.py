@@ -6,6 +6,8 @@ from image_gallery.operators.computers.base import (
     ExecutionMode,
     ImageBatch,
     ImageBatchItem,
+    ComputerCapability,
+    ComputerRuntimePolicy,
     ParameterComputer,
     ParameterRequest,
     ParameterResult,
@@ -36,6 +38,30 @@ class DemoComputer(ParameterComputer):
                 }
             },
         )
+
+
+def test_parameter_computer_contract_has_default_runtime_and_capability() -> None:
+    computer = DemoComputer()
+    assert computer.runtime_policy == ComputerRuntimePolicy()
+    assert computer.capability == ComputerCapability()
+
+
+def test_parameter_computer_contract_defaults_support_expected_checkpoint_modes() -> None:
+    class AggregateComputer(ParameterComputer):
+        name = "aggregate_computer"
+        execution_mode = ExecutionMode.DATASET_AGGREGATE
+        produced_parameters = frozenset({"demo_group"})
+
+        def compute(self, request: ParameterRequest) -> ParameterResult:
+            return ParameterResult(
+                parameter_updates=pd.DataFrame({"image_id": request.parameter_table["image_id"], "demo_group": ["g1"]}),
+                relation_updates={},
+                artifact_refs={},
+                parameter_manifest={},
+            )
+
+    assert "batch" in DemoComputer().capability.checkpoint_strategies
+    assert "whole_node" in AggregateComputer().capability.checkpoint_strategies or "stage" in AggregateComputer().capability.checkpoint_strategies
 
 
 def test_parameter_computer_contract_uses_shared_image_batch(tmp_path: Path) -> None:

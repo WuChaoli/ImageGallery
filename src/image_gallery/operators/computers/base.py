@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image
 
+from image_gallery.cleaning.policy import ComputerCapability, ComputerRuntimePolicy
+
 
 class ExecutionMode(str, Enum):
     """参数计算执行模式。"""
@@ -64,6 +66,8 @@ class ParameterComputer(ABC):
     produced_parameters: frozenset[str]
     required_parameters: frozenset[str] = frozenset()
     config_parameters: frozenset[str] = frozenset()
+    runtime_policy: ComputerRuntimePolicy = ComputerRuntimePolicy()
+    capability: ComputerCapability = ComputerCapability()
 
     @abstractmethod
     def compute(self, request: ParameterRequest) -> ParameterResult:
