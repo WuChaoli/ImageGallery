@@ -61,3 +61,18 @@ Result: `Success: no issues found in 6 source files`
 
 - `CleanerResult` still does not expose public `cache_root` / `work_dir`; rerun/resume resolve internals through private runtime state only.
 - Rerun is intentionally limited to evaluation-only compatibility. Any parameter node config drift or graph-shape drift is rejected.
+
+## Fix pass
+
+- Tightened tracked artifact validation so resume/rerun now require manifests for tracked artifact refs, and expected `config_hash` values must exist and match.
+- Persisted graph-node completion status during planned execution, then taught unfinished-run resume to reload persisted parameter outputs and skip already completed parameter nodes.
+- Added regressions for:
+  - missing semantic embedding manifest on resume
+  - missing semantic index `config_hash` on rerun
+  - unfinished-run resume reusing a completed parameter node without recomputation
+
+### Fix validation
+
+- `pytest`: `11 passed in 4.43s`
+- `ruff`: `All checks passed!`
+- `mypy`: `Success: no issues found in 3 source files`

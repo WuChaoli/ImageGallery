@@ -13,7 +13,7 @@ from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths, b
 from image_gallery.cleaning.evaluator import OperatorEvaluator
 from image_gallery.cleaning.events import ProgressReporter, RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph
-from image_gallery.cleaning.planner import CleaningRunPlanner
+from image_gallery.cleaning.planner import CleaningRunPlanner, CompiledCleaningPlan
 from image_gallery.cleaning.preview import apply_final_action
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.runtime_state import RunRecord, SQLiteRunStateStore
@@ -116,11 +116,12 @@ class CleaningRuntime:
 
         if configured_operators is None:
             raise ValueError("configured_operators is required when resuming an unfinished run")
-        return self._run_planned_graph(
+        return self._resume_planned_graph(
             graph=graph,
             dataset=dataset,
             run_options=RunOptions(run_id=resume_run_id, sample_rule=run_record.sample_rule),
             configured_operators=configured_operators,
+            run_dir=run_dir,
         )
 
     def rerun_evaluation(
@@ -313,61 +314,62 @@ class CleaningRuntime:
         )
 
         attempt_count = 1
+        artifact_paths: dict[str, str] = {}
+        relation_paths: dict[str, str] = {}
+        operator_states: list[OperatorRunState] = []
         try:
             scheduler = ParameterScheduler(self._registry)
-            schedule_result = scheduler.run(plan.parameter_plan, context, tables)
+            schedule_result = scheduler.run(plan.parameter_plan, context, tables, state_store=self.state_store)
             tables = schedule_result.tables
-            evaluator = OperatorEvaluator()
-            operator_states: list[OperatorRunState] = []
-            for resolved in plan.resolved_operator_runs:
-                tables, operator_state = evaluator.evaluate(resolved, tables)
-                operator_states.append(operator_state)
-
-            tables = CleaningTables(
-                parameter_table=tables.parameter_table,
-                evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
-                operator_outputs=tables.operator_outputs,
-                parameter_manifest=tables.parameter_manifest,
-            )
             write_tables(tables=tables, paths=paths)
-
-            JsonRunStateStore().save(
-                CleanerRunState(
+            artifact_paths = dict(schedule_result.artifact_paths)
+            relation_paths = dict(schedule_result.relation_paths)
+            self._save_run_state(
+                run_id=run_id,
+                dataset_fingerprint=dataset.fingerprint(),
+                parsed_operators=parsed_operators,
+                operator_config_hashes=plan.operator_config_hashes,
+                parameter_config_hashes={
+                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
+                },
+                paths=paths,
+                artifact_paths=artifact_paths,
+                relation_paths=relation_paths,
+                started_at=start_at,
+                finished_at="",
+                status="running",
+                operator_states=[],
+            )
+            return self._complete_planned_run(
+                run_id=run_id,
+                dataset_fingerprint=dataset.fingerprint(),
+                parsed_operators=parsed_operators,
+                plan=plan,
+                paths=paths,
+                tables=tables,
+                artifact_paths=artifact_paths,
+                relation_paths=relation_paths,
+                started_at=start_at,
+            )
+        except Exception:
+            if paths.run_dir.exists():
+                write_tables(tables=tables, paths=paths)
+                self._save_run_state(
                     run_id=run_id,
                     dataset_fingerprint=dataset.fingerprint(),
-                    cleaner_type="basic",
-                    enabled_operator_configs=[{item.operator_name: dict(item.config)} for item in parsed_operators],
-                    operator_config_hashes={item.operator_name: item.config_hash for item in parsed_operators},
+                    parsed_operators=parsed_operators,
+                    operator_config_hashes=plan.operator_config_hashes,
                     parameter_config_hashes={
                         step.computer_name: step.config_hash for step in plan.parameter_plan.steps
                     },
-                    parameter_table_path=str(paths.parameter_table_path),
-                    evaluation_table_path=str(paths.evaluation_table_path),
-                    operator_outputs_path=str(paths.operator_outputs_path),
-                    parameter_manifest_path=str(paths.parameter_manifest_path),
-                    relation_paths=schedule_result.relation_paths,
-                    artifact_paths=schedule_result.artifact_paths,
+                    paths=paths,
+                    artifact_paths=artifact_paths,
+                    relation_paths=relation_paths,
                     started_at=start_at,
                     finished_at=datetime.now(timezone.utc).isoformat(),
-                    status="completed",
+                    status="failed",
                     operator_states=operator_states,
-                ),
-                paths.state_path,
-            )
-            self._report(
-                RunEventContext(run_id),
-                "run_completed",
-                "runtime",
-                message="run completed",
-            )
-            self._set_run_status(run_id=run_id, status="completed")
-            return RuntimeRunResult(
-                run_id=run_id,
-                cache_root=self._cache_root,
-                status="completed",
-                attempt_count=attempt_count,
-            )
-        except Exception:
+                )
             self._report(
                 RunEventContext(run_id),
                 "run_failed",
@@ -381,6 +383,246 @@ class CleaningRuntime:
                 status="failed",
                 attempt_count=attempt_count,
             )
+
+    def _resume_planned_graph(
+        self,
+        *,
+        graph: CleaningStateGraph,
+        dataset: Dataset,
+        run_options: RunOptions,
+        configured_operators: list[ConfiguredOperatorSpec],
+        run_dir: Path,
+    ) -> RuntimeRunResult:
+        """基于已有 run_dir 复用已完成参数节点并继续执行。"""
+        run_id = run_options.run_id
+        start_at = datetime.now(timezone.utc).isoformat()
+        self._artifact_manager = ArtifactManager(run_dir / "artifacts")
+        parsed_operators = [
+            ParsedOperatorConfig(
+                operator_name=operator_spec.operator_name,
+                config=operator_spec.config,
+                config_hash=operator_spec.operator_config_hash,
+            )
+            for operator_spec in configured_operators
+        ]
+        plan = CleaningRunPlanner(self._registry).compile(parsed_operators)
+        paths = build_run_paths(run_dir)
+        persisted_state = JsonRunStateStore().load(paths.state_path)
+        persisted_tables = read_tables(paths)
+        tables = CleaningTables(
+            parameter_table=persisted_tables.parameter_table,
+            evaluation_table=initialize_evaluation_table(persisted_tables.parameter_table),
+            operator_outputs={},
+            parameter_manifest=persisted_tables.parameter_manifest,
+        )
+        context = CleanerRunContext(
+            run_id=run_id,
+            dataset=dataset,
+            dataset_fingerprint=dataset.fingerprint(),
+            cleaner_type="basic",
+            operator_configs=parsed_operators,
+            paths=paths,
+        )
+
+        self.state_store = SQLiteRunStateStore.open_existing(run_dir, run_id)
+        self._set_run_status(run_id=run_id, status="running")
+        self._report(
+            RunEventContext(run_id),
+            "run_started",
+            "runtime",
+            message="runtime resumed",
+        )
+
+        artifact_paths = dict(persisted_state.artifact_paths)
+        relation_paths = dict(persisted_state.relation_paths)
+        operator_states: list[OperatorRunState] = []
+        try:
+            completed_node_ids = {
+                node_id
+                for node_id, status in self.state_store.list_graph_node_statuses(run_id).items()
+                if status == "completed"
+            }
+            schedule_result = ParameterScheduler(self._registry).run(
+                plan.parameter_plan,
+                context,
+                tables,
+                state_store=self.state_store,
+                completed_node_ids=completed_node_ids,
+            )
+            tables = schedule_result.tables
+            artifact_paths.update(schedule_result.artifact_paths)
+            relation_paths.update(schedule_result.relation_paths)
+            write_tables(tables=tables, paths=paths)
+            self._save_run_state(
+                run_id=run_id,
+                dataset_fingerprint=dataset.fingerprint(),
+                parsed_operators=parsed_operators,
+                operator_config_hashes=plan.operator_config_hashes,
+                parameter_config_hashes={
+                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
+                },
+                paths=paths,
+                artifact_paths=artifact_paths,
+                relation_paths=relation_paths,
+                started_at=persisted_state.started_at or start_at,
+                finished_at="",
+                status="running",
+                operator_states=[],
+            )
+            return self._complete_planned_run(
+                run_id=run_id,
+                dataset_fingerprint=dataset.fingerprint(),
+                parsed_operators=parsed_operators,
+                plan=plan,
+                paths=paths,
+                tables=tables,
+                artifact_paths=artifact_paths,
+                relation_paths=relation_paths,
+                started_at=persisted_state.started_at or start_at,
+            )
+        except Exception:
+            write_tables(tables=tables, paths=paths)
+            self._save_run_state(
+                run_id=run_id,
+                dataset_fingerprint=dataset.fingerprint(),
+                parsed_operators=parsed_operators,
+                operator_config_hashes=plan.operator_config_hashes,
+                parameter_config_hashes={
+                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
+                },
+                paths=paths,
+                artifact_paths=artifact_paths,
+                relation_paths=relation_paths,
+                started_at=persisted_state.started_at or start_at,
+                finished_at=datetime.now(timezone.utc).isoformat(),
+                status="failed",
+                operator_states=operator_states,
+            )
+            self._report(
+                RunEventContext(run_id),
+                "run_failed",
+                "runtime",
+                message="run failed",
+            )
+            self._set_run_status(run_id=run_id, status="failed")
+            return RuntimeRunResult(
+                run_id=run_id,
+                cache_root=self._cache_root,
+                status="failed",
+                attempt_count=1,
+            )
+
+    def _complete_planned_run(
+        self,
+        *,
+        run_id: str,
+        dataset_fingerprint: str,
+        parsed_operators: list[ParsedOperatorConfig],
+        plan: CompiledCleaningPlan,
+        paths: CleanerRunPaths,
+        tables: CleaningTables,
+        artifact_paths: dict[str, str],
+        relation_paths: dict[str, str],
+        started_at: str,
+    ) -> RuntimeRunResult:
+        """执行 evaluation/merge，并把最终状态写回运行目录。"""
+        if self.state_store is None:
+            raise RuntimeError("state store not initialized")
+
+        evaluator = OperatorEvaluator()
+        operator_states: list[OperatorRunState] = []
+        for resolved in plan.resolved_operator_runs:
+            node_id = f"evaluation.{resolved.spec.name}"
+            self.state_store.record_node_started(node_id)
+            try:
+                tables, operator_state = evaluator.evaluate(resolved, tables)
+            except Exception:
+                self.state_store.record_node_failed(node_id)
+                raise
+            self.state_store.record_node_completed(node_id)
+            operator_states.append(operator_state)
+
+        self.state_store.record_node_started("merge.final_action")
+        try:
+            tables = CleaningTables(
+                parameter_table=tables.parameter_table,
+                evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
+                operator_outputs=tables.operator_outputs,
+                parameter_manifest=tables.parameter_manifest,
+            )
+        except Exception:
+            self.state_store.record_node_failed("merge.final_action")
+            raise
+        self.state_store.record_node_completed("merge.final_action")
+        write_tables(tables=tables, paths=paths)
+        self._save_run_state(
+            run_id=run_id,
+            dataset_fingerprint=dataset_fingerprint,
+            parsed_operators=parsed_operators,
+            operator_config_hashes=plan.operator_config_hashes,
+            parameter_config_hashes={
+                step.computer_name: step.config_hash for step in plan.parameter_plan.steps
+            },
+            paths=paths,
+            artifact_paths=artifact_paths,
+            relation_paths=relation_paths,
+            started_at=started_at,
+            finished_at=datetime.now(timezone.utc).isoformat(),
+            status="completed",
+            operator_states=operator_states,
+        )
+        self._report(
+            RunEventContext(run_id),
+            "run_completed",
+            "runtime",
+            message="run completed",
+        )
+        self._set_run_status(run_id=run_id, status="completed")
+        return RuntimeRunResult(
+            run_id=run_id,
+            cache_root=self._cache_root,
+            status="completed",
+            attempt_count=1,
+        )
+
+    def _save_run_state(
+        self,
+        *,
+        run_id: str,
+        dataset_fingerprint: str,
+        parsed_operators: list[ParsedOperatorConfig],
+        operator_config_hashes: dict[str, str],
+        parameter_config_hashes: dict[str, str],
+        paths: CleanerRunPaths,
+        artifact_paths: dict[str, str],
+        relation_paths: dict[str, str],
+        started_at: str,
+        finished_at: str,
+        status: str,
+        operator_states: list[OperatorRunState],
+    ) -> None:
+        """把当前运行快照持久化到 state.json。"""
+        JsonRunStateStore().save(
+            CleanerRunState(
+                run_id=run_id,
+                dataset_fingerprint=dataset_fingerprint,
+                cleaner_type="basic",
+                enabled_operator_configs=[{item.operator_name: dict(item.config)} for item in parsed_operators],
+                operator_config_hashes=operator_config_hashes,
+                parameter_config_hashes=parameter_config_hashes,
+                parameter_table_path=str(paths.parameter_table_path),
+                evaluation_table_path=str(paths.evaluation_table_path),
+                operator_outputs_path=str(paths.operator_outputs_path),
+                parameter_manifest_path=str(paths.parameter_manifest_path),
+                relation_paths=relation_paths,
+                artifact_paths=artifact_paths,
+                started_at=started_at,
+                finished_at=finished_at,
+                status=status,
+                operator_states=operator_states,
+            ),
+            paths.state_path,
+        )
 
     def _resolve_run_reference(
         self,
@@ -503,12 +745,14 @@ class CleaningRuntime:
         elif artifact_path.name == "faiss.index":
             manifest_path = artifact_path.parent / "manifest.json"
 
-        if manifest_path is None or not manifest_path.exists():
-            return
+        if manifest_path is None:
+            raise ValueError(f"tracked artifact ref requires a manifest: {artifact_name}")
+        if not manifest_path.exists():
+            raise FileNotFoundError(f"artifact manifest missing: {manifest_path}")
 
         payload = json.loads(manifest_path.read_text(encoding="utf-8"))
         config_hash = payload.get("config_hash")
-        if expected_config_hash is not None and config_hash not in {None, expected_config_hash}:
+        if expected_config_hash is not None and config_hash != expected_config_hash:
             raise ValueError(f"artifact manifest config hash mismatch: {artifact_name}")
 
     def _validate_relation_manifest(
@@ -529,6 +773,17 @@ class CleaningRuntime:
             raise ValueError(f"relation manifest mismatch: {relation_name}")
         if expected_config_hash is not None and payload.get("config_hash") != expected_config_hash:
             raise ValueError(f"relation manifest config hash mismatch: {relation_name}")
+        artifact_refs = payload.get("artifact_refs", [])
+        if not isinstance(artifact_refs, list):
+            raise ValueError(f"relation manifest artifact refs must be a list: {relation_name}")
+        for artifact_ref in artifact_refs:
+            if not isinstance(artifact_ref, str) or not artifact_ref:
+                raise ValueError(f"relation manifest artifact ref must be non-empty: {relation_name}")
+            self._validate_artifact_ref(
+                artifact_name=f"{relation_name}.artifact_ref",
+                artifact_path=Path(artifact_ref),
+                expected_config_hash=expected_config_hash,
+            )
 
     def _validate_rerun_graph_change(
         self,

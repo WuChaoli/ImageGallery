@@ -258,6 +258,28 @@ class SQLiteRunStateStore:
         )
         self._connection.commit()
 
+    def record_node_completed(self, node_id: str, message: str | None = None) -> None:
+        """将节点标记为完成。"""
+        self._update_graph_node_status(node_id=node_id, status="completed", message=message)
+
+    def record_node_failed(self, node_id: str, message: str | None = None) -> None:
+        """将节点标记为失败。"""
+        self._update_graph_node_status(node_id=node_id, status="failed", message=message)
+
+    def list_graph_node_statuses(self, run_id: str) -> dict[str, str]:
+        """返回当前运行所有图节点的状态。"""
+        if run_id != self._run_record.run_id:
+            raise KeyError(f"run not found: {run_id}")
+        rows = self._connection.execute(
+            """
+            SELECT node_id, status
+            FROM graph_node
+            WHERE run_id = ?
+            """,
+            (run_id,),
+        ).fetchall()
+        return {row["node_id"]: str(row["status"] or "pending") for row in rows}
+
     def record_event(
         self,
         event: RuntimeEvent | str,
@@ -429,6 +451,20 @@ class SQLiteRunStateStore:
             )
 
         raise TypeError(f"unsupported event type: {type(event)!r}")
+
+    def _update_graph_node_status(self, *, node_id: str, status: str, message: str | None) -> None:
+        """更新图节点运行状态。"""
+        self._connection.execute(
+            """
+            UPDATE graph_node
+            SET status = ?,
+                finished_at = ?,
+                message = COALESCE(?, message)
+            WHERE run_id = ? AND node_id = ?
+            """,
+            (status, _utcnow(), message, self._run_record.run_id, node_id),
+        )
+        self._connection.commit()
 
 
 def _create_schema(connection: sqlite3.Connection) -> None:

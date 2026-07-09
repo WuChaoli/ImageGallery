@@ -1,4 +1,7 @@
+import json
+import sqlite3
 from pathlib import Path
+from typing import ClassVar
 
 import pandas as pd
 import pytest
@@ -33,6 +36,107 @@ def _write_dataset(tmp_path: Path, name: str, frame: pd.DataFrame):
     from image_gallery.dataset import Dataset
 
     return Dataset.write(frame, str(tmp_path / name))
+
+
+def _always_keep(frame: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
+    del config
+    return pd.DataFrame(
+        {
+            "image_id": frame["image_id"],
+            "counted_action": ["keep"] * len(frame),
+            "counted_reason": [""] * len(frame),
+        }
+    )
+
+
+class CountingArtifactComputer(ParameterComputer):
+    """测试用计数 computer，用于验证 resume 不会重复执行已完成节点。"""
+
+    name = "counting_artifact_computer"
+    execution_mode = ExecutionMode.TABLE
+    produced_parameters = frozenset({"counted_parameter"})
+    call_count: ClassVar[int] = 0
+
+    @classmethod
+    def reset(cls) -> None:
+        cls.call_count = 0
+
+    def compute(self, request: ParameterRequest) -> ParameterResult:
+        type(self).call_count += 1
+        artifact_dir = request.artifacts_dir / "counted_parameter"
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "value.txt").write_text(str(type(self).call_count), encoding="utf-8")
+        (artifact_dir / "manifest.json").write_text(
+            json.dumps(
+                {
+                    "artifact_schema_version": 1,
+                    "computer": self.name,
+                    "config_hash": request.config_hash,
+                },
+                ensure_ascii=False,
+                indent=2,
+            ),
+            encoding="utf-8",
+        )
+        return ParameterResult(
+            parameter_updates=pd.DataFrame(
+                {
+                    "image_id": request.parameter_table["image_id"],
+                    "counted_parameter": ["ready"] * len(request.parameter_table),
+                }
+            ),
+            relation_updates={},
+            artifact_refs={"counted_parameter": str(artifact_dir)},
+            parameter_manifest={
+                "counted_parameter": {
+                    "computer": self.name,
+                    "execution_mode": self.execution_mode.value,
+                    "config_hash": request.config_hash,
+                    "artifact_ref": str(artifact_dir),
+                }
+            },
+        )
+
+
+def _counting_registry() -> OperatorRegistry:
+    registry = OperatorRegistry()
+    registry.register_parameter_computer(CountingArtifactComputer())
+    registry.register_operator(
+        OperatorSpec(
+            name="test.counted_check",
+            category="test",
+            required_parameters=["counted_parameter"],
+            evaluation_columns=["counted_action", "counted_reason"],
+            default_config={"action": "keep"},
+            action_column="counted_action",
+            reason_column="counted_reason",
+            evaluator=_always_keep,
+        )
+    )
+    return registry
+
+
+def _mark_run_as_partial(run_dir: Path, run_id: str) -> None:
+    connection = sqlite3.connect(run_dir / "run_state.sqlite")
+    try:
+        connection.execute("UPDATE cleaning_run SET status = ? WHERE run_id = ?", ("running", run_id))
+        connection.execute(
+            "UPDATE graph_node SET status = ?, finished_at = CURRENT_TIMESTAMP WHERE run_id = ? AND node_id = ?",
+            ("completed", run_id, "parameter.counting_artifact_computer"),
+        )
+        connection.execute(
+            "UPDATE graph_node SET status = ?, finished_at = NULL WHERE run_id = ? AND node_id != ?",
+            ("pending", run_id, "parameter.counting_artifact_computer"),
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+    state_path = run_dir / "state.json"
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    payload["status"] = "running"
+    payload["finished_at"] = ""
+    state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
 class FixedPerceptualHashComputer(ParameterComputer):
@@ -185,3 +289,23 @@ def test_rerun_rejects_parameter_computer_config_change(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="parameter computer config"):
         execution.rerun(result, operators=[{"duplicate.perceptual_duplicate_check": {"max_distance": 1}}])
+
+
+def test_resume_reuses_completed_parameter_node_for_unfinished_run(tmp_path: Path) -> None:
+    CountingArtifactComputer.reset()
+    dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
+    execution = BasicCleaner(
+        [{"test.counted_check": {}}],
+        output_dir=tmp_path / "cleaning",
+        registry=_counting_registry(),
+    ).compile()
+    result = execution.run(dataset)
+    run_dir = (tmp_path / "cleaning") / result.run_id
+    _mark_run_as_partial(run_dir, result.run_id)
+    before_resume_calls = CountingArtifactComputer.call_count
+
+    resumed = execution.resume(dataset=dataset, run_id=result.run_id)
+
+    assert resumed.status() == "completed"
+    assert resumed.run_id == result.run_id
+    assert CountingArtifactComputer.call_count == before_resume_calls

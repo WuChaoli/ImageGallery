@@ -9,6 +9,7 @@ from PIL import Image
 
 from image_gallery.cleaning.context import CleanerRunContext
 from image_gallery.cleaning.planner import ParameterExecutionPlan, ParameterExecutionStep
+from image_gallery.cleaning.runtime_state import SQLiteRunStateStore
 from image_gallery.cleaning.tables import CleaningTables, update_parameter_columns, write_relation_tables
 from image_gallery.operators.computers.base import ExecutionMode, ImageBatch, ImageBatchItem, ParameterRequest
 from image_gallery.operators.registry import OperatorRegistry
@@ -34,41 +35,58 @@ class ParameterScheduler:
         plan: ParameterExecutionPlan,
         context: CleanerRunContext,
         tables: CleaningTables,
+        *,
+        state_store: SQLiteRunStateStore | None = None,
+        completed_node_ids: set[str] | None = None,
     ) -> ParameterScheduleResult:
         """执行参数计划，并返回更新后的 tables 和产物路径。"""
         artifact_paths: dict[str, str] = {}
         relation_paths: dict[str, str] = {}
         image_batch = self._build_image_batch(context, tables) if self._requires_image_batch(plan) else None
         current_tables = tables
+        completed = completed_node_ids or set()
 
         for step in plan.steps:
+            node_id = f"parameter.{step.computer_name}"
+            if node_id in completed:
+                self._require_completed_step_outputs(step, current_tables)
+                continue
             computer = self._registry.get_parameter_computer(step.computer_name)
-            result = computer.compute(
-                ParameterRequest(
-                    parameter_table=current_tables.parameter_table,
-                    requested_parameters=step.requested_parameters,
-                    config=step.config,
-                    config_hash=step.config_hash,
-                    artifacts_dir=context.paths.artifacts_dir,
-                    image_batch=image_batch if step.execution_mode == ExecutionMode.PER_IMAGE else None,
+            if state_store is not None:
+                state_store.record_node_started(node_id)
+            try:
+                result = computer.compute(
+                    ParameterRequest(
+                        parameter_table=current_tables.parameter_table,
+                        requested_parameters=step.requested_parameters,
+                        config=step.config,
+                        config_hash=step.config_hash,
+                        artifacts_dir=context.paths.artifacts_dir,
+                        image_batch=image_batch if step.execution_mode == ExecutionMode.PER_IMAGE else None,
+                    )
                 )
-            )
-            self._require_requested_parameters(step, result.parameter_updates)
-            current_tables = CleaningTables(
-                parameter_table=update_parameter_columns(current_tables.parameter_table, result.parameter_updates),
-                evaluation_table=current_tables.evaluation_table,
-                operator_outputs=current_tables.operator_outputs,
-                parameter_manifest={**current_tables.parameter_manifest, **result.parameter_manifest},
-            )
-            artifact_paths.update(result.artifact_refs)
-            written_relation_paths = write_relation_tables(result.relation_updates, context.paths)
-            relation_paths.update(written_relation_paths)
-            self._write_relation_manifests(
-                relation_updates=result.relation_updates,
-                relation_paths=written_relation_paths,
-                computer_name=step.computer_name,
-                config_hash=step.config_hash,
-            )
+                self._require_requested_parameters(step, result.parameter_updates)
+                current_tables = CleaningTables(
+                    parameter_table=update_parameter_columns(current_tables.parameter_table, result.parameter_updates),
+                    evaluation_table=current_tables.evaluation_table,
+                    operator_outputs=current_tables.operator_outputs,
+                    parameter_manifest={**current_tables.parameter_manifest, **result.parameter_manifest},
+                )
+                artifact_paths.update(result.artifact_refs)
+                written_relation_paths = write_relation_tables(result.relation_updates, context.paths)
+                relation_paths.update(written_relation_paths)
+                self._write_relation_manifests(
+                    relation_updates=result.relation_updates,
+                    relation_paths=written_relation_paths,
+                    computer_name=step.computer_name,
+                    config_hash=step.config_hash,
+                )
+            except Exception:
+                if state_store is not None:
+                    state_store.record_node_failed(node_id)
+                raise
+            if state_store is not None:
+                state_store.record_node_completed(node_id)
 
         return ParameterScheduleResult(
             tables=current_tables,
@@ -106,6 +124,19 @@ class ParameterScheduler:
         if missing_parameters:
             raise ValueError(
                 f"computer did not produce requested parameters: {step.computer_name} {missing_parameters}"
+            )
+
+    def _require_completed_step_outputs(self, step: ParameterExecutionStep, tables: CleaningTables) -> None:
+        """复用已完成节点时，确认参数表里仍保留该节点产物。"""
+        missing_parameters = [
+            parameter
+            for parameter in sorted(step.produced_parameters)
+            if parameter not in tables.parameter_table.columns
+        ]
+        if missing_parameters:
+            raise ValueError(
+                "completed parameter node outputs missing from parameter table: "
+                f"{step.computer_name} {missing_parameters}"
             )
 
     def _write_relation_manifests(

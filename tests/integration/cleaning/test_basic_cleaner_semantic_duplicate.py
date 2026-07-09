@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import pytest
 from PIL import Image
 
 from image_gallery.cleaning import BasicCleaner
@@ -49,14 +50,14 @@ def _write_image(path: Path, color: tuple[int, int, int]) -> None:
     Image.new("RGB", (16, 16), color=color).save(path)
 
 
-def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: Path) -> None:
+def _build_semantic_dataset(tmp_path: Path) -> Dataset:
     first = tmp_path / "first.png"
     near = tmp_path / "near.png"
     far = tmp_path / "far.png"
     _write_image(first, (255, 0, 0))
     _write_image(near, (250, 5, 5))
     _write_image(far, (0, 255, 0))
-    dataset = Dataset.write(
+    return Dataset.write(
         pd.DataFrame(
             {
                 "image_id": ["first", "near", "far"],
@@ -66,7 +67,9 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
         str(tmp_path / "raw.parquet"),
     )
 
-    execution = BasicCleaner(
+
+def _build_semantic_execution(tmp_path: Path):
+    return BasicCleaner(
         [
             {
                 "duplicate.semantic_duplicate_check": {
@@ -79,6 +82,11 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
         output_dir=tmp_path / "cleaning",
         semantic_providers={"deterministic": DeterministicSemanticProvider()},
     ).compile()
+
+
+def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: Path) -> None:
+    dataset = _build_semantic_dataset(tmp_path)
+    execution = _build_semantic_execution(tmp_path)
     result = execution.run(dataset)
 
     full = result.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
@@ -100,3 +108,39 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
     state_text = (run_dir / "state.json").read_text(encoding="utf-8")
     json.loads(state_text)
     assert "DeterministicSemanticProvider" not in state_text
+
+
+def test_resume_rejects_missing_semantic_embedding_manifest(tmp_path: Path) -> None:
+    dataset = _build_semantic_dataset(tmp_path)
+    execution = _build_semantic_execution(tmp_path)
+    result = execution.run(dataset)
+    run_dir = (tmp_path / "cleaning") / result.run_id
+    (run_dir / "artifacts" / "semantic_embeddings" / "manifest.json").unlink()
+
+    with pytest.raises(FileNotFoundError, match="artifact manifest missing"):
+        execution.resume(dataset=dataset, run_id=result.run_id)
+
+
+def test_rerun_rejects_semantic_index_manifest_without_config_hash(tmp_path: Path) -> None:
+    dataset = _build_semantic_dataset(tmp_path)
+    execution = _build_semantic_execution(tmp_path)
+    result = execution.run(dataset)
+    run_dir = (tmp_path / "cleaning") / result.run_id
+    manifest_path = run_dir / "artifacts" / "semantic_index" / "manifest.json"
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload.pop("config_hash", None)
+    manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    with pytest.raises(ValueError, match="artifact manifest config hash"):
+        execution.rerun(
+            result,
+            operators=[
+                {
+                    "duplicate.semantic_duplicate_check": {
+                        "threshold": 0.9,
+                        "action": "drop",
+                        "provider": "deterministic",
+                    }
+                }
+            ],
+        )
