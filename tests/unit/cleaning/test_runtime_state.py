@@ -26,3 +26,4 @@ def test_sqlite_store_initializes_run_and_events(tmp_path: Path) -> None:
     assert loaded.label == "smoke"
     assert loaded.tags == ["sample"]
     assert events[0].event_type == "run_started"
+    assert events[0].run_id == "run-1"

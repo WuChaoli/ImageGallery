@@ -291,6 +291,7 @@ class SQLiteRunStateStore:
         if isinstance(event, str):
             return RuntimeEvent(
                 event_type=event,
+                run_id=self._run_record.run_id,
                 message=message,
                 payload=payload,
                 timestamp=_utcnow(),
