@@ -3,6 +3,9 @@
 __all__ = [
     "BasicCleaner",
     "Cleaner",
+    "CleanerExecution",
+    "CleanerResult",
+    "DryRunResult",
     "PreviewResult",
 ]
 
@@ -17,6 +20,18 @@ def __getattr__(name: str) -> object:
         from image_gallery.cleaning.cleaner import Cleaner
 
         return Cleaner
+    if name == "CleanerExecution":
+        from image_gallery.cleaning.execution import CleanerExecution
+
+        return CleanerExecution
+    if name == "CleanerResult":
+        from image_gallery.cleaning.result import CleanerResult
+
+        return CleanerResult
+    if name == "DryRunResult":
+        from image_gallery.cleaning.execution import DryRunResult
+
+        return DryRunResult
     if name == "PreviewResult":
         from image_gallery.cleaning.preview import PreviewResult
 

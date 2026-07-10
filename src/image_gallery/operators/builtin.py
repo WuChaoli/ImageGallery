@@ -1,5 +1,8 @@
+from dataclasses import replace
+
 import pandas as pd
 
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.operators.computers.border import ImageBorderComputer
 from image_gallery.operators.computers.derived import TableDerivedComputer
 from image_gallery.operators.computers.duplicate import DuplicateGroupComputer, PerceptualDuplicateGroupComputer
@@ -36,7 +39,7 @@ def create_default_registry(
 
 def _builtin_specs() -> list[OperatorSpec]:
     """返回第一批 v3 内置逻辑算子规格。"""
-    return [
+    specs = [
         OperatorSpec(
             name="format.decode_check",
             category="format",
@@ -270,6 +273,92 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_semantic_duplicate_check,
         ),
     ]
+
+    return [_to_builtin_preview_spec(spec) for spec in specs]
+
+
+def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
+    """为内置算子补齐预览策略默认值。"""
+    policies = {
+        "format.decode_check": PreviewPolicy(default_actions=["drop"], caption_columns=["decode_reason"]),
+        "format.animated_image_check": PreviewPolicy(
+            default_actions=["review"], caption_columns=["frame_count", "animated_reason"]
+        ),
+        "size.dimension_check": PreviewPolicy(
+            default_actions=["drop"], caption_columns=["width", "height", "dimension_reason"]
+        ),
+        "size.aspect_ratio_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["aspect_ratio", "aspect_ratio_reason"],
+            sort_by=["aspect_ratio"],
+        ),
+        "size.megapixel_check": PreviewPolicy(
+            default_actions=["review"], caption_columns=["megapixels", "megapixel_reason"], sort_by=["megapixels"]
+        ),
+        "quality.blur_check": PreviewPolicy(
+            default_actions=["drop", "review"], caption_columns=["blur_score", "blur_reason"], sort_by=["blur_score"]
+        ),
+        "quality.brightness_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["brightness_score", "brightness_reason"],
+            sort_by=["brightness_score"],
+        ),
+        "quality.contrast_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["contrast_score", "contrast_reason"],
+            sort_by=["contrast_score"],
+        ),
+        "quality.exposure_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["dark_pixel_ratio", "bright_pixel_ratio", "clipped_pixel_ratio", "exposure_reason"],
+        ),
+        "quality.noise_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["noise_score", "noise_reason"],
+            sort_by=["noise_score"],
+            ascending=False,
+        ),
+        "content.blank_image_check": PreviewPolicy(
+            default_actions=["drop", "review"],
+            caption_columns=["blank_score", "blank_reason"],
+            sort_by=["blank_score"],
+            ascending=False,
+        ),
+        "content.mono_color_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=["mono_color_score", "mono_color_reason"],
+            sort_by=["mono_color_score"],
+            ascending=False,
+        ),
+        "content.border_padding_check": PreviewPolicy(
+            default_actions=["review"],
+            caption_columns=[
+                "border_padding_ratio",
+                "border_padding_sides",
+                "border_padding_color",
+                "border_padding_reason",
+            ],
+        ),
+        "metadata.orientation_check": PreviewPolicy(
+            default_actions=["review"], caption_columns=["exif_orientation", "orientation_risk", "orientation_reason"]
+        ),
+        "duplicate.exact_duplicate_check": PreviewPolicy(
+            default_actions=["drop", "review"], groupby="exact_duplicate_group_id", include_group_context=True
+        ),
+        "duplicate.perceptual_duplicate_check": PreviewPolicy(
+            default_actions=["drop", "review"],
+            caption_columns=["perceptual_duplicate_distance"],
+            groupby="perceptual_duplicate_group_id",
+            include_group_context=True,
+        ),
+        "duplicate.semantic_duplicate_check": PreviewPolicy(
+            default_actions=["drop", "review"],
+            caption_columns=["semantic_duplicate_score", "semantic_duplicate_nearest_image_id"],
+            groupby="semantic_duplicate_group_id",
+            include_group_context=True,
+        ),
+    }
+    return replace(spec, preview_policy=policies[spec.name])
 
 
 def evaluate_decode_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:

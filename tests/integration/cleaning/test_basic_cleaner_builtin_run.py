@@ -136,19 +136,19 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
             {"duplicate.perceptual_duplicate_check": {}},
         ]
     )
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset)
 
-    rows = cleaner.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
+    rows = result.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
     assert rows.loc["ok", "final_action"] == "keep"
     assert rows.loc["bad", "decode_action"] == "drop"
     assert rows.loc["small", "dimension_action"] == "drop"
     assert rows.loc["blank", "blank_action"] == "drop"
     assert rows.loc["dupe", "exact_duplicate_action"] == "drop"
     assert rows.loc["dupe", "perceptual_duplicate_action"] == "drop"
-    assert cleaner.preview().total_count == 5
+    assert result.preview().total_count == 5
 
-    run_dir = next((tmp_path / "cleaning").iterdir())
-    parameter_rows = pd.read_parquet(run_dir / "parameter_table.parquet")
+    run_dir = result._run_dir()
+    parameter_rows = pd.read_parquet(run_dir / "tables" / "parameter_table.parquet")
     for column in [
         "aspect_ratio",
         "megapixels",
@@ -177,19 +177,19 @@ def test_perceptual_duplicate_max_distance_reaches_parameter_computer(tmp_path: 
         [{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}],
         registry=registry,
     )
-    strict_cleaner.run(dataset, output_dir=tmp_path / "strict")
-    strict_rows = strict_cleaner.export("full", str(tmp_path / "strict.parquet")).to_frame().set_index("image_id")
-    strict_run_dir = next((tmp_path / "strict").iterdir())
-    strict_manifest = pd.read_json(strict_run_dir / "parameter_manifest.json", typ="series").to_dict()
+    strict_result = strict_cleaner.run(dataset)
+    strict_rows = strict_result.export("full", str(tmp_path / "strict.parquet")).to_frame().set_index("image_id")
+    strict_run_dir = strict_result._run_dir()
+    strict_manifest = pd.read_json(strict_run_dir / "manifests" / "parameter_manifest.json", typ="series").to_dict()
 
     loose_cleaner = BasicCleaner(
         [{"duplicate.perceptual_duplicate_check": {"max_distance": 1}}],
         registry=registry,
     )
-    loose_cleaner.run(dataset, output_dir=tmp_path / "loose")
-    loose_rows = loose_cleaner.export("full", str(tmp_path / "loose.parquet")).to_frame().set_index("image_id")
-    loose_run_dir = next((tmp_path / "loose").iterdir())
-    loose_manifest = pd.read_json(loose_run_dir / "parameter_manifest.json", typ="series").to_dict()
+    loose_result = loose_cleaner.run(dataset)
+    loose_rows = loose_result.export("full", str(tmp_path / "loose.parquet")).to_frame().set_index("image_id")
+    loose_run_dir = loose_result._run_dir()
+    loose_manifest = pd.read_json(loose_run_dir / "manifests" / "parameter_manifest.json", typ="series").to_dict()
 
     assert strict_rows.loc["near", "perceptual_duplicate_action"] == "keep"
     assert strict_manifest["perceptual_duplicate_group_id"]["max_distance"] == 0
@@ -209,19 +209,19 @@ def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp
         pytest.skip(f"skip sample_1000 integration test: {exc}")
 
     cleaner = BasicCleaner(FIRST_BATCH_OPERATORS)
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset)
 
-    preview = cleaner.preview()
+    preview = result.preview()
     assert preview.total_count == 1000
 
-    state = cleaner.state()
+    state = result.state()
     assert list(state["operator_name"]) == [
         next(iter(item.keys())) for item in get_cleaning_v3_first_batch_operator_configs()
     ]
 
-    run_dir = next((tmp_path / "cleaning").iterdir())
-    parameter_table = pd.read_parquet(run_dir / "parameter_table.parquet")
-    evaluation_table = pd.read_parquet(run_dir / "evaluation_table.parquet")
+    run_dir = result._run_dir()
+    parameter_table = pd.read_parquet(run_dir / "tables" / "parameter_table.parquet")
+    evaluation_table = pd.read_parquet(run_dir / "tables" / "evaluation_table.parquet")
     expected_parameter_columns = [
         "width",
         "height",
@@ -305,17 +305,17 @@ def test_basic_cleaner_runs_second_batch_light_quality_operators(tmp_path: Path)
             {"metadata.orientation_check": {}},
         ]
     )
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset)
 
-    rows = cleaner.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
+    rows = result.export("full", str(tmp_path / "full.parquet")).to_frame().set_index("image_id")
     assert rows.loc["dark", "exposure_action"] == "review"
     assert rows.loc["dark", "mono_color_action"] == "review"
     assert rows.loc["border", "border_padding_action"] == "review"
     assert rows.loc["plain", "animated_action"] == "keep"
     assert rows.loc["plain", "orientation_action"] == "keep"
 
-    run_dir = next((tmp_path / "cleaning").iterdir())
-    parameter_rows = pd.read_parquet(run_dir / "parameter_table.parquet")
+    run_dir = result._run_dir()
+    parameter_rows = pd.read_parquet(run_dir / "tables" / "parameter_table.parquet")
     for column in [
         "dark_pixel_ratio",
         "bright_pixel_ratio",
@@ -332,7 +332,7 @@ def test_basic_cleaner_runs_second_batch_light_quality_operators(tmp_path: Path)
     ]:
         assert column in parameter_rows.columns
 
-    preview_path = cleaner.preview_html(
+    preview_path = result.preview_html(
         str(tmp_path / "preview.html"),
         action="review",
         caption_columns=[

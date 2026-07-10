@@ -79,9 +79,39 @@ def test_basic_cleaner_runs_builtin_operators_on_s3_dataset(tmp_path: Path) -> N
         ]
     )
 
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset)
 
-    parameter_table = pd.read_parquet(next((tmp_path / "cleaning").iterdir()) / "parameter_table.parquet")
+    parameter_table = pd.read_parquet(result._run_dir() / "tables" / "parameter_table.parquet")
     assert {"width", "height", "decode_ok", "decode_error"}.issubset(parameter_table.columns)
-    assert cleaner.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep"]
-    assert cleaner.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review"]
+    assert result.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep"]
+    assert result.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review"]
+
+
+def test_result_preview_html_embeds_s3_images_from_runtime_dataset(tmp_path: Path) -> None:
+    storage = FakeS3Storage()
+    ok_uri = storage.write_bytes(
+        "images/ok.png",
+        _image_bytes(tmp_path / "ok.png", (20, 20), (100, 120, 140)),
+    )
+    dataset = Dataset.write(
+        pd.DataFrame(
+            {
+                "image_id": ["img-1"],
+                "image_uri": [ok_uri],
+            }
+        ),
+        str(tmp_path / "raw.parquet"),
+        storage=storage,
+    )
+
+    result = BasicCleaner([{"format.decode_check": {}}]).run(dataset)
+    output_path = result.preview_html(
+        tmp_path / "preview.html",
+        operator_name="format.decode_check",
+        actions="full",
+    )
+
+    html = output_path.read_text(encoding="utf-8")
+    assert 'src="data:image/jpeg;base64,' in html
+    assert 'src="s3://' not in html
+    assert "Image read failed" not in html

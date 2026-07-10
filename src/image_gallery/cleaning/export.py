@@ -8,9 +8,9 @@ def export_cleaning_result(
     output_path: str,
 ) -> Dataset:
     """按 kind 导出清洗结果，并返回 Dataset。"""
-    if kind == "parameters":
+    if kind in {"parameters", "parameter"}:
         frame = tables.parameter_table
-    elif kind == "evaluations":
+    elif kind in {"evaluations", "evaluation"}:
         frame = tables.evaluation_table
     elif kind == "full":
         frame = tables.evaluation_table

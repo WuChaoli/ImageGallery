@@ -1,7 +1,10 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import pandas as pd
+
+from image_gallery.cleaning.config import hash_config
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 
 
 @dataclass(frozen=True)
@@ -16,6 +19,7 @@ class OperatorSpec:
     action_column: str
     reason_column: str
     evaluator: Callable[[pd.DataFrame, dict[str, object]], pd.DataFrame]
+    preview_policy: PreviewPolicy = field(default_factory=PreviewPolicy)
 
     def evaluate(self, parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
         """基于参数表和配置生成该算子的 evaluation 列。"""
@@ -29,3 +33,34 @@ class OperatorSpec:
         if missing_columns:
             raise ValueError(f"missing evaluation columns for {self.name}: {missing_columns}")
         return result[required_columns].copy()
+
+
+@dataclass(frozen=True)
+class ConfiguredOperatorSpec:
+    """已绑定并归一化的算子配置。"""
+
+    spec: OperatorSpec
+    config: dict[str, object]
+    source: str
+    operator_config_hash: str
+
+    @property
+    def operator_name(self) -> str:
+        """返回算子名。"""
+        return self.spec.name
+
+    @classmethod
+    def from_spec(
+        cls,
+        spec: OperatorSpec,
+        config: dict[str, object],
+        source: str,
+    ) -> "ConfiguredOperatorSpec":
+        """按 spec 的默认配置补齐，生成带稳定 hash 的已配置算子。"""
+        merged_config = {**spec.default_config, **config}
+        return cls(
+            spec=spec,
+            config=merged_config,
+            source=source,
+            operator_config_hash=hash_config(merged_config),
+        )

@@ -6,6 +6,8 @@ from pathlib import Path
 import pandas as pd
 from PIL import Image
 
+from image_gallery.cleaning.policy import ComputerCapability, ComputerRuntimePolicy
+
 
 class ExecutionMode(str, Enum):
     """参数计算执行模式。"""
@@ -56,6 +58,19 @@ class ParameterResult:
     parameter_manifest: dict[str, dict[str, object]]
 
 
+@dataclass(frozen=True)
+class ParameterStageSpec:
+    """参数计算单元的运行时 stage 契约。"""
+
+    name: str
+    required_artifacts: frozenset[str] = frozenset()
+    produced_artifacts: frozenset[str] = frozenset()
+    required_relations: frozenset[str] = frozenset()
+    produced_relations: frozenset[str] = frozenset()
+    cache_policy: str = "run"
+    artifact_contract: str = "none"
+
+
 class ParameterComputer(ABC):
     """参数计算单元基类。"""
 
@@ -64,6 +79,9 @@ class ParameterComputer(ABC):
     produced_parameters: frozenset[str]
     required_parameters: frozenset[str] = frozenset()
     config_parameters: frozenset[str] = frozenset()
+    runtime_policy: ComputerRuntimePolicy = ComputerRuntimePolicy()
+    capability: ComputerCapability = ComputerCapability()
+    stages: tuple[ParameterStageSpec, ...] = ()
 
     @abstractmethod
     def compute(self, request: ParameterRequest) -> ParameterResult:

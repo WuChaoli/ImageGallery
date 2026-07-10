@@ -35,14 +35,17 @@ def main() -> None:
                 {"duplicate.exact_duplicate_check": {"action": "drop"}},
             ]
         )
-        cleaner.run(raw_dataset, output_dir=root / "cleaning")
-        preview = cleaner.preview()
-        full = cleaner.export("full", str(root / "full.parquet"))
-        clean = cleaner.export("clean", str(root / "clean.parquet"))
-        dropped = cleaner.export("dropped", str(root / "dropped.parquet"))
+        result = cleaner.run(raw_dataset, output_dir=root / "cleaning")
+        preview = result.preview()
+        full = result.export("full", str(root / "full.parquet"))
+        clean = result.export("clean", str(root / "clean.parquet"))
+        dropped = result.export("dropped", str(root / "dropped.parquet"))
+        parameter_table = result.export_table("parameter", root / "parameter_table.parquet")
+        evaluation_table = result.export_table("evaluation", root / "evaluation_table.parquet")
 
-        print(f"parameter_table={cleaner._context.paths.parameter_table_path}")  # noqa: SLF001
-        print(f"evaluation_table={cleaner._context.paths.evaluation_table_path}")  # noqa: SLF001
+        print(f"run_id={result.run_id}")
+        print(f"parameter_table={parameter_table}")
+        print(f"evaluation_table={evaluation_table}")
         print(
             "preview="
             f"clean:{preview.clean_count},review:{preview.review_count},"

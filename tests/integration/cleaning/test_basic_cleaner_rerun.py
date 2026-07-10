@@ -21,14 +21,18 @@ def test_basic_cleaner_dimension_rerun_updates_evaluation_only_policy(tmp_path: 
             {"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}},
         ]
     )
-    cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    execution = cleaner.compile()
+    result = execution.run(dataset)
 
-    assert cleaner.preview().review_count == 1
-    before_parameters = cleaner.export("parameters", str(tmp_path / "parameters_before.parquet")).to_frame()
+    assert result.preview().review_count == 1
+    before_parameters = result.export("parameters", str(tmp_path / "parameters_before.parquet")).to_frame()
 
-    cleaner.rerun([{"size.dimension_check": {"min_width": 1, "min_height": 1, "action": "review"}}])
+    rerun_result = execution.rerun(
+        result,
+        [{"size.dimension_check": {"min_width": 1, "min_height": 1, "action": "review"}}],
+    )
 
-    assert cleaner.preview().review_count == 0
-    assert cleaner.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "keep"]
-    after_parameters = cleaner.export("parameters", str(tmp_path / "parameters_after.parquet")).to_frame()
+    assert rerun_result.preview().review_count == 0
+    assert rerun_result.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "keep"]
+    after_parameters = rerun_result.export("parameters", str(tmp_path / "parameters_after.parquet")).to_frame()
     assert before_parameters.equals(after_parameters)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from urllib.parse import urlparse
 
 from dotenv import load_dotenv
@@ -21,7 +22,10 @@ def read_required_env(name: str) -> str:
 
 def load_minio_storage() -> MinioStorage:
     """Load MinIO settings from .env and return a connected storage instance."""
-    load_dotenv(get_repo_root() / ".env")
+    for env_path in _env_path_candidates():
+        if env_path.exists():
+            load_dotenv(env_path)
+            break
 
     endpoint = read_required_env("IMAGE_GALLERY_MINIO_ENDPOINT")
     access_key = read_required_env("IMAGE_GALLERY_MINIO_ACCESS_KEY")
@@ -39,3 +43,12 @@ def load_minio_storage() -> MinioStorage:
         bucket=bucket,
         secure=secure,
     )
+
+
+def _env_path_candidates() -> list[Path]:
+    """Return .env candidates for normal checkouts and linked worktrees."""
+    repo_root = get_repo_root()
+    candidates = [repo_root / ".env"]
+    if repo_root.parent.name == ".worktrees":
+        candidates.append(repo_root.parent.parent / ".env")
+    return candidates

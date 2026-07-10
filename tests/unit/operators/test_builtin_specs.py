@@ -1,4 +1,5 @@
 import pandas as pd
+import pytest
 
 from image_gallery.operators.builtin import create_default_registry
 
@@ -32,6 +33,38 @@ def test_default_registry_excludes_fastdup_and_near_duplicate() -> None:
 
     near_duplicate_name = "duplicate." + "near_duplicate_check"
     assert near_duplicate_name not in registry.list_operators()
+
+
+@pytest.mark.parametrize(
+    ("operator_name", "default_actions", "caption_columns", "groupby"),
+    [
+        ("format.decode_check", ["drop"], ["decode_reason"], None),
+        ("quality.blur_check", ["drop", "review"], ["blur_score", "blur_reason"], None),
+        (
+            "duplicate.perceptual_duplicate_check",
+            ["drop", "review"],
+            ["perceptual_duplicate_distance"],
+            "perceptual_duplicate_group_id",
+        ),
+        (
+            "duplicate.semantic_duplicate_check",
+            ["drop", "review"],
+            ["semantic_duplicate_score", "semantic_duplicate_nearest_image_id"],
+            "semantic_duplicate_group_id",
+        ),
+    ],
+)
+def test_builtin_preview_policy_matches_runtime_contract(
+    operator_name: str,
+    default_actions: list[str],
+    caption_columns: list[str],
+    groupby: str | None,
+) -> None:
+    policy = create_default_registry().get_operator(operator_name).preview_policy
+
+    assert policy.default_actions == default_actions
+    assert policy.caption_columns == caption_columns
+    assert policy.groupby == groupby
 
 
 def test_decode_and_dimension_specs_declare_required_parameters() -> None:
@@ -277,3 +310,19 @@ def test_default_registry_can_find_metadata_computer_for_builtin_parameters() ->
     )
 
     assert [computer.name for computer in computers] == ["image_metadata_computer"]
+
+
+def test_builtin_specs_have_preview_policy() -> None:
+    registry = create_default_registry()
+
+    for spec in registry.list_operator_specs():
+        assert spec.preview_policy is not None
+
+
+def test_duplicate_specs_group_preview_by_duplicate_group() -> None:
+    registry = create_default_registry()
+
+    spec = registry.get_operator("duplicate.semantic_duplicate_check")
+
+    assert spec.preview_policy.groupby == "semantic_duplicate_group_id"
+    assert spec.preview_policy.include_group_context is True

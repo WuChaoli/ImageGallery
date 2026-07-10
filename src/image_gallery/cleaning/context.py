@@ -18,6 +18,7 @@ class CleanerRunPaths:
     parameter_manifest_path: Path
     relations_dir: Path
     artifacts_dir: Path
+    manifests_dir: Path
     state_path: Path
 
 
@@ -37,12 +38,11 @@ def create_run_context(
     dataset: Dataset,
     cleaner_type: str,
     operator_configs: list[ParsedOperatorConfig],
-    output_dir: str | Path | None,
+    cache_root: str | Path,
 ) -> CleanerRunContext:
     """创建 run_id、产物目录和运行上下文。"""
     run_id = _new_run_id()
-    root_dir = Path(output_dir) if output_dir is not None else Path("cleaning_outputs")
-    paths = build_run_paths(root_dir / run_id)
+    paths = build_run_paths(Path(cache_root) / run_id)
     return CleanerRunContext(
         run_id=run_id,
         dataset=dataset,
@@ -57,12 +57,13 @@ def build_run_paths(run_dir: Path) -> CleanerRunPaths:
     """根据 run_dir 生成全部约定路径。"""
     return CleanerRunPaths(
         run_dir=run_dir,
-        parameter_table_path=run_dir / "parameter_table.parquet",
-        evaluation_table_path=run_dir / "evaluation_table.parquet",
-        operator_outputs_path=run_dir / "operator_outputs.yaml",
-        parameter_manifest_path=run_dir / "parameter_manifest.json",
+        parameter_table_path=run_dir / "tables" / "parameter_table.parquet",
+        evaluation_table_path=run_dir / "tables" / "evaluation_table.parquet",
+        operator_outputs_path=run_dir / "manifests" / "operator_outputs.json",
+        parameter_manifest_path=run_dir / "manifests" / "parameter_manifest.json",
         relations_dir=run_dir / "relations",
         artifacts_dir=run_dir / "artifacts",
+        manifests_dir=run_dir / "manifests",
         state_path=run_dir / "state.json",
     )
 
