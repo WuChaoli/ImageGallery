@@ -159,7 +159,7 @@ class CleaningRuntime:
             run_record = store.load_run(run_id)
             self._validate_run_record(
                 run_record=run_record,
-                dataset=Dataset.from_path(str(run_dir / "parameter_table.parquet")),
+                dataset=Dataset.load(str(run_dir / "parameter_table.parquet")),
                 graph=current_graph,
                 sample_rule=run_record.sample_rule,
                 skip_dataset_validation=True,

@@ -33,11 +33,15 @@ def test_dataset_load_reads_existing_file(tmp_path: Path) -> None:
     assert dataset.count() == 1
 
 
-def test_dataset_from_path_aliases_load(tmp_path: Path) -> None:
+def test_dataset_does_not_expose_from_path_alias() -> None:
+    assert not hasattr(Dataset, "from_path")
+
+
+def test_dataset_load_accepts_path_object(tmp_path: Path) -> None:
     output_path = tmp_path / "raw.parquet"
     pd.DataFrame([{"image_id": "img-1", "image_uri": "/tmp/a.jpg"}]).to_parquet(output_path, index=False)
 
-    dataset = Dataset.from_path(output_path)
+    dataset = Dataset.load(output_path)
 
     assert dataset.dataset_path == str(output_path)
     assert dataset.count() == 1

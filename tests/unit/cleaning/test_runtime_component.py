@@ -31,7 +31,7 @@ def tiny_dataset(tmp_path: Path) -> Dataset:
     )
     dataset_path = tmp_path / "raw.parquet"
     frame.to_parquet(dataset_path, index=False)
-    return Dataset.from_path(str(dataset_path))
+    return Dataset.load(str(dataset_path))
 
 
 def test_runtime_retries_stage_once_then_completes(tmp_path: Path, tiny_dataset: Dataset) -> None:

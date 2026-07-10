@@ -281,7 +281,7 @@ class CleanerResult:
             tables=tables,
             output_path=str(path),
         )
-        return Dataset.from_path(str(path))
+        return Dataset.load(str(path))
 
     def preview(self, limit: int = 20) -> PreviewResult:
         """返回 preview 概览。"""

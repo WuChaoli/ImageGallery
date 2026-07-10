@@ -82,11 +82,6 @@ class Dataset:
         return cls(dataset_path=dataset_path, format=_format_from_path(dataset_path), storage=storage)
 
     @classmethod
-    def from_path(cls, dataset_path: str | Path, storage: Storage | None = None) -> "Dataset":
-        """从已有数据集文件路径创建 Dataset。"""
-        return cls.load(dataset_path, storage=storage)
-
-    @classmethod
     def write(cls, data: pd.DataFrame, output_path: str, storage: Storage | None = None) -> "Dataset":
         """把 DataFrame 写出为数据集文件，并返回对应 Dataset 对象。"""
         # resolved_output_path 是实际写入位置；父目录不存在时自动创建。
