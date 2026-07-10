@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -41,6 +42,8 @@ class RunOptions:
     run_id: str
     retry_max_attempts: int = 1
     sample_rule: dict[str, object] | None = None
+    label: str | None = None
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -56,11 +59,17 @@ class RuntimeRunResult:
 class CleaningRuntime:
     """清洗运行时最小骨架。"""
 
-    def __init__(self, cache_root: str | Path, registry: OperatorRegistry | None = None) -> None:
+    def __init__(
+        self,
+        cache_root: str | Path,
+        registry: OperatorRegistry | None = None,
+        progress_callback: Callable[[RuntimeEvent], None] | None = None,
+    ) -> None:
+        """初始化运行时组件。"""
         self._cache_root = Path(cache_root)
         self._registry = registry if registry is not None else create_default_registry()
         self.state_store: SQLiteRunStateStore | None = None
-        self._progress = ProgressReporter()
+        self._progress = ProgressReporter(progress_callback)
         self._artifact_manager: ArtifactManager | None = None
 
     def run_graph(
@@ -283,16 +292,7 @@ class CleaningRuntime:
             parameter_manifest={},
         )
 
-        paths = CleanerRunPaths(
-            run_dir=run_dir,
-            parameter_table_path=run_dir / "parameter_table.parquet",
-            evaluation_table_path=run_dir / "evaluation_table.parquet",
-            operator_outputs_path=run_dir / "operator_outputs.yaml",
-            parameter_manifest_path=run_dir / "parameter_manifest.json",
-            relations_dir=run_dir / "relations",
-            artifacts_dir=run_dir / "artifacts",
-            state_path=run_dir / "state.json",
-        )
+        paths = build_run_paths(run_dir)
         context = CleanerRunContext(
             run_id=run_id,
             dataset=dataset,
@@ -310,13 +310,14 @@ class CleaningRuntime:
                 status="running",
                 dataset_fingerprint=dataset.fingerprint(),
                 plan_hash=graph.plan_hash,
-                label="basic-run",
-                tags=[],
+                label=run_options.label or "basic-run",
+                tags=run_options.tags,
                 sample_size=_sample_size(run_options.sample_rule),
                 sample_rule=run_options.sample_rule,
             ),
         )
         self.state_store.record_graph(graph)
+        self._write_runtime_manifests(run_dir=run_dir, graph=graph)
 
         self._report(
             RunEventContext(run_id),
@@ -331,8 +332,20 @@ class CleaningRuntime:
         operator_states: list[OperatorRunState] = []
         try:
             scheduler = ParameterScheduler(self._registry)
+            self._report(
+                RunEventContext(run_id),
+                "node_started",
+                "parameter.stage",
+                message="parameter stage started",
+            )
             schedule_result = scheduler.run(plan.parameter_plan, context, tables, state_store=self.state_store)
             tables = schedule_result.tables
+            self._report(
+                RunEventContext(run_id),
+                "node_completed",
+                "parameter.stage",
+                message="parameter stage completed",
+            )
             write_tables(tables=tables, paths=paths)
             artifact_paths = dict(schedule_result.artifact_paths)
             relation_paths = dict(schedule_result.relation_paths)
@@ -454,6 +467,12 @@ class CleaningRuntime:
                 for node_id, status in self.state_store.list_graph_node_statuses(run_id).items()
                 if status == "completed"
             }
+            self._report(
+                RunEventContext(run_id),
+                "node_started",
+                "parameter.stage",
+                message="parameter stage started",
+            )
             schedule_result = ParameterScheduler(self._registry).run(
                 plan.parameter_plan,
                 context,
@@ -462,6 +481,12 @@ class CleaningRuntime:
                 completed_node_ids=completed_node_ids,
             )
             tables = schedule_result.tables
+            self._report(
+                RunEventContext(run_id),
+                "node_completed",
+                "parameter.stage",
+                message="parameter stage completed",
+            )
             artifact_paths.update(schedule_result.artifact_paths)
             relation_paths.update(schedule_result.relation_paths)
             write_tables(tables=tables, paths=paths)
@@ -545,16 +570,41 @@ class CleaningRuntime:
         operator_states: list[OperatorRunState] = []
         for resolved in plan.resolved_operator_runs:
             node_id = f"evaluation.{resolved.spec.name}"
+            self._report(
+                RunEventContext(run_id),
+                "node_started",
+                node_id,
+                message=f"{node_id} started",
+            )
             self.state_store.record_node_started(node_id)
             try:
                 tables, operator_state = evaluator.evaluate(resolved, tables)
             except Exception:
                 self.state_store.record_node_failed(node_id)
+                self._report(
+                    RunEventContext(run_id),
+                    "node_failed",
+                    node_id,
+                    message=f"{node_id} failed",
+                )
                 raise
             self.state_store.record_node_completed(node_id)
+            self._report(
+                RunEventContext(run_id),
+                "node_completed",
+                node_id,
+                message=f"{node_id} completed",
+            )
             operator_states.append(operator_state)
 
-        self.state_store.record_node_started("merge.final_action")
+        merge_node_id = "merge.final_action"
+        self._report(
+            RunEventContext(run_id),
+            "node_started",
+            merge_node_id,
+            message="merge.final_action started",
+        )
+        self.state_store.record_node_started(merge_node_id)
         try:
             tables = CleaningTables(
                 parameter_table=tables.parameter_table,
@@ -563,9 +613,21 @@ class CleaningRuntime:
                 parameter_manifest=tables.parameter_manifest,
             )
         except Exception:
-            self.state_store.record_node_failed("merge.final_action")
+            self.state_store.record_node_failed(merge_node_id)
+            self._report(
+                RunEventContext(run_id),
+                "node_failed",
+                merge_node_id,
+                message="merge.final_action failed",
+            )
             raise
-        self.state_store.record_node_completed("merge.final_action")
+        self.state_store.record_node_completed(merge_node_id)
+        self._report(
+            RunEventContext(run_id),
+            "node_completed",
+            merge_node_id,
+            message="merge.final_action completed",
+        )
         write_tables(tables=tables, paths=paths)
         self._save_run_state(
             run_id=run_id,
@@ -596,6 +658,24 @@ class CleaningRuntime:
             status="completed",
             attempt_count=1,
         )
+
+    def _write_runtime_manifests(self, *, run_dir: Path, graph: CleaningStateGraph) -> None:
+        """写出供 Result 只读导出的运行计划和 artifact 清单。"""
+        manifests_dir = run_dir / "manifests"
+        manifests_dir.mkdir(parents=True, exist_ok=True)
+        (manifests_dir / "execution_plan.json").write_text(
+            json.dumps(
+                {
+                    "plan_hash": graph.plan_hash,
+                    "nodes": graph.to_frame().to_dict(orient="records"),
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            ),
+            encoding="utf-8",
+        )
+        _write_artifacts_manifest(run_dir=run_dir, artifact_paths={}, relation_paths={})
 
     def _save_run_state(
         self,
@@ -635,6 +715,11 @@ class CleaningRuntime:
             ),
             paths.state_path,
         )
+        _write_artifacts_manifest(
+            run_dir=paths.run_dir,
+            artifact_paths=artifact_paths,
+            relation_paths=relation_paths,
+        )
 
     def _resolve_run_reference(
         self,
@@ -664,13 +749,13 @@ class CleaningRuntime:
         skip_dataset_validation: bool = False,
     ) -> None:
         """校验 resume/rerun 是否仍指向同一份输入与图计划。"""
+        expected_sample_rule = run_record.sample_rule if sample_rule is None else sample_rule
+        if expected_sample_rule != run_record.sample_rule:
+            raise ValueError("sample rule does not match the recorded run")
         if not skip_dataset_validation and run_record.dataset_fingerprint != dataset.fingerprint():
             raise ValueError("dataset fingerprint does not match the recorded run")
         if run_record.plan_hash != graph.plan_hash:
             raise ValueError("plan hash does not match the recorded run")
-        expected_sample_rule = run_record.sample_rule if sample_rule is None else sample_rule
-        if expected_sample_rule != run_record.sample_rule:
-            raise ValueError("sample rule does not match the recorded run")
 
     def _validate_graph_nodes(
         self,
@@ -1023,6 +1108,39 @@ def _parameter_config_hashes_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]
         for node in graph_nodes
         if node.node_type == "parameter" and node.computer_name is not None
     }
+
+
+def _write_artifacts_manifest(
+    *,
+    run_dir: Path,
+    artifact_paths: dict[str, str],
+    relation_paths: dict[str, str],
+) -> None:
+    """写出不包含绝对 cache 路径的 artifact/relation manifest。"""
+    manifests_dir = run_dir / "manifests"
+    manifests_dir.mkdir(parents=True, exist_ok=True)
+
+    def relative_uri(path: str) -> str:
+        path_obj = Path(path)
+        try:
+            return path_obj.resolve().relative_to(run_dir.resolve()).as_posix()
+        except ValueError:
+            return path_obj.name
+
+    payload = {
+        "artifacts": [
+            {"name": name, "uri": relative_uri(path), "status": "committed"}
+            for name, path in sorted(artifact_paths.items())
+        ],
+        "relations": [
+            {"name": name, "uri": relative_uri(path), "status": "committed"}
+            for name, path in sorted(relation_paths.items())
+        ],
+    }
+    (manifests_dir / "artifacts.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
 
 
 def _parameter_owner_computers_from_graph_nodes(graph_nodes: tuple[GraphNode, ...]) -> dict[str, str]:

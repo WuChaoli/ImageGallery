@@ -150,3 +150,30 @@ def test_state_graph_parameter_node_policy_hash_depends_on_runtime_policy() -> N
     )
 
     assert default_node.policy_hash != custom_node.policy_hash
+
+
+def test_semantic_graph_declares_stage_dependencies_and_artifacts() -> None:
+    """semantic duplicate 应声明可持久化的 stage 级 artifact/relation contract。"""
+    registry = create_default_registry()
+    operators = select_operators([{"duplicate.semantic_duplicate_check": {}}], registry)
+
+    graph = CleaningStateGraph.compile(operators, registry)
+    semantic_nodes = [
+        node
+        for node in graph.nodes
+        if node.computer_name == "semantic_duplicate_group_computer"
+    ]
+
+    assert [node.node_id for node in semantic_nodes] == [
+        "parameter.semantic_duplicate_group_computer.read_embeddings",
+        "parameter.semantic_duplicate_group_computer.build_index",
+        "parameter.semantic_duplicate_group_computer.find_pairs",
+        "parameter.semantic_duplicate_group_computer.write_relations",
+    ]
+    assert semantic_nodes[1].produced_artifacts == frozenset({"semantic_index"})
+    assert semantic_nodes[-1].produced_relations == frozenset({"semantic_duplicate_pairs"})
+    assert "evaluation.duplicate.semantic_duplicate_check" in [
+        node.node_id
+        for node in graph.nodes
+        if "parameter.semantic_duplicate_group_computer.write_relations" in node.upstream_node_ids
+    ]

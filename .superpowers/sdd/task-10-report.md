@@ -176,3 +176,54 @@ Result: PASS
 - Cleaner runtime migration verification gate is complete.
 - Canonical lifecycle is enforced in tests and examples.
 - Notebook smoke could not execute because `jupyter-nbconvert` is unavailable in the current environment.
+
+## Fix pass
+
+- Updated `notebooks/operators_phash_duplicate_test.ipynb` to use `execution = BasicCleaner(...).compile()`, `result = execution.run(...)`, and `result.export(...)` / `result.preview_html(...)`.
+- Cleared notebook outputs to avoid stale runtime path leakage.
+
+### Fix validation
+
+- `pytest tests/unit/notebooks -q`: `13 passed, 2 skipped`
+- `ruff check src tests examples`: `All checks passed!`
+- `mypy src/image_gallery`: `Success: no issues found in 67 source files`
+
+## Fix pass 2
+
+- Replaced the remaining `cleaner.plan()` reference in `notebooks/operators_phash_duplicate_test.ipynb` with `execution.plan()`.
+- Re-cleared notebook outputs.
+
+### Fix validation 2
+
+- `rg` check found no `cleaner.` / runtime cache path remnants in `notebooks/operators_phash_duplicate_test.ipynb`.
+- `pytest tests/unit/notebooks -q`: `13 passed, 2 skipped`
+- `ruff check src tests examples notebooks/_helpers`: `All checks passed!`
+- `mypy src/image_gallery`: `Success: no issues found in 67 source files`
+
+## Fix pass 3
+
+- Added `CleanerResult.export_relation(relation_name, path)` as a read-only relation export surface.
+- Updated `notebooks/operators_phash_duplicate_test.ipynb` to export parameter/evaluation/relation tables through `CleanerResult` instead of discovering and reading the internal run directory.
+- Re-cleared notebook outputs.
+
+### Fix validation 3
+
+- `rg` check found no `run_dir` / runtime cache path / direct relation-path reads in `notebooks/operators_phash_duplicate_test.ipynb`.
+- `pytest tests/unit/cleaning/test_result.py tests/unit/notebooks -q`: `21 passed, 2 skipped`
+- `pytest tests/integration/cleaning -q`: `28 passed, 1 skipped`
+- `ruff check src tests examples notebooks/_helpers`: `All checks passed!`
+- `mypy src/image_gallery`: `Success: no issues found in 67 source files`
+
+## Final review fix pass
+
+- Tightened resume/rerun output validation so graph-consumed parameters must exist in both `parameter_table.parquet` and `parameter_manifest.json`; missing manifest entries now fail resume.
+- Derived expected parameter ownership from graph node required-parameter consumption instead of full computer capability.
+- Added read-only `CleanerResult.export_relations(...)` and `CleanerResult.export_debug_bundle(...)` to complete the planned public export surface.
+- Added unit and integration regressions for relation/debug exports and missing parameter manifest entries.
+
+### Final review fix validation
+
+- `pytest tests/integration/cleaning/test_cleaner_runtime_resume.py tests/unit/cleaning/test_result.py -q`: `20 passed`
+- `pytest tests/integration/cleaning -q`: `29 passed, 1 skipped`
+- `ruff check src tests examples notebooks/_helpers`: `All checks passed!`
+- `mypy src/image_gallery`: `Success: no issues found in 67 source files`

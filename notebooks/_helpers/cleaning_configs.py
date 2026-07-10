@@ -68,3 +68,11 @@ def get_cleaning_v3_light_risk_operator_configs() -> list[dict[str, dict[str, ob
         {"format.animated_image_check": {}},
         {"metadata.orientation_check": {}},
     ]
+
+
+def get_cleaning_v3_non_semantic_all_operator_configs() -> list[dict[str, dict[str, object]]]:
+    """Return all builtin operators that do not require semantic providers."""
+    return [
+        *get_cleaning_v3_first_batch_operator_configs(),
+        *get_cleaning_v3_light_risk_operator_configs(),
+    ]

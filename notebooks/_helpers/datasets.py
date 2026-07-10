@@ -13,7 +13,18 @@ from notebooks._helpers.storage import load_minio_storage
 
 def get_default_minio_sample_1000_raw_path() -> Path:
     """Return the raw parquet path for the default MinIO sample_1000 dataset."""
-    return get_repo_root() / "datasets" / "sample_1000" / "raw.parquet"
+    repo_root = get_repo_root()
+    relative_path = Path("datasets") / "sample_1000" / "raw.parquet"
+    worktree_dataset_path = repo_root / relative_path
+    if worktree_dataset_path.exists():
+        return worktree_dataset_path
+
+    # 隔离 worktree 通常不携带真实数据集，回退到主 checkout 的同名数据路径。
+    if repo_root.parent.name == ".worktrees":
+        main_dataset_path = repo_root.parent.parent / relative_path
+        if main_dataset_path.exists():
+            return main_dataset_path
+    return worktree_dataset_path
 
 
 def load_default_minio_sample_1000_dataset() -> Dataset:

@@ -27,7 +27,7 @@ from image_gallery.operators.registry import OperatorRegistry
 class CleanerConfig:
     """从 TOML 解析的清洗配置承载对象。"""
 
-    operators: str | list[object]
+    operators: OperatorSelectorInput
     operator_configs: dict[str, dict[str, object]]
     node_policy: NodePolicy
     operator_policies: dict[str, NodePolicy]
@@ -161,7 +161,7 @@ def _format_toml_value(value: object) -> str:
     raise TypeError(f"unsupported TOML template value: {value!r}")
 
 
-def _parse_operators(raw: object) -> str | list[object]:
+def _parse_operators(raw: object) -> OperatorSelectorInput:
     """解析 cleaner section 的 operators 选择字段。"""
     if isinstance(raw, str):
         return [raw]

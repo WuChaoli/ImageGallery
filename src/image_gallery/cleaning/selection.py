@@ -1,9 +1,9 @@
 from collections.abc import Mapping
 
 from image_gallery.operators.registry import OperatorRegistry
-from image_gallery.operators.spec import ConfiguredOperatorSpec
+from image_gallery.operators.spec import ConfiguredOperatorSpec, OperatorSpec
 
-OperatorSelectorInput = str | list[object]
+OperatorSelectorInput = str | list[str | Mapping[str, object] | OperatorSpec | ConfiguredOperatorSpec]
 OperatorOverrides = list[dict[str, dict[str, object]]] | dict[str, dict[str, object]] | None
 
 
@@ -18,7 +18,20 @@ def select_operators(
     merged_configs: dict[str, dict[str, object]] = {}
     override_map = _normalize_overrides(overrides)
 
-    for selector, inline_config in _normalize_operator_selectors(operators):
+    configured_specs: dict[str, ConfiguredOperatorSpec] = {}
+    for selector, inline_config, configured_spec in _normalize_operator_selectors(operators):
+        if configured_spec is not None:
+            _register_temporary_spec(configured_spec.spec, registry, override=override)
+            operator_name = configured_spec.operator_name
+            if operator_name not in merged_configs:
+                selected_names.append(operator_name)
+            elif not override:
+                continue
+            merged_configs[operator_name] = dict(configured_spec.config)
+            configured_specs[operator_name] = configured_spec
+            continue
+
+        assert selector is not None
         expanded = _expand_selector(selector, registry)
         if inline_config is not None and len(expanded) != 1:
             raise ValueError("inline operator config can only target one operator")
@@ -34,10 +47,13 @@ def select_operators(
                 continue
             merged_configs[operator_name] = config
     return [
-        ConfiguredOperatorSpec.from_spec(
-            registry.get_operator(operator_name),
-            merged_configs[operator_name],
-            source="selection",
+        configured_specs.get(
+            operator_name,
+            ConfiguredOperatorSpec.from_spec(
+                registry.get_operator(operator_name),
+                merged_configs[operator_name],
+                source="selection",
+            ),
         )
         for operator_name in selected_names
     ]
@@ -62,17 +78,31 @@ def _expand_selector(selector: str, registry: OperatorRegistry) -> list[str]:
     raise ValueError(f"unknown selector: {selector}; available categories: {registry.list_categories()}")
 
 
-def _normalize_operator_selectors(operators: OperatorSelectorInput) -> list[tuple[str, dict[str, object] | None]]:
+def _normalize_operator_selectors(
+    operators: OperatorSelectorInput,
+) -> list[tuple[str | None, dict[str, object] | None, ConfiguredOperatorSpec | None]]:
     """把用户输入转为可扩展的选择器与配置对。"""
     if isinstance(operators, str):
-        return [(operators, None)]
+        return [(operators, None, None)]
     if not isinstance(operators, list):
         raise TypeError("operators must be string or list")
 
-    normalized: list[tuple[str, dict[str, object] | None]] = []
+    normalized: list[tuple[str | None, dict[str, object] | None, ConfiguredOperatorSpec | None]] = []
     for item in operators:
         if isinstance(item, str):
-            normalized.append((item, None))
+            normalized.append((item, None, None))
+            continue
+        if isinstance(item, ConfiguredOperatorSpec):
+            normalized.append((None, None, item))
+            continue
+        if isinstance(item, OperatorSpec):
+            normalized.append(
+                (
+                    None,
+                    None,
+                    ConfiguredOperatorSpec.from_spec(item, {}, source="python"),
+                )
+            )
             continue
         if not isinstance(item, Mapping):
             raise TypeError("each operator selector must be a string or mapping")
@@ -82,12 +112,19 @@ def _normalize_operator_selectors(operators: OperatorSelectorInput) -> list[tupl
         if not isinstance(key, str) or not key:
             raise TypeError("operator selector key must be non-empty string")
         if value is None:
-            normalized.append((key, None))
+            normalized.append((key, None, None))
             continue
         if not isinstance(value, Mapping):
             raise TypeError(f"operator config for {key} must be a mapping")
-        normalized.append((key, dict(value)))
+        normalized.append((key, dict(value), None))
     return normalized
+
+
+def _register_temporary_spec(spec: OperatorSpec, registry: OperatorRegistry, *, override: bool) -> None:
+    """把 Python 直接传入的 spec 注册为本次选择可用的临时条目。"""
+    if spec.name in registry.list_operators() and not override:
+        raise ValueError(f"operator spec already exists: {spec.name}; pass override=True to replace it")
+    registry.register_operator(spec)
 
 
 def _normalize_overrides(overrides: OperatorOverrides) -> dict[str, dict[str, object]]:

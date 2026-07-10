@@ -26,19 +26,19 @@ class BasicCleaner(Cleaner):
     def __init__(
         self,
         operator_configs: OperatorSelectorInput,
-        output_dir: str | Path | None = None,
         registry: OperatorRegistry | None = None,
         semantic_providers: dict[str, SemanticEmbeddingProvider] | None = None,
         node_policy: NodePolicy | None = None,
         operator_policies: dict[str, NodePolicy] | None = None,
         operator_config_overrides: OperatorOverrides = None,
+        override: bool = False,
     ) -> None:
         self._operators = operator_configs
         self._operator_config_overrides = operator_config_overrides
         self._registry = registry if registry is not None else create_default_registry(semantic_providers)
-        self._cache_root = Path(output_dir) if output_dir is not None else None
         self._node_policy = node_policy
         self._operator_policies = operator_policies
+        self._override = override
 
     @classmethod
     def from_config(cls, config: CleanerConfig) -> BasicCleaner:
@@ -69,6 +69,7 @@ class BasicCleaner(Cleaner):
             self._operators,
             self._registry,
             overrides=self._operator_config_overrides,
+            override=self._override,
         )
         graph = CleaningStateGraph.compile(
             configured,
@@ -80,7 +81,7 @@ class BasicCleaner(Cleaner):
             graph=graph,
             registry=self._registry,
             configured_operators=configured,
-            cache_root=self._cache_root or _default_cache_root(),
+            cache_root=_default_cache_root(),
             node_policy=self._node_policy,
             operator_policies=self._operator_policies,
         )

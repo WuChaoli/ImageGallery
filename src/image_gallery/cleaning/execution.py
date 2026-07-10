@@ -2,22 +2,23 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
-from tempfile import gettempdir
 from typing import cast
 from uuid import uuid4
 
 import pandas as pd
 
 from image_gallery.cleaning.config import OperatorConfigInput
+from image_gallery.cleaning.events import RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.policy import NodePolicy
 from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
 from image_gallery.cleaning.runtime import CleaningRuntime, RunOptions
-from image_gallery.cleaning.selection import select_operators
+from image_gallery.cleaning.selection import OperatorSelectorInput, select_operators
 from image_gallery.dataset import Dataset
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import ConfiguredOperatorSpec
@@ -25,7 +26,7 @@ from image_gallery.operators.spec import ConfiguredOperatorSpec
 
 def _default_cache_root() -> Path:
     """返回默认清洗运行时缓存目录。"""
-    return Path(gettempdir()) / "image-gallery-cleaning-runtime"
+    return Path.home() / ".cache" / "image_gallery" / "cleaning" / "runs"
 
 
 @dataclass(frozen=True)
@@ -45,19 +46,36 @@ class DryRunResult:
 def build_dry_run_result(
     graph: CleaningStateGraph,
     configured_operators: list[ConfiguredOperatorSpec],
-    _dataset: Dataset | None = None,
+    dataset: Dataset | None = None,
 ) -> DryRunResult:
-    """构建 `dry_run` 结果。"""
-    del _dataset
+    """构建不执行参数计算的运行前诊断。"""
+    errors: list[str] = []
+    warnings: list[str] = []
+    if dataset is not None:
+        columns = set(dataset.to_frame().columns)
+        for required in ("image_id", "image_uri"):
+            if required not in columns:
+                errors.append(f"dataset.{required} column is required")
+    elif dataset is None:
+        warnings.append("dataset was not provided; schema validation was skipped")
+
+    estimated_artifacts = ["tables/parameter_table.parquet", "tables/evaluation_table.parquet"]
+    for node in graph.nodes:
+        if node.node_type == "parameter" and node.computer_name is not None:
+            estimated_artifacts.append(f"artifacts/{node.computer_name}")
+    preview_policies: dict[str, object] = {
+        configured.operator_name: configured.spec.preview_policy
+        for configured in configured_operators
+    }
     return DryRunResult(
         selected_operators=[spec.spec.name for spec in configured_operators],
         expanded_selectors=[node.node_id.split(".", 1)[-1] for node in graph.nodes if node.node_type == "evaluation"],
         graph_nodes=[node.node_id for node in graph.nodes],
         policy_overrides={},
-        warnings=[],
-        errors=[],
-        estimated_artifacts=[],
-        preview_policies={},
+        warnings=warnings,
+        errors=errors,
+        estimated_artifacts=estimated_artifacts,
+        preview_policies=preview_policies,
     )
 
 
@@ -91,23 +109,94 @@ def _coerce_retry_max_attempts(run_options: Mapping[str, object]) -> int:
 
 
 def _coerce_sample_rule(run_options: Mapping[str, object]) -> dict[str, object] | None:
-    """解析 sample 规则，并保持稳定字典结构。"""
+    """解析 sample 规则，并补齐确定性随机种子。"""
     raw = run_options.get("sample")
     if raw is None:
         return None
-    if not isinstance(raw, Mapping):
-        raise TypeError("sample must be a mapping")
-    return {str(key): value for key, value in raw.items()}
+    if isinstance(raw, bool):
+        raise TypeError("sample must be an integer or mapping")
+    if isinstance(raw, int):
+        rule: dict[str, object] = {"n": raw}
+    elif isinstance(raw, Mapping):
+        rule = {str(key): value for key, value in raw.items()}
+    else:
+        raise TypeError("sample must be an integer or mapping")
+
+    size = rule.get("n")
+    if isinstance(size, bool) or not isinstance(size, int) or size <= 0:
+        raise ValueError("sample.n must be a positive integer")
+    random_state = rule.get("random_state")
+    if random_state is not None and (isinstance(random_state, bool) or not isinstance(random_state, int)):
+        raise TypeError("sample.random_state must be an integer")
+    return rule
 
 
-def _coerce_output_dir(run_options: Mapping[str, object]) -> Path | None:
-    """解析可选的运行产物目录覆盖。"""
-    raw = run_options.get("output_dir")
-    if raw is None:
+def _complete_sample_rule(
+    sample_rule: dict[str, object] | None,
+    dataset: Dataset,
+    graph: CleaningStateGraph,
+) -> dict[str, object] | None:
+    """为简写 sample 规则基于输入与计划补齐稳定随机种子。"""
+    if sample_rule is None:
         return None
-    if not isinstance(raw, (str, Path)):
-        raise TypeError("output_dir must be a str or Path")
-    return Path(raw)
+    if sample_rule.get("random_state") is not None:
+        return sample_rule
+    seed_material = f"{dataset.fingerprint()}:{graph.plan_hash}".encode()
+    seed = int.from_bytes(sha256(seed_material).digest()[:8], "big") % (2**32)
+    return {**sample_rule, "random_state": seed}
+
+
+def _sample_dataset(dataset: Dataset, sample_rule: dict[str, object] | None, output_path: Path) -> Dataset:
+    """按已归一化规则写入本 run 专属稳定样本 Dataset。"""
+    if sample_rule is None:
+        return dataset
+    frame = dataset.to_frame()
+    raw_size = sample_rule["n"]
+    raw_random_state = sample_rule["random_state"]
+    if not isinstance(raw_size, int) or isinstance(raw_size, bool):
+        raise TypeError("sample.n must be an integer")
+    if not isinstance(raw_random_state, int) or isinstance(raw_random_state, bool):
+        raise TypeError("sample.random_state must be an integer")
+    sample_size = min(raw_size, len(frame))
+    sampled = frame.sample(n=sample_size, random_state=raw_random_state).sort_index()
+    return Dataset.write(sampled, str(output_path), storage=dataset.storage)
+
+
+def _coerce_label(run_options: Mapping[str, object]) -> str | None:
+    """校验可选的运行标签。"""
+    label = run_options.get("label")
+    if label is None:
+        return None
+    if not isinstance(label, str) or not label:
+        raise TypeError("label must be a non-empty string")
+    return label
+
+
+def _coerce_tags(run_options: Mapping[str, object]) -> list[str]:
+    """校验可选的运行标签列表。"""
+    tags = run_options.get("tags", [])
+    if not isinstance(tags, list) or any(not isinstance(tag, str) or not tag for tag in tags):
+        raise TypeError("tags must be a list of non-empty strings")
+    return list(tags)
+
+
+def _coerce_progress_callback(run_options: Mapping[str, object]) -> Callable[[RuntimeEvent], None] | None:
+    """解析 notebook/脚本运行时进度输出配置。"""
+    raw = run_options.get("progress")
+    if raw is None or raw is False:
+        return None
+    if raw == "auto" or raw is True:
+        return _print_progress_event
+    if callable(raw):
+        return cast(Callable[[RuntimeEvent], None], raw)
+    raise TypeError("progress must be None, 'auto', bool, or a RuntimeEvent callback")
+
+
+def _print_progress_event(event: RuntimeEvent) -> None:
+    """在 Notebook/终端中输出一行稳定的运行时进度。"""
+    node = f" {event.node_id}" if event.node_id else ""
+    message = f" - {event.message}" if event.message else ""
+    print(f"[cleaner:{event.run_id}] {event.event_type}{node}{message}")
 
 
 @dataclass(frozen=True)
@@ -154,22 +243,42 @@ class CleanerExecution:
 
     def run(self, dataset: Dataset, **run_options: object) -> CleanerResult:
         """按已编译图执行一次清洗运行。"""
-        output_dir = _coerce_output_dir(run_options)
-        runtime = self.runtime if output_dir is None else CleaningRuntime(output_dir, registry=self.registry)
+        diagnostics = self.dry_run(dataset)
+        if diagnostics.errors:
+            raise ValueError("; ".join(diagnostics.errors))
+        run_id = _coerce_run_id(run_options)
+        sample_rule = _complete_sample_rule(_coerce_sample_rule(run_options), dataset, self.graph)
+        progress_callback = _coerce_progress_callback(run_options)
+        if progress_callback is None:
+            runtime = self.runtime
+        else:
+            runtime = CleaningRuntime(
+                self.cache_root,
+                registry=self.registry,
+                progress_callback=progress_callback,
+            )
+        runtime_dataset = _sample_dataset(
+            dataset,
+            sample_rule,
+            runtime._cache_root / run_id / "input" / "sample.parquet",
+        )
         runtime_result = runtime.run_graph(
             graph=self.graph,
-            dataset=dataset,
+            dataset=runtime_dataset,
             configured_operators=self.configured_operators,
             run_options=RunOptions(
-                run_id=_coerce_run_id(run_options),
+                run_id=run_id,
                 retry_max_attempts=_coerce_retry_max_attempts(run_options),
-                sample_rule=_coerce_sample_rule(run_options),
+                sample_rule=sample_rule,
+                label=_coerce_label(run_options),
+                tags=_coerce_tags(run_options),
             ),
         )
         return CleanerResult(
             run_id=runtime_result.run_id,
             cache_root=runtime_result.cache_root,
             operator_preview_policies=self._preview_policies(),
+            dataset=runtime_dataset,
         )
 
     def resume(
@@ -196,11 +305,15 @@ class CleanerExecution:
             run_id=runtime_result.run_id,
             cache_root=runtime_result.cache_root,
             operator_preview_policies=self._preview_policies(result),
+            dataset=dataset,
         )
 
     def rerun(self, result: CleanerResult, operators: object, overwrite: bool = False) -> CleanerResult:
         """按结果做算子级重新运行（阶段1先返回最小壳）。"""
-        configured_operators = select_operators(cast(list[object], cast(OperatorConfigInput, operators)), self.registry)
+        configured_operators = select_operators(
+            cast(OperatorSelectorInput, cast(OperatorConfigInput, operators)),
+            self.registry,
+        )
         rerun_graph = CleaningStateGraph.compile(
             configured_operators,
             self.registry,
@@ -218,6 +331,7 @@ class CleanerExecution:
             run_id=runtime_result.run_id,
             cache_root=runtime_result.cache_root,
             operator_preview_policies=self._preview_policies(configured_operators=configured_operators),
+            dataset=result._dataset,
         )
 
     def _preview_policies(

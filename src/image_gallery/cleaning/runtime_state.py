@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
@@ -27,6 +27,10 @@ class RunRecord:
     tags: list[str]
     sample_size: int | None
     sample_rule: dict[str, Any] | None
+    cache_root: str | None = None
+    started_at: str | None = None
+    updated_at: str | None = None
+    finished_at: str | None = None
 
 
 @runtime_checkable
@@ -61,8 +65,15 @@ class SQLiteRunStateStore:
         connection = sqlite3.connect(db_path)
         connection.execute("PRAGMA foreign_keys = ON")
         _create_schema(connection)
-        store = cls(connection=connection, run_dir=run_directory, run_record=run_record)
-        store._upsert_run_record(run_record)
+        now = _utcnow()
+        normalized_record = replace(
+            run_record,
+            cache_root=str(run_directory.parent),
+            started_at=run_record.started_at or now,
+            updated_at=run_record.updated_at or now,
+        )
+        store = cls(connection=connection, run_dir=run_directory, run_record=normalized_record)
+        store._upsert_run_record(normalized_record)
         return store
 
     @classmethod
@@ -87,7 +98,11 @@ class SQLiteRunStateStore:
                 label,
                 tags_json,
                 sample_size,
-                sample_rule_json
+                sample_rule_json,
+                cache_root,
+                started_at,
+                updated_at,
+                finished_at
             FROM cleaning_run
             WHERE run_id = ?
             """,
@@ -110,6 +125,10 @@ class SQLiteRunStateStore:
                 tags=_loads_json(row["tags_json"], default=[]),
                 sample_size=row["sample_size"],
                 sample_rule=_loads_json(row["sample_rule_json"]),
+                cache_root=row["cache_root"],
+                started_at=row["started_at"],
+                updated_at=row["updated_at"],
+                finished_at=row["finished_at"],
             ),
         )
 
@@ -130,7 +149,11 @@ class SQLiteRunStateStore:
                 label,
                 tags_json,
                 sample_size,
-                sample_rule_json
+                sample_rule_json,
+                cache_root,
+                started_at,
+                updated_at,
+                finished_at
             FROM cleaning_run
             WHERE run_id = ?
             """,
@@ -149,6 +172,10 @@ class SQLiteRunStateStore:
             tags=_loads_json(row["tags_json"], default=[]),
             sample_size=row["sample_size"],
             sample_rule=_loads_json(row["sample_rule_json"]),
+            cache_root=row["cache_root"],
+            started_at=row["started_at"],
+            updated_at=row["updated_at"],
+            finished_at=row["finished_at"],
         )
 
     def save_run_record(self, run_record: RunRecord) -> None:
@@ -179,9 +206,15 @@ class SQLiteRunStateStore:
                 policy_hash,
                 upstream_node_ids_json,
                 checkpoint_strategy,
+                required_artifacts_json,
+                produced_artifacts_json,
+                required_relations_json,
+                produced_relations_json,
+                artifact_contract,
+                cache_policy,
                 status
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id, node_id) DO UPDATE SET
                 node_type = excluded.node_type,
                 operator_name = excluded.operator_name,
@@ -194,6 +227,12 @@ class SQLiteRunStateStore:
                 policy_hash = excluded.policy_hash,
                 upstream_node_ids_json = excluded.upstream_node_ids_json,
                 checkpoint_strategy = excluded.checkpoint_strategy,
+                required_artifacts_json = excluded.required_artifacts_json,
+                produced_artifacts_json = excluded.produced_artifacts_json,
+                required_relations_json = excluded.required_relations_json,
+                produced_relations_json = excluded.produced_relations_json,
+                artifact_contract = excluded.artifact_contract,
+                cache_policy = excluded.cache_policy,
                 status = excluded.status
             """,
             (
@@ -210,6 +249,12 @@ class SQLiteRunStateStore:
                 node.policy_hash,
                 json.dumps(node.upstream_node_ids),
                 node.checkpoint_strategy,
+                json.dumps(sorted(node.required_artifacts)),
+                json.dumps(sorted(node.produced_artifacts)),
+                json.dumps(sorted(node.required_relations)),
+                json.dumps(sorted(node.produced_relations)),
+                node.artifact_contract,
+                node.cache_policy,
                 "pending",
             ),
         )
@@ -217,13 +262,15 @@ class SQLiteRunStateStore:
 
     def update_run_status(self, run_id: str, status: str) -> None:
         """更新运行状态。"""
+        now = _utcnow()
+        finished_at = now if status in {"completed", "failed"} else None
         self._connection.execute(
             """
             UPDATE cleaning_run
-            SET status = ?
+            SET status = ?, updated_at = ?, finished_at = COALESCE(?, finished_at)
             WHERE run_id = ?
             """,
-            (status, run_id),
+            (status, now, finished_at, run_id),
         )
         self._connection.commit()
 
@@ -346,7 +393,13 @@ class SQLiteRunStateStore:
                 config_hash,
                 policy_hash,
                 upstream_node_ids_json,
-                checkpoint_strategy
+                checkpoint_strategy,
+                required_artifacts_json,
+                produced_artifacts_json,
+                required_relations_json,
+                produced_relations_json,
+                artifact_contract,
+                cache_policy
             FROM graph_node
             WHERE run_id = ?
             ORDER BY node_id
@@ -370,6 +423,12 @@ class SQLiteRunStateStore:
                     policy_hash=row["policy_hash"],
                     upstream_node_ids=tuple(_loads_json(row["upstream_node_ids_json"], default=[])),
                     checkpoint_strategy=row["checkpoint_strategy"],
+                    required_artifacts=frozenset(_loads_json(row["required_artifacts_json"], default=[])),
+                    produced_artifacts=frozenset(_loads_json(row["produced_artifacts_json"], default=[])),
+                    required_relations=frozenset(_loads_json(row["required_relations_json"], default=[])),
+                    produced_relations=frozenset(_loads_json(row["produced_relations_json"], default=[])),
+                    artifact_contract=row["artifact_contract"],
+                    cache_policy=row["cache_policy"],
                 )
             )
         return nodes
@@ -387,9 +446,13 @@ class SQLiteRunStateStore:
                 label,
                 tags_json,
                 sample_size,
-                sample_rule_json
+                sample_rule_json,
+                cache_root,
+                started_at,
+                updated_at,
+                finished_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(run_id) DO UPDATE SET
                 cleaner_type = excluded.cleaner_type,
                 status = excluded.status,
@@ -398,7 +461,11 @@ class SQLiteRunStateStore:
                 label = excluded.label,
                 tags_json = excluded.tags_json,
                 sample_size = excluded.sample_size,
-                sample_rule_json = excluded.sample_rule_json
+                sample_rule_json = excluded.sample_rule_json,
+                cache_root = excluded.cache_root,
+                started_at = excluded.started_at,
+                updated_at = excluded.updated_at,
+                finished_at = excluded.finished_at
             """,
             (
                 run_record.run_id,
@@ -410,6 +477,10 @@ class SQLiteRunStateStore:
                 json.dumps(run_record.tags),
                 run_record.sample_size,
                 json.dumps(run_record.sample_rule) if run_record.sample_rule is not None else None,
+                run_record.cache_root,
+                run_record.started_at,
+                run_record.updated_at,
+                run_record.finished_at,
             ),
         )
         self._connection.commit()
@@ -480,7 +551,11 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             label TEXT NOT NULL,
             tags_json TEXT NOT NULL,
             sample_size INTEGER,
-            sample_rule_json TEXT
+            sample_rule_json TEXT,
+            cache_root TEXT,
+            started_at TEXT,
+            updated_at TEXT,
+            finished_at TEXT
         )
         """,
         """
@@ -498,6 +573,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             policy_hash TEXT NOT NULL,
             upstream_node_ids_json TEXT NOT NULL,
             checkpoint_strategy TEXT NOT NULL,
+            required_artifacts_json TEXT NOT NULL DEFAULT '[]',
+            produced_artifacts_json TEXT NOT NULL DEFAULT '[]',
+            required_relations_json TEXT NOT NULL DEFAULT '[]',
+            produced_relations_json TEXT NOT NULL DEFAULT '[]',
+            artifact_contract TEXT NOT NULL DEFAULT 'none',
+            cache_policy TEXT NOT NULL DEFAULT 'run',
             status TEXT,
             started_at TEXT,
             finished_at TEXT,
@@ -526,7 +607,12 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             node_id TEXT NOT NULL,
             stage_name TEXT NOT NULL,
             batch_id TEXT NOT NULL,
+            input_start INTEGER,
+            input_end INTEGER,
             row_count INTEGER NOT NULL,
+            error_count INTEGER NOT NULL DEFAULT 0,
+            attempt_count INTEGER NOT NULL DEFAULT 1,
+            artifact_id TEXT,
             status TEXT NOT NULL,
             started_at TEXT,
             finished_at TEXT,
@@ -541,6 +627,8 @@ def _create_schema(connection: sqlite3.Connection) -> None:
             run_id TEXT NOT NULL,
             artifact_id TEXT NOT NULL,
             artifact_type TEXT NOT NULL,
+            uri TEXT,
+            status TEXT NOT NULL DEFAULT 'committed',
             owner_node_id TEXT NOT NULL,
             schema_version INTEGER,
             schema_hash TEXT,

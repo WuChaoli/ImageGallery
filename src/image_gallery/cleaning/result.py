@@ -90,6 +90,7 @@ class CleanerResult:
     run_id: str
     _cache_root: Path
     _operator_preview_policies: dict[str, PreviewPolicy]
+    _dataset: Dataset | None
 
     def __init__(
         self,
@@ -97,6 +98,7 @@ class CleanerResult:
         cache_root: Path,
         *,
         operator_preview_policies: dict[str, PreviewPolicy] | None = None,
+        dataset: Dataset | None = None,
     ) -> None:
         """构造函数。"""
         object.__setattr__(self, "run_id", run_id)
@@ -106,19 +108,17 @@ class CleanerResult:
             "_operator_preview_policies",
             dict(operator_preview_policies or {}),
         )
+        object.__setattr__(self, "_dataset", dataset)
 
     def _run_dir(self) -> Path:
         """返回本次运行目录。"""
         return self._cache_root / self.run_id
 
     def _table_file(self, filename: str) -> Path:
-        """按新约定和兼容路径返回表文件。"""
+        """返回运行时 tables 目录中的表文件。"""
         table_path = self._run_dir() / "tables" / filename
-        legacy_path = self._run_dir() / filename
         if table_path.exists():
             return table_path
-        if legacy_path.exists():
-            return legacy_path
         raise FileNotFoundError(f"table file not found: {filename}")
 
     def _run_paths(self) -> CleanerRunPaths:
@@ -128,10 +128,11 @@ class CleanerResult:
             run_dir=run_dir,
             parameter_table_path=self._table_file("parameter_table.parquet"),
             evaluation_table_path=self._table_file("evaluation_table.parquet"),
-            operator_outputs_path=run_dir / "operator_outputs.yaml",
-            parameter_manifest_path=run_dir / "parameter_manifest.json",
+            operator_outputs_path=run_dir / "manifests" / "operator_outputs.json",
+            parameter_manifest_path=run_dir / "manifests" / "parameter_manifest.json",
             relations_dir=run_dir / "relations",
             artifacts_dir=run_dir / "artifacts",
+            manifests_dir=run_dir / "manifests",
             state_path=run_dir / "state.json",
         )
 
@@ -206,18 +207,20 @@ class CleanerResult:
         shutil.copy2(source, destination)
         return destination
 
-    def export_manifest(self, path: Path | str) -> Path:
-        """导出 operator_outputs + parameter_manifest 到给定路径。"""
+    def export_manifest(self, kind: str, path: Path | str) -> Path:
+        """导出指定的运行时 manifest 到给定路径。"""
+        normalized = kind.strip().lower()
+        if normalized not in {"execution_plan", "artifacts"}:
+            raise ValueError(f"unsupported manifest kind: {kind}")
+        source = self._run_dir() / "manifests" / f"{normalized}.json"
+        if not source.exists():
+            raise FileNotFoundError(f"manifest file missing: {normalized}")
         destination = Path(path)
-        payload = {
-            "operator_outputs": self._load_operator_outputs(),
-            "parameter_manifest": self._load_parameter_manifest(),
-        }
         destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        shutil.copy2(source, destination)
         return destination
 
-    def export_relation(self, relation_name: str, path: Path | str) -> Path:
+    def export_relations(self, relation_name: str, path: Path | str) -> Path:
         """把指定 relation 表复制到用户路径，不暴露内部运行目录。"""
         state_path = self._run_dir() / "state.json"
         if not state_path.exists():
@@ -235,18 +238,6 @@ class CleanerResult:
         shutil.copy2(source, destination)
         return destination
 
-    def export_relations(self, path: Path | str) -> Path:
-        """把全部 relation 表复制到用户目录。"""
-        destination = Path(path)
-        destination.mkdir(parents=True, exist_ok=True)
-        state_path = self._run_dir() / "state.json"
-        if not state_path.exists():
-            raise FileNotFoundError(f"state file missing: {state_path.name}")
-        state = JsonRunStateStore().load(state_path)
-        for relation_name in sorted(state.relation_paths):
-            self.export_relation(relation_name, destination / f"{relation_name}.parquet")
-        return destination
-
     def export_debug_bundle(self, path: Path | str) -> Path:
         """导出只读调试包，包含表、manifest、状态和 relation 副本。"""
         destination = Path(path)
@@ -256,8 +247,10 @@ class CleanerResult:
             for archive_name, source in (
                 ("tables/parameter_table.parquet", self._table_file("parameter_table.parquet")),
                 ("tables/evaluation_table.parquet", self._table_file("evaluation_table.parquet")),
-                ("operator_outputs.yaml", self._run_paths().operator_outputs_path),
-                ("parameter_manifest.json", self._run_paths().parameter_manifest_path),
+                ("manifests/operator_outputs.json", self._run_paths().operator_outputs_path),
+                ("manifests/parameter_manifest.json", self._run_paths().parameter_manifest_path),
+                ("manifests/execution_plan.json", run_dir / "manifests" / "execution_plan.json"),
+                ("manifests/artifacts.json", run_dir / "manifests" / "artifacts.json"),
                 ("state.json", run_dir / "state.json"),
             ):
                 if source.exists():
@@ -392,9 +385,11 @@ class CleanerResult:
         if resolved.sort_by:
             frame = frame.sort_values(by=resolved.sort_by, ascending=resolved.ascending, kind="mergesort")
 
-        dataset_frame = self._load_parameter_table()[["image_id", "image_uri"]]
-        dataset_path = self._run_dir() / "_result_preview_dataset.parquet"
-        dataset = Dataset.write(dataset_frame, str(dataset_path))
+        dataset = self._dataset
+        if dataset is None:
+            dataset_frame = self._load_parameter_table()[["image_id", "image_uri"]]
+            dataset_path = self._run_dir() / "_result_preview_dataset.parquet"
+            dataset = Dataset.write(dataset_frame, str(dataset_path))
         return write_preview_html(
             frame=frame.head(resolved_max_rows),
             path=path,

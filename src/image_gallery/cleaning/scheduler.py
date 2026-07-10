@@ -11,7 +11,13 @@ from image_gallery.cleaning.context import CleanerRunContext
 from image_gallery.cleaning.planner import ParameterExecutionPlan, ParameterExecutionStep
 from image_gallery.cleaning.runtime_state import SQLiteRunStateStore
 from image_gallery.cleaning.tables import CleaningTables, update_parameter_columns, write_relation_tables
-from image_gallery.operators.computers.base import ExecutionMode, ImageBatch, ImageBatchItem, ParameterRequest
+from image_gallery.operators.computers.base import (
+    ExecutionMode,
+    ImageBatch,
+    ImageBatchItem,
+    ParameterComputer,
+    ParameterRequest,
+)
 from image_gallery.operators.registry import OperatorRegistry
 
 
@@ -47,13 +53,14 @@ class ParameterScheduler:
         completed = completed_node_ids or set()
 
         for step in plan.steps:
-            node_id = f"parameter.{step.computer_name}"
-            if node_id in completed:
+            computer = self._registry.get_parameter_computer(step.computer_name)
+            node_ids = _parameter_node_ids(computer)
+            if all(node_id in completed for node_id in node_ids):
                 self._require_completed_step_outputs(step, current_tables)
                 continue
-            computer = self._registry.get_parameter_computer(step.computer_name)
             if state_store is not None:
-                state_store.record_node_started(node_id)
+                for node_id in node_ids:
+                    state_store.record_node_started(node_id)
             try:
                 result = computer.compute(
                     ParameterRequest(
@@ -83,10 +90,12 @@ class ParameterScheduler:
                 )
             except Exception:
                 if state_store is not None:
-                    state_store.record_node_failed(node_id)
+                    for node_id in node_ids:
+                        state_store.record_node_failed(node_id)
                 raise
             if state_store is not None:
-                state_store.record_node_completed(node_id)
+                for node_id in node_ids:
+                    state_store.record_node_completed(node_id)
 
         return ParameterScheduleResult(
             tables=current_tables,
@@ -170,3 +179,10 @@ class ParameterScheduler:
                 "created_at": created_at,
             }
             manifest_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _parameter_node_ids(computer: ParameterComputer) -> list[str]:
+    """返回 scheduler 需要更新的 graph node id 列表。"""
+    if computer.stages:
+        return [f"parameter.{computer.name}.{stage.name}" for stage in computer.stages]
+    return [f"parameter.{computer.name}"]

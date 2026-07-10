@@ -8,7 +8,13 @@ import pandas as pd
 from numpy.typing import NDArray
 from PIL import Image
 
-from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
+from image_gallery.operators.computers.base import (
+    ExecutionMode,
+    ParameterComputer,
+    ParameterRequest,
+    ParameterResult,
+    ParameterStageSpec,
+)
 from image_gallery.operators.semantic_provider import (
     SemanticEmbeddingProvider,
     SemanticEmbeddingResult,
@@ -179,6 +185,30 @@ class SemanticDuplicateGroupComputer(ParameterComputer):
         }
     )
     required_parameters = frozenset({SEMANTIC_EMBEDDING_REF})
+    stages = (
+        ParameterStageSpec(
+            name="read_embeddings",
+            required_artifacts=frozenset({"semantic_embeddings"}),
+            artifact_contract="semantic_embeddings",
+        ),
+        ParameterStageSpec(
+            name="build_index",
+            required_artifacts=frozenset({"semantic_embeddings"}),
+            produced_artifacts=frozenset({SEMANTIC_INDEX_ARTIFACT}),
+            artifact_contract="semantic_index",
+        ),
+        ParameterStageSpec(
+            name="find_pairs",
+            required_artifacts=frozenset({SEMANTIC_INDEX_ARTIFACT}),
+            artifact_contract="semantic_pairs",
+        ),
+        ParameterStageSpec(
+            name="write_relations",
+            required_artifacts=frozenset({SEMANTIC_INDEX_ARTIFACT}),
+            produced_relations=frozenset({"semantic_duplicate_pairs"}),
+            artifact_contract="semantic_duplicate_pairs",
+        ),
+    )
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """读取 embedding artifact，构建 Faiss index，并生成语义重复关系。"""

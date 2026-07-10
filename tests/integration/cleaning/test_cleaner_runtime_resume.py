@@ -204,7 +204,6 @@ def _build_semantic_execution(tmp_path: Path):
                 }
             }
         ],
-        output_dir=tmp_path / "cleaning",
         semantic_providers={"deterministic": DeterministicSemanticProvider()},
     ).compile()
 
@@ -272,7 +271,7 @@ def _perceptual_duplicate_registry() -> OperatorRegistry:
 @pytest.mark.parametrize("resume_mode", ["run_id", "result"])
 def test_resume_reuses_completed_run_by_run_id_or_result(tmp_path: Path, resume_mode: str) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
     result = execution.run(dataset)
     before = result.export("full", tmp_path / "before.parquet").to_frame()
 
@@ -299,7 +298,7 @@ def test_resume_rejects_dataset_fingerprint_mismatch(tmp_path: Path) -> None:
             }
         ),
     )
-    execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
     result = execution.run(dataset)
 
     with pytest.raises(ValueError, match="dataset fingerprint"):
@@ -308,11 +307,10 @@ def test_resume_rejects_dataset_fingerprint_mismatch(tmp_path: Path) -> None:
 
 def test_resume_rejects_plan_hash_mismatch(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    first_execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    first_execution = BasicCleaner([{"format.decode_check": {}}]).compile()
     result = first_execution.run(dataset)
     second_execution = BasicCleaner(
         [{"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}}],
-        output_dir=tmp_path / "cleaning",
     ).compile()
 
     with pytest.raises(ValueError, match="plan hash"):
@@ -321,7 +319,7 @@ def test_resume_rejects_plan_hash_mismatch(tmp_path: Path) -> None:
 
 def test_resume_rejects_sample_rule_mismatch(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
     result = execution.run(dataset, sample={"n": 1, "random_state": 1})
 
     with pytest.raises(ValueError, match="sample rule"):
@@ -332,7 +330,6 @@ def test_rerun_allows_evaluation_only_change(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
     execution = BasicCleaner(
         [{"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}}],
-        output_dir=tmp_path / "cleaning",
     ).compile()
     result = execution.run(dataset)
     before_parameters = result.export("parameters", tmp_path / "parameters-before.parquet").to_frame()
@@ -356,7 +353,6 @@ def test_rerun_rejects_parameter_computer_config_change(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
     execution = BasicCleaner(
         [{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}],
-        output_dir=tmp_path / "cleaning",
         registry=_perceptual_duplicate_registry(),
     ).compile()
     result = execution.run(dataset)
@@ -370,11 +366,10 @@ def test_resume_reuses_completed_parameter_node_for_unfinished_run(tmp_path: Pat
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
     execution = BasicCleaner(
         [{"test.counted_check": {}}],
-        output_dir=tmp_path / "cleaning",
         registry=_counting_registry(),
     ).compile()
     result = execution.run(dataset)
-    run_dir = (tmp_path / "cleaning") / result.run_id
+    run_dir = result._run_dir()
     _mark_run_as_partial(run_dir, result.run_id)
     before_resume_calls = CountingArtifactComputer.call_count
 
@@ -389,7 +384,7 @@ def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: P
     dataset = _build_semantic_dataset(tmp_path)
     execution = _build_semantic_execution(tmp_path)
     result = execution.run(dataset)
-    run_dir = (tmp_path / "cleaning") / result.run_id
+    run_dir = result._run_dir()
     stale_hash = "stale-config-hash"
 
     state_path = run_dir / "state.json"
@@ -398,7 +393,7 @@ def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: P
     state_payload["parameter_config_hashes"]["semantic_duplicate_group_computer"] = stale_hash
     _write_json(state_path, state_payload)
 
-    parameter_manifest_path = run_dir / "parameter_manifest.json"
+    parameter_manifest_path = run_dir / "manifests" / "parameter_manifest.json"
     parameter_manifest = json.loads(parameter_manifest_path.read_text(encoding="utf-8"))
     for parameter_name in (
         "semantic_embedding_ref",
@@ -425,10 +420,10 @@ def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: P
 
 def test_resume_rejects_missing_parameter_manifest_entry(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}], output_dir=tmp_path / "cleaning").compile()
+    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
     result = execution.run(dataset)
-    run_dir = (tmp_path / "cleaning") / result.run_id
-    manifest_path = run_dir / "parameter_manifest.json"
+    run_dir = result._run_dir()
+    manifest_path = run_dir / "manifests" / "parameter_manifest.json"
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest.pop("decode_error")
     _write_json(manifest_path, manifest)

@@ -53,6 +53,8 @@ def read_tables(paths: CleanerRunPaths) -> CleaningTables:
 def write_tables(tables: CleaningTables, paths: CleanerRunPaths) -> None:
     """把两张主表、operator_outputs 和 parameter_manifest 写入磁盘。"""
     paths.run_dir.mkdir(parents=True, exist_ok=True)
+    paths.parameter_table_path.parent.mkdir(parents=True, exist_ok=True)
+    paths.manifests_dir.mkdir(parents=True, exist_ok=True)
     paths.relations_dir.mkdir(parents=True, exist_ok=True)
     paths.artifacts_dir.mkdir(parents=True, exist_ok=True)
     tables.parameter_table.to_parquet(paths.parameter_table_path, index=False)

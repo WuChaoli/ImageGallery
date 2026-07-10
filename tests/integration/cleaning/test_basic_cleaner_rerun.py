@@ -22,7 +22,7 @@ def test_basic_cleaner_dimension_rerun_updates_evaluation_only_policy(tmp_path: 
         ]
     )
     execution = cleaner.compile()
-    result = execution.run(dataset, output_dir=tmp_path / "cleaning")
+    result = execution.run(dataset)
 
     assert result.preview().review_count == 1
     before_parameters = result.export("parameters", str(tmp_path / "parameters_before.parquet")).to_frame()

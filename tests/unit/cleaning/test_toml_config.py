@@ -50,3 +50,8 @@ name = "quality.blur_check"
 
     assert config.node_policy == NodePolicy()
     assert config.operator_policies == {}
+
+
+def test_cleaner_config_exposes_toml_but_not_yaml_config_entrypoint() -> None:
+    assert hasattr(CleanerConfig, "from_toml")
+    assert not hasattr(CleanerConfig, "from_yaml")

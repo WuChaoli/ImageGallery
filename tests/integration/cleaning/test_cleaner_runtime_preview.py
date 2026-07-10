@@ -23,7 +23,9 @@ def _run_for_operator_actions(tmp_path: Path) -> CleanerResult:
     """构造一个最小运行结果，包含操作列与 final_action 冲突的场景。"""
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
+    manifests_dir = run_dir / "manifests"
     tables_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
     first_image = _build_image(tmp_path / "first.png", (255, 0, 0))
     second_image = _build_image(tmp_path / "second.png", (0, 255, 0))
 
@@ -44,7 +46,7 @@ def _run_for_operator_actions(tmp_path: Path) -> CleanerResult:
             "image_uri": [first_image, second_image],
         }
     ).to_parquet(tables_dir / "parameter_table.parquet", index=False)
-    (run_dir / "operator_outputs.yaml").write_text(
+    (manifests_dir / "operator_outputs.json").write_text(
         json.dumps(
             {
                 "format.decode_check": ["decode_action", "decode_reason"],
@@ -53,7 +55,7 @@ def _run_for_operator_actions(tmp_path: Path) -> CleanerResult:
         ),
         encoding="utf-8",
     )
-    (run_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
+    (manifests_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
     return CleanerResult(run_id="run-1", cache_root=tmp_path)
 
 
@@ -120,7 +122,7 @@ def test_result_preview_html_uses_execution_preview_policies(tmp_path: Path) -> 
     )
 
     cleaner = BasicCleaner([{"format.decode_check": {}}], registry=custom_registry())
-    result = cleaner.run(dataset, output_dir=tmp_path / "cleaning")
+    result = cleaner.run(dataset)
     output = result.preview_html(
         tmp_path / "preview.html",
         operator_name="format.decode_check",

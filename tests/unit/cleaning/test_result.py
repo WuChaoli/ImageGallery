@@ -1,7 +1,9 @@
+import json
 import zipfile
 from pathlib import Path
 
 import pandas as pd
+import pytest
 
 from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.result import CleanerResult
@@ -29,6 +31,8 @@ def test_result_does_not_expose_work_dir() -> None:
 
     assert not hasattr(result, "cache_root")
     assert not hasattr(result, "work_dir")
+    assert not hasattr(result, "dataset")
+    assert not hasattr(result, "storage")
 
 
 def test_cleanup_does_not_remove_fallback_candidate_when_run_id_mismatch(tmp_path: Path) -> None:
@@ -94,8 +98,8 @@ def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path
         parameter_config_hashes={},
         parameter_table_path=str(tables_dir / "parameter_table.parquet"),
         evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
-        operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
-        parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+        operator_outputs_path=str(run_dir / "manifests" / "operator_outputs.json"),
+        parameter_manifest_path=str(run_dir / "manifests" / "parameter_manifest.json"),
         relation_paths={"dup_pairs": str(tables_dir / "relation.parquet")},
         artifact_paths={},
         started_at="",
@@ -112,12 +116,14 @@ def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path
     assert explanation["relation_names"] == ["dup_pairs"]
 
 
-def test_result_export_relation_writes_copy(tmp_path: Path) -> None:
+def test_result_export_relations_writes_copy(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     relations_dir = run_dir / "relations"
+    manifests_dir = run_dir / "manifests"
     tables_dir.mkdir(parents=True, exist_ok=True)
     relations_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"image_id": ["img-1"], "image_uri": ["/tmp/one.png"]}).to_parquet(
         tables_dir / "parameter_table.parquet",
         index=False,
@@ -144,8 +150,8 @@ def test_result_export_relation_writes_copy(tmp_path: Path) -> None:
             parameter_config_hashes={},
             parameter_table_path=str(tables_dir / "parameter_table.parquet"),
             evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
-            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
-            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            operator_outputs_path=str(run_dir / "manifests" / "operator_outputs.json"),
+            parameter_manifest_path=str(run_dir / "manifests" / "parameter_manifest.json"),
             relation_paths={"duplicate_pairs": str(relation_path)},
             artifact_paths={},
             started_at="",
@@ -157,18 +163,35 @@ def test_result_export_relation_writes_copy(tmp_path: Path) -> None:
     )
     result = CleanerResult(run_id="run-1", cache_root=tmp_path)
 
-    output = result.export_relation("duplicate_pairs", tmp_path / "exported_relation.parquet")
+    output = result.export_relations("duplicate_pairs", tmp_path / "exported_relation.parquet")
 
     assert output == tmp_path / "exported_relation.parquet"
     assert pd.read_parquet(output)["target_image_id"].tolist() == ["img-2"]
+
+
+def test_result_export_manifest_requires_named_manifest(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    manifests_dir = run_dir / "manifests"
+    manifests_dir.mkdir(parents=True)
+    (manifests_dir / "execution_plan.json").write_text('{"plan_hash": "abc"}', encoding="utf-8")
+    (manifests_dir / "artifacts.json").write_text('{"artifacts": []}', encoding="utf-8")
+    result = CleanerResult(run_id="run-1", cache_root=tmp_path)
+
+    exported = result.export_manifest("execution_plan", tmp_path / "plan.json")
+
+    assert json.loads(exported.read_text(encoding="utf-8")) == {"plan_hash": "abc"}
+    with pytest.raises(ValueError, match="unsupported manifest kind"):
+        result.export_manifest("parameter_manifest", tmp_path / "parameter.json")
 
 
 def test_result_export_relations_writes_directory(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     relations_dir = run_dir / "relations"
+    manifests_dir = run_dir / "manifests"
     tables_dir.mkdir(parents=True, exist_ok=True)
     relations_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
     relation_path = relations_dir / "duplicate_pairs.parquet"
     pd.DataFrame({"source_image_id": ["img-1"], "target_image_id": ["img-2"]}).to_parquet(
         relation_path,
@@ -184,8 +207,8 @@ def test_result_export_relations_writes_directory(tmp_path: Path) -> None:
             parameter_config_hashes={},
             parameter_table_path=str(tables_dir / "parameter_table.parquet"),
             evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
-            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
-            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            operator_outputs_path=str(run_dir / "manifests" / "operator_outputs.json"),
+            parameter_manifest_path=str(run_dir / "manifests" / "parameter_manifest.json"),
             relation_paths={"duplicate_pairs": str(relation_path)},
             artifact_paths={},
             started_at="",
@@ -197,18 +220,20 @@ def test_result_export_relations_writes_directory(tmp_path: Path) -> None:
     )
     result = CleanerResult(run_id="run-1", cache_root=tmp_path)
 
-    output_dir = result.export_relations(tmp_path / "relations_export")
+    output_path = result.export_relations("duplicate_pairs", tmp_path / "relations_export" / "duplicate_pairs.parquet")
 
-    assert output_dir == tmp_path / "relations_export"
-    assert pd.read_parquet(output_dir / "duplicate_pairs.parquet")["target_image_id"].tolist() == ["img-2"]
+    assert output_path == tmp_path / "relations_export" / "duplicate_pairs.parquet"
+    assert pd.read_parquet(output_path)["target_image_id"].tolist() == ["img-2"]
 
 
 def test_result_export_debug_bundle_writes_zip(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     relations_dir = run_dir / "relations"
+    manifests_dir = run_dir / "manifests"
     tables_dir.mkdir(parents=True, exist_ok=True)
     relations_dir.mkdir(parents=True, exist_ok=True)
+    manifests_dir.mkdir(parents=True, exist_ok=True)
     pd.DataFrame({"image_id": ["img-1"], "image_uri": ["/tmp/one.png"]}).to_parquet(
         tables_dir / "parameter_table.parquet",
         index=False,
@@ -217,8 +242,8 @@ def test_result_export_debug_bundle_writes_zip(tmp_path: Path) -> None:
         tables_dir / "evaluation_table.parquet",
         index=False,
     )
-    (run_dir / "operator_outputs.yaml").write_text("{}", encoding="utf-8")
-    (run_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
+    (manifests_dir / "operator_outputs.json").write_text("{}", encoding="utf-8")
+    (manifests_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
     relation_path = relations_dir / "duplicate_pairs.parquet"
     pd.DataFrame({"source_image_id": ["img-1"], "target_image_id": ["img-2"]}).to_parquet(
         relation_path,
@@ -234,8 +259,8 @@ def test_result_export_debug_bundle_writes_zip(tmp_path: Path) -> None:
             parameter_config_hashes={},
             parameter_table_path=str(tables_dir / "parameter_table.parquet"),
             evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
-            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
-            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            operator_outputs_path=str(run_dir / "manifests" / "operator_outputs.json"),
+            parameter_manifest_path=str(run_dir / "manifests" / "parameter_manifest.json"),
             relation_paths={"duplicate_pairs": str(relation_path)},
             artifact_paths={},
             started_at="",
@@ -257,7 +282,7 @@ def test_result_export_debug_bundle_writes_zip(tmp_path: Path) -> None:
     assert "relations/duplicate_pairs.parquet" in names
 
 
-def test_result_export_relation_rejects_unknown_relation(tmp_path: Path) -> None:
+def test_result_export_relations_rejects_unknown_relation(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"
     tables_dir.mkdir(parents=True, exist_ok=True)
@@ -271,8 +296,8 @@ def test_result_export_relation_rejects_unknown_relation(tmp_path: Path) -> None
             parameter_config_hashes={},
             parameter_table_path=str(tables_dir / "parameter_table.parquet"),
             evaluation_table_path=str(tables_dir / "evaluation_table.parquet"),
-            operator_outputs_path=str(run_dir / "operator_outputs.yaml"),
-            parameter_manifest_path=str(run_dir / "parameter_manifest.json"),
+            operator_outputs_path=str(run_dir / "manifests" / "operator_outputs.json"),
+            parameter_manifest_path=str(run_dir / "manifests" / "parameter_manifest.json"),
             relation_paths={},
             artifact_paths={},
             started_at="",
@@ -285,7 +310,7 @@ def test_result_export_relation_rejects_unknown_relation(tmp_path: Path) -> None
     result = CleanerResult(run_id="run-1", cache_root=tmp_path)
 
     try:
-        result.export_relation("missing", tmp_path / "missing.parquet")
+        result.export_relations("missing", tmp_path / "missing.parquet")
     except KeyError as error:
         assert "missing" in str(error)
     else:
@@ -314,11 +339,13 @@ def test_result_preview_html_applies_configured_operator_preview_policy(tmp_path
             "image_uri": ["/tmp/img-one.png", "/tmp/img-two.png"],
         }
     ).to_parquet(tables_dir / "parameter_table.parquet", index=False)
-    (run_dir / "operator_outputs.yaml").write_text(
+    manifests_dir = run_dir / "manifests"
+    manifests_dir.mkdir()
+    (manifests_dir / "operator_outputs.json").write_text(
         '{"custom.custom_check": ["custom_action", "custom_reason"]}',
         encoding="utf-8",
     )
-    (run_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
+    (manifests_dir / "parameter_manifest.json").write_text("{}", encoding="utf-8")
 
     result = CleanerResult(
         run_id="run-1",

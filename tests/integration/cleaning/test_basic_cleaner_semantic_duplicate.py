@@ -79,7 +79,6 @@ def _build_semantic_execution(tmp_path: Path):
                 }
             }
         ],
-        output_dir=tmp_path / "cleaning",
         semantic_providers={"deterministic": DeterministicSemanticProvider()},
     ).compile()
 
@@ -94,8 +93,8 @@ def test_basic_cleaner_runs_semantic_duplicate_with_injected_provider(tmp_path: 
     assert full.loc["near", "semantic_duplicate_action"] == "drop"
     assert full.loc["far", "semantic_duplicate_action"] == "keep"
 
-    run_dir = (tmp_path / "cleaning") / result.run_id
-    parameter_table = pd.read_parquet(run_dir / "parameter_table.parquet")
+    run_dir = result._run_dir()
+    parameter_table = pd.read_parquet(run_dir / "tables" / "parameter_table.parquet")
     assert "semantic_embedding_ref" in parameter_table.columns
     assert "semantic_duplicate_group_id" in parameter_table.columns
     assert (run_dir / "artifacts" / "semantic_embeddings" / "embeddings.npy").exists()
@@ -114,7 +113,7 @@ def test_resume_rejects_missing_semantic_embedding_manifest(tmp_path: Path) -> N
     dataset = _build_semantic_dataset(tmp_path)
     execution = _build_semantic_execution(tmp_path)
     result = execution.run(dataset)
-    run_dir = (tmp_path / "cleaning") / result.run_id
+    run_dir = result._run_dir()
     (run_dir / "artifacts" / "semantic_embeddings" / "manifest.json").unlink()
 
     with pytest.raises(FileNotFoundError, match="artifact manifest missing"):
@@ -125,7 +124,7 @@ def test_rerun_rejects_semantic_index_manifest_without_config_hash(tmp_path: Pat
     dataset = _build_semantic_dataset(tmp_path)
     execution = _build_semantic_execution(tmp_path)
     result = execution.run(dataset)
-    run_dir = (tmp_path / "cleaning") / result.run_id
+    run_dir = result._run_dir()
     manifest_path = run_dir / "artifacts" / "semantic_index" / "manifest.json"
     payload = json.loads(manifest_path.read_text(encoding="utf-8"))
     payload.pop("config_hash", None)

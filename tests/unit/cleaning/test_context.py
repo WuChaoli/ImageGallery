@@ -11,12 +11,13 @@ def test_build_run_paths_uses_stage3_output_contract(tmp_path: Path) -> None:
     paths = build_run_paths(tmp_path / "run-1")
 
     assert paths.run_dir == tmp_path / "run-1"
-    assert paths.parameter_table_path == tmp_path / "run-1" / "parameter_table.parquet"
-    assert paths.evaluation_table_path == tmp_path / "run-1" / "evaluation_table.parquet"
-    assert paths.operator_outputs_path == tmp_path / "run-1" / "operator_outputs.yaml"
-    assert paths.parameter_manifest_path == tmp_path / "run-1" / "parameter_manifest.json"
+    assert paths.parameter_table_path == tmp_path / "run-1" / "tables" / "parameter_table.parquet"
+    assert paths.evaluation_table_path == tmp_path / "run-1" / "tables" / "evaluation_table.parquet"
+    assert paths.operator_outputs_path == tmp_path / "run-1" / "manifests" / "operator_outputs.json"
+    assert paths.parameter_manifest_path == tmp_path / "run-1" / "manifests" / "parameter_manifest.json"
     assert paths.relations_dir == tmp_path / "run-1" / "relations"
     assert paths.artifacts_dir == tmp_path / "run-1" / "artifacts"
+    assert paths.manifests_dir == tmp_path / "run-1" / "manifests"
     assert paths.state_path == tmp_path / "run-1" / "state.json"
 
 

@@ -1,6 +1,7 @@
 from notebooks._helpers.cleaning_configs import (
     get_cleaning_v3_first_batch_operator_configs,
     get_cleaning_v3_light_risk_operator_configs,
+    get_cleaning_v3_non_semantic_all_operator_configs,
     get_cleaning_v3_quality_baseline_operator_configs,
     get_cleaning_v3_result_api_snippet,
     get_cleaning_v3_toml_examples,
@@ -46,6 +47,30 @@ def test_quality_baseline_operator_configs_include_low_risk_second_batch() -> No
 
 def test_light_risk_operator_configs_include_all_second_batch_operators() -> None:
     assert _operator_names(get_cleaning_v3_light_risk_operator_configs()) == [
+        "quality.exposure_check",
+        "content.border_padding_check",
+        "quality.noise_check",
+        "content.mono_color_check",
+        "format.animated_image_check",
+        "metadata.orientation_check",
+    ]
+
+
+def test_non_semantic_all_operator_configs_exclude_semantic_duplicate() -> None:
+    operator_names = _operator_names(get_cleaning_v3_non_semantic_all_operator_configs())
+
+    assert "duplicate.semantic_duplicate_check" not in operator_names
+    assert operator_names == [
+        "format.decode_check",
+        "size.dimension_check",
+        "size.aspect_ratio_check",
+        "size.megapixel_check",
+        "quality.blur_check",
+        "quality.brightness_check",
+        "quality.contrast_check",
+        "content.blank_image_check",
+        "duplicate.exact_duplicate_check",
+        "duplicate.perceptual_duplicate_check",
         "quality.exposure_check",
         "content.border_padding_check",
         "quality.noise_check",

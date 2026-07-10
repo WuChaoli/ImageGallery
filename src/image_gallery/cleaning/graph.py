@@ -1,5 +1,5 @@
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 
 import pandas as pd
@@ -27,6 +27,12 @@ class GraphNode:
     policy_hash: str
     upstream_node_ids: tuple[str, ...]
     checkpoint_strategy: str
+    required_artifacts: frozenset[str] = field(default_factory=frozenset)
+    produced_artifacts: frozenset[str] = field(default_factory=frozenset)
+    required_relations: frozenset[str] = field(default_factory=frozenset)
+    produced_relations: frozenset[str] = field(default_factory=frozenset)
+    artifact_contract: str = "none"
+    cache_policy: str = "run"
 
 
 @dataclass(frozen=True)
@@ -69,6 +75,12 @@ class CleaningStateGraph:
                     "config_hash": node.config_hash,
                     "policy_hash": node.policy_hash,
                     "checkpoint_strategy": node.checkpoint_strategy,
+                    "required_artifacts": sorted(node.required_artifacts),
+                    "produced_artifacts": sorted(node.produced_artifacts),
+                    "required_relations": sorted(node.required_relations),
+                    "produced_relations": sorted(node.produced_relations),
+                    "artifact_contract": node.artifact_contract,
+                    "cache_policy": node.cache_policy,
                 }
                 for node in self.nodes
             ]
@@ -296,12 +308,25 @@ def _hash_graph_nodes(nodes: tuple[GraphNode, ...]) -> str:
                 "policy_hash": node.policy_hash,
                 "upstream_node_ids": list(node.upstream_node_ids),
                 "checkpoint_strategy": node.checkpoint_strategy,
+                "required_artifacts": sorted(node.required_artifacts),
+                "produced_artifacts": sorted(node.produced_artifacts),
+                "required_relations": sorted(node.required_relations),
+                "produced_relations": sorted(node.produced_relations),
+                "artifact_contract": node.artifact_contract,
+                "cache_policy": node.cache_policy,
             }
             for node in nodes
         ]
     }
     payload_json = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return sha256(payload_json.encode("utf-8")).hexdigest()
+
+
+def _parameter_terminal_node_id(computer: ParameterComputer) -> str:
+    """返回某个 parameter computer 在图中的最终产物节点。"""
+    if computer.stages:
+        return f"parameter.{computer.name}.{computer.stages[-1].name}"
+    return f"parameter.{computer.name}"
 
 
 def compile_state_graph(
@@ -335,6 +360,45 @@ def compile_state_graph(
     for computer_name in ordered_computer_names:
         computer = registry.get_parameter_computer(computer_name)
         policy = parameter_node_policies[computer_name]
+        upstream_node_ids = tuple(
+            sorted(
+                _parameter_terminal_node_id(registry.get_parameter_computer(upstream))
+                for upstream in upstream_by_computer[computer_name]
+            )
+        )
+        if computer.stages:
+            previous_upstreams = upstream_node_ids
+            for index, stage in enumerate(computer.stages):
+                produced_parameters = (
+                    frozenset(computer.produced_parameters)
+                    if index == len(computer.stages) - 1
+                    else frozenset()
+                )
+                parameter_nodes.append(
+                    GraphNode(
+                        node_id=f"parameter.{computer_name}.{stage.name}",
+                        node_type="parameter",
+                        operator_name=None,
+                        computer_name=computer_name,
+                        stage_name=stage.name,
+                        execution_mode=computer.execution_mode,
+                        required_parameters=frozenset(computer.required_parameters) if index == 0 else frozenset(),
+                        produced_parameters=produced_parameters,
+                        config_hash=config_hash_by_computer.get(computer_name, "default"),
+                        policy_hash=_policy_hash(policy),
+                        upstream_node_ids=previous_upstreams,
+                        checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
+                        required_artifacts=stage.required_artifacts,
+                        produced_artifacts=stage.produced_artifacts,
+                        required_relations=stage.required_relations,
+                        produced_relations=stage.produced_relations,
+                        artifact_contract=stage.artifact_contract,
+                        cache_policy=stage.cache_policy,
+                    )
+                )
+                previous_upstreams = (f"parameter.{computer_name}.{stage.name}",)
+            continue
+
         parameter_nodes.append(
             GraphNode(
                 node_id=f"parameter.{computer_name}",
@@ -347,9 +411,7 @@ def compile_state_graph(
                 produced_parameters=frozenset(computer.produced_parameters),
                 config_hash=config_hash_by_computer.get(computer_name, "default"),
                 policy_hash=_policy_hash(policy),
-                upstream_node_ids=tuple(
-                    sorted(f"parameter.{upstream}" for upstream in upstream_by_computer[computer_name])
-                ),
+                upstream_node_ids=upstream_node_ids,
                 checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
             )
         )
@@ -360,7 +422,7 @@ def compile_state_graph(
         upstream: list[str] = []
         for parameter_name in sorted(configured.spec.required_parameters):
             computer = registry.get_parameter_producer(parameter_name)
-            upstream_node_id = f"parameter.{computer.name}"
+            upstream_node_id = _parameter_terminal_node_id(computer)
             if upstream_node_id not in upstream:
                 upstream.append(upstream_node_id)
         policy = operator_policies_by_operator[configured.spec.name]
