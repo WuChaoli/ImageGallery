@@ -20,6 +20,8 @@ uv venv .venv --python 3.10 --seed
 
 `uv venv .venv --python 3.10 --seed` 创建带 pip 的项目本地虚拟环境。`pip install -e ".[dev]"` 安装本地包和开发工具。`pytest` 运行测试套件。`ruff` 检查 lint 和 import 顺序。`mypy` 对包执行严格类型检查。运行和测试统一使用 `.venv/bin/python`。
 
+创建 git worktree 时，继续复用原仓库的 `.venv` 作为开发与验证环境，不要在 worktree 内重新创建独立虚拟环境。
+
 ## 编码风格与命名约定
 
 使用 Python 3.10、`src/` 布局、4 空格缩进，并保持 Google 风格的可读性。公开包名和代码命名使用英文与 snake_case。算子命名采用能力优先形式，例如 `quality.blur_check` 或 `duplicate.near_duplicate_check`；OpenCV、fastdup、CleanVision 等后端选择保持为内部实现细节。
@@ -39,6 +41,8 @@ Docstring 使用 Google Python 风格：第一行说明函数或类职责；必�
 ## 测试指南
 
 新增行为优先采用测试先行。单元测试应按包领域组织，例如 `tests/unit/storage/test_uri.py`。集成测试只在所需底层模块已经存在后覆盖端到端流程。每个模块都应包含小而确定的测试，用于验证错误处理和产物契约。
+
+测试和 Notebook 验证应优先复用 `notebooks/_helpers/` 中已有的路径、存储、数据集和清洗配置入口，避免在测试里重复编写项目根目录定位、MinIO 初始化、默认数据集加载或算子配置样板代码。测试功能行为需要使用真实数据集时，统一复用 `notebooks/_helpers/datasets.py` 提供的默认数据集加载入口，例如 `load_default_minio_sample_1000_dataset()` 或 `load_default_minio_sample_1000_frame()`；不要在测试或 Notebook 验证中临时自造一套功能测试数据集。
 
 ## 提交与 Pull Request 指南
 
