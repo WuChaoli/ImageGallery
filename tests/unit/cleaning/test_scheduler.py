@@ -180,4 +180,4 @@ def test_scheduler_executes_plan_and_merges_outputs(tmp_path: Path) -> None:
     assert result.tables.parameter_table["group_id"].tolist() == ["g1"]
     assert set(result.tables.parameter_manifest) == {"image_score", "table_score", "group_id"}
     assert result.artifact_paths == {"counting_image_computer": str(context.paths.artifacts_dir / "image")}
-    assert result.relation_paths["demo_pairs"].endswith("relations/demo_pairs.parquet")
+    assert result.relation_paths["demo_pairs"].replace("\\", "/").endswith("relations/demo_pairs.parquet")

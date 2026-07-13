@@ -270,7 +270,7 @@ def _parse_image_uri(image_uri: str) -> ParsedImageUri:
             bucket=parsed.netloc,
             object_path=unquote(object_path),
         )
-    if parsed.scheme in {"", "file"}:
+    if parsed.scheme in {"", "file"} or (len(parsed.scheme) == 1 and parsed.scheme.isalpha()):
         return ParsedImageUri(kind="local", image_uri=image_uri, local_path=file_image_uri_to_path(image_uri))
     raise ValueError(f"unsupported image_uri scheme: {parsed.scheme}")
 

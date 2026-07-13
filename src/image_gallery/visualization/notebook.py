@@ -113,7 +113,8 @@ def _render_caption(row: dict[str, Any], column: str) -> str:
 def _image_src(image_path: str) -> str:
     """把 image_uri/path 规范化为 HTML img 可用地址。"""
     parsed = urlparse(image_path)
-    if parsed.scheme:
+    # 排除 Windows 盘符被误解析为 scheme 的情况（如 C:\... 的 scheme 为 'c'）
+    if parsed.scheme and not (len(parsed.scheme) == 1 and parsed.scheme.isalpha()):
         return image_path
 
     path = Path(image_path).expanduser()

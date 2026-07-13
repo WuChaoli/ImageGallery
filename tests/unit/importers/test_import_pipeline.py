@@ -32,7 +32,7 @@ def test_import_pipeline_accepts_local_path_shortcut_and_writes_outputs(tmp_path
     managed_path = Path(raw_frame.iloc[0]["image_uri"])
     today = datetime.now().date().isoformat()
 
-    assert raw_frame["image_uri"].str.contains(str(tmp_path / "storage")).all()
+    assert raw_frame["image_uri"].str.contains(str(tmp_path / "storage"), regex=False).all()
     assert managed_path.name != "a.jpg"
     assert managed_path.suffix == ".jpg"
     uuid.UUID(managed_path.stem)

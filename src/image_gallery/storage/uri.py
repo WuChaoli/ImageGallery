@@ -25,13 +25,23 @@ def make_file_image_uri(root: str | Path, object_path: str) -> str:
     return str(resolve_object_path(root, object_path))
 
 
+def _is_windows_drive_scheme(scheme: str) -> bool:
+    """判断 urlparse 解析出的 scheme 是否为 Windows 盘符（如 'c'）。"""
+    return len(scheme) == 1 and scheme.isalpha()
+
+
 def file_image_uri_to_path(image_uri: str) -> Path:
     """把本地绝对路径或 file URI 规范化为 Path。"""
     parsed = urlparse(image_uri)
-    if parsed.scheme == "":
+    if parsed.scheme == "" or _is_windows_drive_scheme(parsed.scheme):
+        # 无 scheme 或单字母 scheme（Windows 盘符如 C:\...）均视为本地路径
         path = Path(image_uri)
     elif parsed.scheme == "file":
-        path = Path(unquote(parsed.path))
+        raw_path = unquote(parsed.path)
+        # Windows file URI: file:///C:/... -> 去掉前导 /
+        if len(raw_path) >= 3 and raw_path[0] == "/" and raw_path[2] == ":":
+            raw_path = raw_path[1:]
+        path = Path(raw_path)
     else:
         raise InvalidStorageUriError(f"unsupported file image_uri scheme: {parsed.scheme}")
     if not path.is_absolute():

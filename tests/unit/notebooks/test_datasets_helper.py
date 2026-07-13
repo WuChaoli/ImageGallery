@@ -52,5 +52,5 @@ def test_load_default_minio_sample_1000_dataset_requires_storage_backing() -> No
     except RuntimeError as exc:
         pytest.skip(f"sample_1000 storage settings unavailable: {exc}")
 
-    assert str(dataset.dataset_path).endswith("sample_1000/raw.parquet")
+    assert str(dataset.dataset_path).replace("\\", "/").endswith("sample_1000/raw.parquet")
     assert dataset.storage is not None
