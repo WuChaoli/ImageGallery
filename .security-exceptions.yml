@@ -1,0 +1,15 @@
+version: 1
+required-fields:
+  - id
+  - tool
+  - scope
+  - reason
+  - owner
+  - expires
+exceptions:
+  - id: gitleaks-historical-operator-config
+    tool: gitleaks
+    scope: e01c59272f925509cbbdd1d79d918606e1379a55:docs/superpowers/plans/2026-07-06-清洗v3第一批算子.md:generic-api-key:478
+    reason: 历史设计文档中的普通算子配置字符串被 generic-api-key 规则误判，不包含凭证
+    owner: WuChaoli
+    expires: 2026-10-14
