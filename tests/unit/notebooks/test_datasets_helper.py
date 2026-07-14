@@ -8,6 +8,8 @@ from notebooks._helpers.datasets import (
     load_default_minio_sample_1000_frame,
 )
 
+from image_gallery.storage.errors import StorageConnectionError
+
 
 def test_get_default_minio_sample_1000_raw_path_points_to_expected_location() -> None:
     expected = Path("datasets/sample_1000/raw.parquet")
@@ -21,7 +23,7 @@ def test_get_default_minio_sample_1000_raw_path_falls_back_to_main_checkout(
     main_root = tmp_path / "ImageGallery"
     worktree_root = main_root / ".worktrees" / "feature"
     worktree_root.mkdir(parents=True)
-    (worktree_root / "pyproject.toml").write_text("[project]\nname = \"image-gallery\"\n", encoding="utf-8")
+    (worktree_root / "pyproject.toml").write_text('[project]\nname = "image-gallery"\n', encoding="utf-8")
     main_dataset_path = main_root / "datasets" / "sample_1000" / "raw.parquet"
     main_dataset_path.parent.mkdir(parents=True)
     main_dataset_path.write_bytes(b"sample")
@@ -49,7 +51,7 @@ def test_load_default_minio_sample_1000_dataset_requires_storage_backing() -> No
 
     try:
         dataset = load_default_minio_sample_1000_dataset()
-    except RuntimeError as exc:
+    except (RuntimeError, StorageConnectionError) as exc:
         pytest.skip(f"sample_1000 storage settings unavailable: {exc}")
 
     assert str(dataset.dataset_path).replace("\\", "/").endswith("sample_1000/raw.parquet")

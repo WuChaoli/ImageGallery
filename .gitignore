@@ -12,3 +12,5 @@ __pycache__/
 notebooks/.importers_test_library/
 datasets/
 .qoder/
+.tmp/
+.serena/

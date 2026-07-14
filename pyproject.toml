@@ -14,9 +14,10 @@ authors = [
 dependencies = [
   "minio>=7.2",
   "numpy>=1.26",
-  "pandas>=2.2",
+  "pandas>=2.2,<2.3",
   "pyarrow>=15",
   "pillow>=10",
+  "pyyaml>=6.0",
   "requests>=2.31",
   "tomli>=2.0"
 ]
@@ -24,12 +25,18 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
+  "pytest-xdist>=3",
+  "pytest-socket>=0.7",
   "ruff>=0.5",
   "pyright>=1.1",
-  "pandas-stubs>=2.2"
+  "pandas-stubs>=2.2,<2.3",
+  "build>=1.5.1",
+  "pip-audit>=2.10.1",
+  "cyclonedx-bom>=7.3.0",
+  "zizmor>=1.27.0",
 ]
 semantic = [
-  "onnxruntime>=1.18",
+  "onnxruntime>=1.18,<1.24",
   "huggingface-hub>=0.24",
   "faiss-cpu>=1.8"
 ]
@@ -44,7 +51,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "."]
 
 [tool.ruff]
 line-length = 120
@@ -60,7 +67,6 @@ select = ["E", "F", "I", "UP", "B", "D101", "D102", "D103", "D205", "D300"]
 [tool.pyright]
 typeCheckingMode = "strict"
 reportMissingParameterType = "error"
-reportAny = "warning"
 reportUnknownVariableType = "none"
 reportUnknownArgumentType = "none"
 reportUnknownMemberType = "none"
@@ -70,5 +76,6 @@ reportMissingImports = "none"
 reportUnsupportedDunderAll = "none"
 reportMissingTypeStubs = "none"
 reportUnnecessaryIsInstance = "none"
+reportUnnecessaryCast = "none"
 reportUnknownLambdaType = "none"
 reportPrivateUsage = "warning"
