@@ -1,0 +1,7 @@
+interface:
+  display_name: "一键完成开发"
+  short_description: "归档 OpenSpec、同步文档、中文提交并完成分支收尾"
+  default_prompt: "Use $finish-development to archive the completed OpenSpec change, sync documentation, create a Chinese commit, and finish the branch."
+
+policy:
+  allow_implicit_invocation: false

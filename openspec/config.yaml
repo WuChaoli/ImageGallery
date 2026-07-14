@@ -11,7 +11,7 @@ context: |
     - Operators use capability-first naming (quality.blur_check, duplicate.exact_duplicate_check)
     - clean + dropped = full (merge policy)
     - Chinese comments, Google-style docstrings
-  Dev: uv venv, pytest, ruff, mypy
+  Dev: uv venv, pytest, ruff, pyright
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

@@ -54,22 +54,29 @@ Archive a completed change in the experimental workflow.
 
    **If no tasks file exists:** Proceed without task-related warning.
 
-4. **Assess delta spec sync state**
+4. **Synchronize delta specs**
 
-   Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed without sync prompt.
+   Use `artifactPaths.specs.existingOutputPaths` from status JSON to check for delta specs. If none exist, proceed to documentation convergence.
 
    **If delta specs exist:**
    - Compare each delta spec with its corresponding main spec at `openspec/specs/<capability>/spec.md`
    - Determine what changes would be applied (adds, modifications, removals, renames)
-   - Show a combined summary before prompting
+   - Show a combined summary
+   - If changes are needed, invoke `openspec-sync-specs` for the same change in the current agent and verify the resulting main specs
+   - If main specs are already synchronized, do not rewrite them
 
-   **Prompt options:**
-   - If changes needed: "Sync now (recommended)", "Archive without syncing"
-   - If already synced: "Archive now", "Sync anyway", "Cancel"
+   Main spec synchronization is mandatory in this repository. Do not offer an "archive without syncing" path.
 
-   If user chooses sync, use Task tool (subagent_type: "general-purpose", prompt: "Use Skill tool to invoke openspec-sync-specs for change '<name>'. Delta spec analysis: <include the analyzed delta spec summary>"). Proceed to archive regardless of choice.
+5. **Converge repository documentation**
 
-5. **Perform the archive**
+   Invoke the repo-local `sync-docs` skill with the same change name before moving the change directory. It must compare the change artifacts with the actual code and tests, then update or explicitly mark unchanged:
+   - root `AGENTS.md`
+   - affected module `AGENTS.md` files
+   - affected root or module `README.md` files
+
+   Require the structured `documentation_sync` result from `sync-docs`. If `blockers` is non-empty, stop and report them; do not archive. Warnings do not block archive, but include them in the final summary.
+
+6. **Perform the archive**
 
    Create an `archive` directory under `planningHome.changesDir` if it doesn't exist:
    ```bash
@@ -86,13 +93,14 @@ Archive a completed change in the experimental workflow.
    mv "<changeRoot>" "<planningHome.changesDir>/archive/YYYY-MM-DD-<name>"
    ```
 
-6. **Display summary**
+7. **Display summary**
 
    Show archive completion summary including:
    - Change name
    - Schema that was used
    - Archive location
    - Whether specs were synced (if applicable)
+   - Which AGENTS.md and README files were created, updated, or intentionally unchanged
    - Note about any warnings (incomplete artifacts/tasks)
 
 **Output On Success**
@@ -103,7 +111,8 @@ Archive a completed change in the experimental workflow.
 **Change:** <change-name>
 **Schema:** <schema-name>
 **Archived to:** the archive path derived from `planningHome.changesDir`/YYYY-MM-DD-<name>/
-**Specs:** ✓ Synced to main specs (or "No delta specs" or "Sync skipped")
+**Specs:** ✓ Synced to main specs (or "No delta specs")
+**Documentation:** ✓ Converged by `sync-docs`
 
 All artifacts complete. All tasks complete.
 ```
@@ -114,5 +123,6 @@ All artifacts complete. All tasks complete.
 - Don't block archive on warnings - just inform and confirm
 - Preserve .openspec.yaml when moving to archive (it moves with the directory)
 - Show clear summary of what happened
-- If sync is requested, use openspec-sync-specs approach (agent-driven)
-- If delta specs exist, always run the sync assessment and show the combined summary before prompting
+- If delta specs exist, always synchronize them with the agent-driven `openspec-sync-specs` approach
+- Always run `sync-docs` before moving the active change to the archive
+- Never archive while `sync-docs` reports documentation blockers

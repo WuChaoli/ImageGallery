@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-本仓库以 openspec 规范驱动开发。行为规范位于 `openspec/specs/`，最新设计规格和实现计划位于 `docs/superpowers/`。原始设计文档已备份至根目录 `docs-backup.tar.gz`。
+本仓库以 OpenSpec 规范驱动开发。`openspec/specs/` 表达当前已接受的产品行为，`openspec/changes/` 表达未来设计与实现状态。`docs/superpowers/` 已废弃，仅作历史参考；原始设计文档已备份至根目录 `docs-backup.tar.gz`。
 
 Python 包结构为 `src/image_gallery/`，按领域拆分如下：
 
@@ -21,6 +21,33 @@ src/image_gallery/
 ```
 
 **存储职责边界**：Parquet 存数据集，SQLite 存运行状态，Storage 存图片。测试应放在 `tests/unit/` 与 `tests/integration/`；示例和 Notebook 验证入口应放在 `examples/` 与 `notebooks/`。
+
+## 文档体系与权威性
+
+| 问题 | 权威来源 |
+|------|----------|
+| 产品当前承诺什么行为 | `openspec/specs/` |
+| 产品正在怎样变化 | `openspec/changes/` |
+| 当前实现实际上是什么 | 代码、类型和测试 |
+| AI 应如何修改仓库或模块 | 根目录与模块目录的 `AGENTS.md` |
+| 人如何安装和使用 | 根目录或模块目录的 `README.md` |
+| 旧设计为何如此 | `docs/superpowers/`、`docs-backup.tar.gz` 等历史归档 |
+
+根 `AGENTS.md` 只维护全仓库治理、全局边界和模块导航；模块 `AGENTS.md` 维护局部职责、推荐入口、关键契约、依赖边界和验证方法。不要在 AGENTS 中复制完整 API 签名、OpenSpec Scenario、测试矩阵或动态文件清单。
+
+开发完成后使用 `$finish-development` 一键执行验证、OpenSpec 归档、`$sync-docs` 文档收敛、中文 Git 提交和分支收尾。直接归档 OpenSpec 时，`openspec-archive-change` 也必须先调用 `sync-docs`。本仓库不使用通用 `codemap` 创建或维护 `docs/CODEMAPS.md`。
+
+## 开发生命周期
+
+仓库开发必须遵循以下闭环：
+
+1. **需求澄清**：先使用 `superpowers:brainstorming` 明确目标、范围、非目标、候选方案和成功标准，并取得用户对设计的确认。需要调查复杂代码现状、分析已有 change 或验证关键假设时，按需使用 `openspec-explore`；它不是每次开发的必经步骤。
+2. **OpenSpec 规划**：设计确认后使用 `openspec-propose` 创建 change；需求或设计变化时使用 `openspec-update-change`。`openspec/changes/<change>/` 是本轮开发目标、设计和任务状态的唯一来源。
+3. **Superpowers 开发**：以已确认的 OpenSpec change 为输入，使用 `openspec-apply-change` 推进 tasks，并按任务性质使用 Superpowers 的 TDD、系统调试、计划执行和完成前验证等开发技能。实现结果必须通过代码和测试证明，不能把 `docs/superpowers/` 的历史文档当作当前设计。
+4. **结束开发**：所有 artifacts、tasks、lint 和 test 完成后，显式调用 `$finish-development`。该入口负责同步 main specs、运行 `$sync-docs`、归档 change、创建中文 Git 提交，并进入 `finishing-a-development-branch` 的分支集成流程。
+5. **进入下一轮**：未完成或验证失败时返回当前 change 继续开发；归档和分支收尾完成后，新的需求重新从需求澄清开始。
+
+未取得 brainstorming 设计确认时不得调用 `openspec-propose`；未形成已确认的 OpenSpec change 时不得开始实现。不得跳过 OpenSpec 直接把临时想法实现为产品行为；不得在验证失败或文档尚未收敛时归档、提交或进入分支集成。
 
 ## 构建、测试与开发命令
 
@@ -55,7 +82,7 @@ uv run --group test pytest tests/unit/cleaning/test_specific.py
 
 ## 编码风格与命名约定
 
-使用 Python 3.10、`src/` 布局、4 空格缩进，并保持 Google 风格的可读性。公开包名和代码命名使用英文与 snake_case。算子命名采用能力优先形式，例如 `quality.blur_check` 或 `duplicate.near_duplicate_check`；OpenCV、fastdup、CleanVision 等后端选择保持为内部实现细节。
+使用 Python 3.10、`src/` 布局、4 空格缩进，并保持 Google 风格的可读性。公开包名和代码命名使用英文与 snake_case。内置算子命名采用能力短名形式，例如 `blur`、`dimension` 或 `semantic_duplicate`；OpenCV、fastdup、CleanVision 等后端选择保持为内部实现细节。
 
 除非相关开发计划明确要求，不要添加服务端 API、Web UI、分布式调度器或宽泛抽象。第一版代码应保持 local-first，以 Python package/API 为核心，并方便 Notebook 验证。
 
@@ -123,27 +150,26 @@ Docstring 使用 Google Python 风格：第一行说明函数或类职责；必�
 
 ### 提交信息（Commit）
 
-必须遵循 Conventional Commits 格式，scope 为必填项：
+提交标题必须使用中文 `<动作>：<总结>` 格式：
 
 ```text
-<type>(<scope>): <description>
+<动作>：<中文总结>
 ```
 
-**type**：`feat` | `fix` | `chore` | `refactor` | `test` | `docs` | `style`
+**动作**：`开发` | `修复` | `优化` | `测试` | `文档` | `维护`
 
-**scope**（可用值）：`storage` | `dataset` | `schemas` | `state` | `importers` | `cleaning` | `operators` | `visualization` | `reports` | `utils` | `infra` | `docs`
-
-- description 首字母小写（除非首词是专有名词如 `Azure`、`OpenAI` 或代码实体名）
-- 代码实体名（类、函数、参数）用反引号包裹，专有名词不包裹
+- 总结必须使用简体中文；代码实体名、库名和协议名可保留英文。
+- 标题应说明完成的结果，不写执行流水账。
+- 提交前必须审查 staged diff，不得混入与当前变更无关的用户修改。
 
 示例：
 
 ```text
-feat(cleaning): add resume from checkpoint support
-fix(storage): handle missing bucket on connect
-chore(cleaning): update test dependencies
-feat(operators): `ls_agent_type` tag on `create_agent` calls
-docs(infra): update development setup guide
+开发：增加清洗任务断点恢复能力
+修复：处理 Storage 连接时 bucket 不存在的问题
+优化：减少清洗运行时的内存占用
+测试：补充 Dataset 导出边界用例
+文档：同步清洗配方使用说明
 ```
 
 ### 分支命名
@@ -170,11 +196,11 @@ docs(infra): update development setup guide
 
 ## docs/ 文档状态
 
-行为规范以 `openspec/specs/` 为准。原始设计文档（PRD、架构、开发计划）已备份至 `docs-backup.tar.gz`。
+当前产品行为以 `openspec/specs/` 为准，活动设计和实现状态以 `openspec/changes/` 为准。原始设计文档（PRD、架构、开发计划）已备份至 `docs-backup.tar.gz`。
 
 | 目录 | 状态 | 说明 |
 |------|------|------|
-| `docs/superpowers/` | 参考 | 最新设计规格和实现计划，作为新开发参考 |
+| `docs/superpowers/` | 已废弃 | 仅保留历史设计记录，不得作为当前实现依据 |
 | `docs/testing/` | 参考 | 测试检查清单 |
 | `docs-backup.tar.gz` | 备份 | 包含原 `docs/prds/`、`docs/architecture/`、`docs/development/` 全部内容 |
 
