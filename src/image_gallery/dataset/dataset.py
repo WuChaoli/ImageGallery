@@ -159,7 +159,7 @@ class Dataset:
         required_columns = ["image_id", "image_uri"]
         selected_columns = required_columns if columns is None else [*required_columns, *columns]
         frame = self.to_frame(columns=_dedupe_columns(selected_columns))
-        for row in frame.to_dict(orient="records"):
+        for row in cast(list[dict[str, object]], frame.to_dict(orient="records")):
             yield DatasetImage(
                 image_id=str(row["image_id"]),
                 image_uri=str(row["image_uri"]),

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any, cast
 
 import pandas as pd
 
@@ -31,7 +32,7 @@ class DatasetParser:
             raise ValueError(f"missing image uri column: {self.image_uri_column}")
 
         records: list[SourceRecord] = []
-        for row in frame.to_dict("records"):
+        for row in cast(list[dict[str, object]], frame.to_dict("records")):
             image_uri = str(row[self.image_uri_column])
             source_value = row.get(self.source_uri_column)
             source_uri = image_uri if _is_empty_value(source_value) else str(source_value)
@@ -54,4 +55,4 @@ def _is_empty_value(value: object) -> bool:
         return True
     if isinstance(value, str):
         return value == ""
-    return bool(pd.isna(value))
+    return bool(pd.isna(cast(Any, value)))

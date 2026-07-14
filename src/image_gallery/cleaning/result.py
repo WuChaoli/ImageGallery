@@ -8,7 +8,7 @@ import sqlite3
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 
@@ -55,7 +55,7 @@ def _read_json_or_empty(path: Path, default: dict[str, object] | list[object]) -
 
 def _normalize_value(value: object) -> object:
     """将 Pandas 的缺失值转为空字符串，便于 HTML/JSON 输出。"""
-    if cast(bool, pd.isna(value)):
+    if cast(bool, pd.isna(cast(Any, value))):
         return ""
     return value
 

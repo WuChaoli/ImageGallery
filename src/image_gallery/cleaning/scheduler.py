@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 
 import pandas as pd
 from PIL import Image
@@ -118,7 +119,7 @@ class ParameterScheduler:
     def _build_image_batch(self, context: CleanerRunContext, tables: CleaningTables) -> ImageBatch:
         """统一读取和解码当前 parameter_table 中的图片。"""
         items: list[ImageBatchItem] = []
-        for row in tables.parameter_table.to_dict(orient="records"):
+        for row in cast(list[dict[str, object]], tables.parameter_table.to_dict(orient="records")):
             image_id = str(row["image_id"])
             image_uri = str(row["image_uri"])
             try:

@@ -1,4 +1,6 @@
-from typing import cast
+from __future__ import annotations
+
+from typing import Any, cast
 
 import pandas as pd
 
@@ -10,10 +12,10 @@ def validate_raw_dataset(frame: pd.DataFrame) -> None:
     missing = [column for column in RawDatasetSchema.required_columns if column not in frame.columns]
     if missing:
         raise ValueError(f"missing required raw dataset columns: {missing}")
-    _validate_tags(cast(pd.Series, frame["tags"]))
+    _validate_tags(cast("pd.Series[Any]", frame["tags"]))
 
 
-def _validate_tags(tags_series: pd.Series) -> None:
+def _validate_tags(tags_series: pd.Series[Any]) -> None:
     """校验层级 tags 列的最小结构，不维护合法标签字典。"""
     for row_index, tags in tags_series.items():
         if not isinstance(tags, (list, tuple)):

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import Protocol, cast, runtime_checkable
 
 import numpy as np
 from numpy.typing import NDArray
@@ -76,7 +76,7 @@ class OnnxDinoV2SmallProvider:
             embeddings = np.empty((0, self.embedding_dimension), dtype=np.float32)
         else:
             batch = np.stack([_preprocess_image(image) for image in images]).astype(np.float32)
-            output = self._session.run(None, {self._input_name: batch})[0]
+            output = cast(NDArray[np.float32], self._session.run(None, {self._input_name: batch})[0])
             embeddings = _l2_normalize(_extract_cls_embedding(output, self.embedding_dimension))
         return SemanticEmbeddingResult(
             embeddings=embeddings.astype(np.float32),

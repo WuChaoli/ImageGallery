@@ -1,6 +1,6 @@
 from html import escape
 from pathlib import Path
-from typing import Any, TypeAlias
+from typing import Any, TypeAlias, cast
 from urllib.parse import urlparse
 
 import pandas as pd
@@ -32,7 +32,7 @@ def render_image_grid(
 
     cards = [
         _render_card(row=row, image_column=image_column, caption_columns=captions, thumbnail_width=thumbnail_width)
-        for row in frame.to_dict("records")
+        for row in cast(list[dict[str, Any]], frame.to_dict("records"))
     ]
     grid_columns = _grid_columns(thumbnail_width=thumbnail_width, columns=columns)
     return (

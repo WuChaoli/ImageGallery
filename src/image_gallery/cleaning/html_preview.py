@@ -215,7 +215,8 @@ def _render_document(
 def _render_group(*, group: PreviewGroup, dataset: Dataset, options: PreviewHtmlOptions) -> str:
     """渲染单个预览分组。"""
     cards = "\n".join(
-        _render_card(row=row, dataset=dataset, options=options) for row in group.rows.to_dict(orient="records")
+        _render_card(row=row, dataset=dataset, options=options)
+        for row in cast(list[dict[str, Any]], group.rows.to_dict(orient="records"))
     )
     return (
         '<section class="group">'

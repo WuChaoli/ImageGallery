@@ -15,7 +15,7 @@ def evaluate_with_rules(
     metric_column: str,
     metric_spec: MetricSpec,
     rules: dict[str, ActionRange],
-) -> pd.Series:
+) -> pd.Series[str]:
     """按 drop > review > keep 优先级评估每行的动作。
 
     对 ``parameter_table`` 中的每一行，根据指标值和 ActionRange 规则确定动作。
@@ -52,7 +52,7 @@ def evaluate_with_rules(
         normalized = raw_values
 
     # 按优先级 drop > review 评估
-    actions = pd.Series("keep", index=parameter_table.index)
+    actions = cast("pd.Series[str]", pd.Series("keep", index=parameter_table.index))
     # 先评 review（低优先级），再评 drop（高优先级覆盖）
     for action_name in ("review", "drop"):
         if action_name in rules:

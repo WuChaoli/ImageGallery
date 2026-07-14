@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from numbers import Real
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from xml.etree import ElementTree
 
 import pandas as pd
@@ -58,7 +58,7 @@ class LabelImgExporter:
 
         image_count = 0
         annotation_count = 0
-        for row in frame.to_dict("records"):
+        for row in cast(list[dict[str, object]], frame.to_dict("records")):
             image_id = _require_non_empty(row["image_id"], "image_id")
             image_uri = _require_non_empty(row["image_uri"], "image_uri")
             width = _require_positive_int(row["width"], "width")
@@ -111,7 +111,7 @@ class LabelImgLoader:
         frame = dataset.to_frame()
         _require_columns(frame, ["image_id", "width", "height"])
 
-        rows_by_id = {str(row["image_id"]): index for index, row in frame.iterrows()}
+        rows_by_id = {str(row["image_id"]): cast("pd.Series[Any]", row) for _, row in frame.iterrows()}
         annotations_by_id: dict[str, list[dict[str, object]]] = {image_id: [] for image_id in rows_by_id}
         failures: list[dict[str, object]] = []
 
@@ -120,7 +120,7 @@ class LabelImgLoader:
             if image_id not in rows_by_id:
                 _record_or_raise(failures, self.strict, f"annotation xml has no matching image_id: {xml_path}")
                 continue
-            row = frame.loc[rows_by_id[image_id]]
+            row = rows_by_id[image_id]
             parsed = read_pascal_voc_xml(xml_path)
             width = _require_positive_int(row["width"], "width")
             height = _require_positive_int(row["height"], "height")
