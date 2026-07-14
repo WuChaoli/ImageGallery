@@ -43,6 +43,7 @@ class SemanticEmbeddingProvider(Protocol):
 
     def embed_images(self, images: list[Image.Image]) -> SemanticEmbeddingResult:
         """把图片批量转换为二维 embedding。"""
+        raise NotImplementedError
 
 
 class OnnxDinoV2SmallProvider:

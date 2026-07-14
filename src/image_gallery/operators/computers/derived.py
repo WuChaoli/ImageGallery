@@ -1,3 +1,5 @@
+from typing import cast
+
 import pandas as pd
 
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer, ParameterRequest, ParameterResult
@@ -14,9 +16,9 @@ class TableDerivedComputer(ParameterComputer):
         """生产本次请求的表派生参数。"""
         requested = set(request.requested_parameters)
         produced = requested & set(self.produced_parameters)
-        width = pd.to_numeric(request.parameter_table["width"], errors="coerce")
-        height = pd.to_numeric(request.parameter_table["height"], errors="coerce")
-        valid = width.notna() & height.notna() & (width > 0) & (height > 0)
+        width = cast(pd.Series, pd.to_numeric(request.parameter_table["width"], errors="coerce"))
+        height = cast(pd.Series, pd.to_numeric(request.parameter_table["height"], errors="coerce"))
+        valid = cast(pd.Series, width.notna() & height.notna() & (width > 0) & (height > 0))
 
         updates = pd.DataFrame({"image_id": request.parameter_table["image_id"]})
         if "aspect_ratio" in produced:

@@ -33,7 +33,7 @@ class MinioStorage(Storage):
         self._require_text(secret_key, "secret_key")
         self._require_text(bucket, "bucket")
         try:
-            client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)
+            client = Minio(endpoint, access_key=access_key, secret_key=secret_key, secure=secure)  # pyright: ignore[reportCallIssue]
             if not client.bucket_exists(bucket):
                 raise StorageConnectionError(f"bucket does not exist: {bucket}")
         except StorageConnectionError:

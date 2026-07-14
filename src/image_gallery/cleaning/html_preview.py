@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 from html import escape
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pandas as pd
 
@@ -67,16 +67,16 @@ def build_preview_frame(
     matched = evaluation_table.copy()
     if action is not None:
         _require_column(matched, "final_action", "action")
-        matched = matched[matched["final_action"] == action]
+        matched = cast(pd.DataFrame, matched[matched["final_action"] == action])
     for column, value in (filters or {}).items():
-        matched = matched[matched[column] == value]
+        matched = cast(pd.DataFrame, matched[matched[column] == value])
 
     if include_group_context:
         if groupby is None:
             raise ValueError("include_group_context requires groupby")
-        group_values = matched[groupby].dropna().astype(str)
-        group_values = group_values[group_values != ""].unique().tolist()
-        matched = evaluation_table[evaluation_table[groupby].astype(str).isin(group_values)].copy()
+        group_values = cast(pd.Series, matched[groupby]).dropna().astype(str)
+        group_values = cast(pd.Series, group_values[group_values != ""]).unique().tolist()
+        matched = cast(pd.DataFrame, evaluation_table[evaluation_table[groupby].astype(str).isin(group_values)].copy())
 
     if sort_by:
         matched = matched.sort_values(by=sort_by, ascending=ascending, kind="mergesort")
@@ -103,7 +103,7 @@ def build_preview_groups(
     _require_column(frame, groupby, "groupby")
     groups: list[PreviewGroup] = []
     for group_name, group_frame in frame.groupby(groupby, sort=False, dropna=False):
-        name = "" if pd.isna(group_name) else str(group_name)
+        name = "" if cast(bool, pd.isna(group_name)) else str(group_name)
         if not name:
             continue
         groups.append(

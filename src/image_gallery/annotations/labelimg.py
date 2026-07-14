@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from io import BytesIO
 from numbers import Real
 from pathlib import Path
+from typing import cast
 from xml.etree import ElementTree
 
 import pandas as pd
@@ -312,7 +313,7 @@ def _require_unique_non_empty_image_ids(frame: pd.DataFrame) -> None:
     for image_id in image_ids:
         if image_id == "":
             raise ValueError("image_id must not be empty")
-    duplicated = frame["image_id"][frame["image_id"].duplicated()]
+    duplicated = cast(pd.Series, frame["image_id"][frame["image_id"].duplicated()])
     if not duplicated.empty:
         raise ValueError(f"duplicate image_id in dataset export: {duplicated.iloc[0]}")
 
@@ -345,13 +346,14 @@ def _annotation_list(value: object) -> list[dict[str, object]]:
     """把 Dataset 单元格转换为标注列表。"""
     if _is_missing(value):
         return []
-    if hasattr(value, "tolist"):
-        value = value.tolist()
+    tolist = getattr(value, "tolist", None)
+    if callable(tolist):
+        value = cast(list[object], tolist())
     if isinstance(value, list | tuple):
         items = list(value)
         if not all(isinstance(item, dict) for item in items):
             raise ValueError(f"annotations must contain dict items: {value}")
-        return items
+        return cast(list[dict[str, object]], items)
     raise ValueError(f"annotations must be a list: {value}")
 
 

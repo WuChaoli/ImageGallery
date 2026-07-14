@@ -2,6 +2,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -219,7 +220,7 @@ class SemanticDuplicateGroupComputer(ParameterComputer):
 
         frame = request.parameter_table[["image_id", SEMANTIC_EMBEDDING_REF]].copy()
         image_ids = frame["image_id"].astype(str).tolist()
-        embedding_ref = _first_non_empty(frame[SEMANTIC_EMBEDDING_REF].fillna("").astype(str).tolist())
+        embedding_ref = _first_non_empty(cast(pd.Series, frame[SEMANTIC_EMBEDDING_REF]).fillna("").astype(str).tolist())
         if embedding_ref is None:
             return ParameterResult(
                 parameter_updates=_empty_semantic_updates(image_ids),

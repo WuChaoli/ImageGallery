@@ -1,3 +1,7 @@
+from typing import cast
+
+import pandas as pd
+
 from image_gallery.cleaning.tables import CleaningTables
 from image_gallery.dataset import Dataset
 
@@ -15,11 +19,11 @@ def export_cleaning_result(
     elif kind == "full":
         frame = tables.evaluation_table
     elif kind == "clean":
-        frame = tables.evaluation_table[tables.evaluation_table["final_action"] == "keep"]
+        frame = cast(pd.DataFrame, tables.evaluation_table[tables.evaluation_table["final_action"] == "keep"])
     elif kind == "review":
-        frame = tables.evaluation_table[tables.evaluation_table["final_action"] == "review"]
+        frame = cast(pd.DataFrame, tables.evaluation_table[tables.evaluation_table["final_action"] == "review"])
     elif kind == "dropped":
-        frame = tables.evaluation_table[tables.evaluation_table["final_action"] == "drop"]
+        frame = cast(pd.DataFrame, tables.evaluation_table[tables.evaluation_table["final_action"] == "drop"])
     else:
         raise ValueError(f"unsupported export kind: {kind}")
     return Dataset.write(frame.copy(), output_path)

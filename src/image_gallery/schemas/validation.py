@@ -1,3 +1,5 @@
+from typing import cast
+
 import pandas as pd
 
 from image_gallery.schemas.raw import RawDatasetSchema
@@ -8,7 +10,7 @@ def validate_raw_dataset(frame: pd.DataFrame) -> None:
     missing = [column for column in RawDatasetSchema.required_columns if column not in frame.columns]
     if missing:
         raise ValueError(f"missing required raw dataset columns: {missing}")
-    _validate_tags(frame["tags"])
+    _validate_tags(cast(pd.Series, frame["tags"]))
 
 
 def _validate_tags(tags_series: pd.Series) -> None:

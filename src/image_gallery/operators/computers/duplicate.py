@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import cast
 
 import pandas as pd
 
@@ -44,15 +45,18 @@ class DuplicateGroupComputer(ParameterComputer):
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产完全重复组参数和 pair relation。"""
-        frame = request.parameter_table[["image_id", "content_hash"]].copy()
-        valid_hash = frame["content_hash"].fillna("").astype(str) != ""
-        counts = frame.loc[valid_hash, "content_hash"].value_counts()
-        duplicate_hashes = {hash_value for hash_value, count in counts.items() if int(count) > 1}
+        frame = cast(pd.DataFrame, request.parameter_table[["image_id", "content_hash"]].copy())
+        valid_hash = cast(pd.Series, frame["content_hash"]).fillna("").astype(str) != ""
+        counts = cast(pd.Series, frame.loc[valid_hash, "content_hash"].value_counts())
+        duplicate_hashes = {
+            str(hash_value) for hash_value, count in counts.items()
+            if int(cast("int | float", count)) > 1
+        }
 
         rows: list[dict[str, object]] = []
-        for row in frame.to_dict(orient="records"):
+        for row in cast(list[dict[str, object]], frame.to_dict(orient="records")):
             content_hash = str(row.get("content_hash") or "")
-            count = int(counts.get(content_hash, 1)) if content_hash else 1
+            count = int(cast("int | float | None", counts.get(content_hash, 1)) or 1) if content_hash else 1
             group_id = f"exact-{content_hash}" if content_hash in duplicate_hashes else ""
             rows.append(
                 {
@@ -92,7 +96,7 @@ class PerceptualDuplicateGroupComputer(ParameterComputer):
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """生产视觉近重复组参数和 pair relation。"""
         max_distance = _as_int(request.config.get("max_distance", 10))
-        frame = request.parameter_table[["image_id", "phash"]].copy()
+        frame = cast(pd.DataFrame, request.parameter_table[["image_id", "phash"]].copy())
         group_rows, pair_rows = _build_perceptual_groups(frame, max_distance)
 
         return ParameterResult(

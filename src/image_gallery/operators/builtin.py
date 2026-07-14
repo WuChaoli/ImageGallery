@@ -1,4 +1,5 @@
 from dataclasses import replace
+from typing import cast
 
 import pandas as pd
 
@@ -379,9 +380,9 @@ def evaluate_dimension_check(parameter_table: pd.DataFrame, config: dict[str, ob
     min_width = _as_int(config.get("min_width", 1))
     min_height = _as_int(config.get("min_height", 1))
     action = str(config.get("action", "drop"))
-    widths = pd.to_numeric(parameter_table["width"], errors="coerce").fillna(0)
-    heights = pd.to_numeric(parameter_table["height"], errors="coerce").fillna(0)
-    failed = (widths < min_width) | (heights < min_height)
+    widths = cast(pd.Series, pd.to_numeric(parameter_table["width"], errors="coerce")).fillna(0)
+    heights = cast(pd.Series, pd.to_numeric(parameter_table["height"], errors="coerce")).fillna(0)
+    failed = cast(pd.Series, (widths < min_width) | (heights < min_height))
     return pd.DataFrame(
         {
             "image_id": parameter_table["image_id"],
@@ -396,8 +397,8 @@ def evaluate_aspect_ratio_check(parameter_table: pd.DataFrame, config: dict[str,
     min_ratio = _as_float(config.get("min_ratio", 0.2))
     max_ratio = _as_float(config.get("max_ratio", 5.0))
     action = str(config.get("action", "review"))
-    ratios = pd.to_numeric(parameter_table["aspect_ratio"], errors="coerce")
-    failed = ratios.notna() & ((ratios < min_ratio) | (ratios > max_ratio))
+    ratios = cast(pd.Series, pd.to_numeric(parameter_table["aspect_ratio"], errors="coerce"))
+    failed = cast(pd.Series, ratios.notna() & ((ratios < min_ratio) | (ratios > max_ratio)))
     return pd.DataFrame(
         {
             "image_id": parameter_table["image_id"],
@@ -416,10 +417,10 @@ def evaluate_megapixel_check(parameter_table: pd.DataFrame, config: dict[str, ob
     max_value = config.get("max_megapixels")
     max_megapixels = None if max_value is None else _as_float(max_value)
     action = str(config.get("action", "review"))
-    megapixels = pd.to_numeric(parameter_table["megapixels"], errors="coerce")
-    failed = megapixels.notna() & (megapixels < min_megapixels)
+    megapixels = cast(pd.Series, pd.to_numeric(parameter_table["megapixels"], errors="coerce"))
+    failed = cast(pd.Series, megapixels.notna() & (megapixels < min_megapixels))
     if max_megapixels is not None:
-        failed = failed | (megapixels.notna() & (megapixels > max_megapixels))
+        failed = cast(pd.Series, failed | (megapixels.notna() & (megapixels > max_megapixels)))
     return pd.DataFrame(
         {
             "image_id": parameter_table["image_id"],
@@ -434,10 +435,10 @@ def evaluate_blur_check(parameter_table: pd.DataFrame, config: dict[str, object]
     """根据 blur_score 生成模糊检查结果。"""
     min_score = _as_float(config.get("min_score", 100.0))
     action = str(config.get("action", "review"))
-    scores = pd.to_numeric(parameter_table["blur_score"], errors="coerce")
-    failed = scores.notna() & (scores < min_score)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["blur_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & (scores < min_score))
     return _score_threshold_frame(
-        parameter_table["image_id"], scores, failed, "blur", action, f"blur score below {min_score}"
+        cast(pd.Series, parameter_table["image_id"]), scores, failed, "blur", action, f"blur score below {min_score}"
     )
 
 
@@ -446,10 +447,10 @@ def evaluate_brightness_check(parameter_table: pd.DataFrame, config: dict[str, o
     min_score = _as_float(config.get("min_score", 30.0))
     max_score = _as_float(config.get("max_score", 225.0))
     action = str(config.get("action", "review"))
-    scores = pd.to_numeric(parameter_table["brightness_score"], errors="coerce")
-    failed = scores.notna() & ((scores < min_score) | (scores > max_score))
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["brightness_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & ((scores < min_score) | (scores > max_score)))
     return _score_threshold_frame(
-        parameter_table["image_id"],
+        cast(pd.Series, parameter_table["image_id"]),
         scores,
         failed,
         "brightness",
@@ -462,10 +463,11 @@ def evaluate_contrast_check(parameter_table: pd.DataFrame, config: dict[str, obj
     """根据 contrast_score 生成对比度检查结果。"""
     min_score = _as_float(config.get("min_score", 10.0))
     action = str(config.get("action", "review"))
-    scores = pd.to_numeric(parameter_table["contrast_score"], errors="coerce")
-    failed = scores.notna() & (scores < min_score)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["contrast_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & (scores < min_score))
     return _score_threshold_frame(
-        parameter_table["image_id"], scores, failed, "contrast", action, f"contrast score below {min_score}"
+        cast(pd.Series, parameter_table["image_id"]), scores, failed, "contrast", action,
+        f"contrast score below {min_score}"
     )
 
 
@@ -473,10 +475,11 @@ def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, 
     """根据 blank_score 生成空白图检查结果。"""
     threshold = _as_float(config.get("threshold", 0.98))
     action = str(config.get("action", "drop"))
-    scores = pd.to_numeric(parameter_table["blank_score"], errors="coerce")
-    failed = scores.notna() & (scores >= threshold)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["blank_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & (scores >= threshold))
     return _score_threshold_frame(
-        parameter_table["image_id"], scores, failed, "blank", action, f"blank score at least {threshold}"
+        cast(pd.Series, parameter_table["image_id"]), scores, failed, "blank", action,
+        f"blank score at least {threshold}"
     )
 
 
@@ -486,10 +489,10 @@ def evaluate_exposure_check(parameter_table: pd.DataFrame, config: dict[str, obj
     max_bright = _as_float(config.get("max_bright_pixel_ratio", 0.95))
     max_clipped = _as_float(config.get("max_clipped_pixel_ratio", 0.98))
     action = str(config.get("action", "review"))
-    dark = pd.to_numeric(parameter_table["dark_pixel_ratio"], errors="coerce")
-    bright = pd.to_numeric(parameter_table["bright_pixel_ratio"], errors="coerce")
-    clipped = pd.to_numeric(parameter_table["clipped_pixel_ratio"], errors="coerce")
-    failed = (dark > max_dark) | (bright > max_bright) | (clipped > max_clipped)
+    dark = cast(pd.Series, pd.to_numeric(parameter_table["dark_pixel_ratio"], errors="coerce"))
+    bright = cast(pd.Series, pd.to_numeric(parameter_table["bright_pixel_ratio"], errors="coerce"))
+    clipped = cast(pd.Series, pd.to_numeric(parameter_table["clipped_pixel_ratio"], errors="coerce"))
+    failed = cast(pd.Series, (dark > max_dark) | (bright > max_bright) | (clipped > max_clipped))
     reasons = [
         _exposure_reason(dark_value, bright_value, clipped_value, max_dark, max_bright, max_clipped)
         if failed_value
@@ -514,10 +517,10 @@ def evaluate_noise_check(parameter_table: pd.DataFrame, config: dict[str, object
     """根据 noise_score 生成噪声检查结果。"""
     max_score = _as_float(config.get("max_score", 0.75))
     action = str(config.get("action", "review"))
-    scores = pd.to_numeric(parameter_table["noise_score"], errors="coerce")
-    failed = scores.notna() & (scores > max_score)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["noise_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & (scores > max_score))
     return _score_threshold_frame(
-        parameter_table["image_id"], scores, failed, "noise", action, f"noise score above {max_score}"
+        cast(pd.Series, parameter_table["image_id"]), scores, failed, "noise", action, f"noise score above {max_score}"
     )
 
 
@@ -525,10 +528,10 @@ def evaluate_mono_color_check(parameter_table: pd.DataFrame, config: dict[str, o
     """根据 mono_color_score 生成近单色检查结果。"""
     threshold = _as_float(config.get("threshold", 0.98))
     action = str(config.get("action", "review"))
-    scores = pd.to_numeric(parameter_table["mono_color_score"], errors="coerce")
-    failed = scores.notna() & (scores >= threshold)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["mono_color_score"], errors="coerce"))
+    failed = cast(pd.Series, scores.notna() & (scores >= threshold))
     return _score_threshold_frame(
-        parameter_table["image_id"],
+        cast(pd.Series, parameter_table["image_id"]),
         scores,
         failed,
         "mono_color",
@@ -543,11 +546,12 @@ def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[st
     raw_colors = config.get("colors", ["white", "black", "solid"])
     colors = {str(color) for color in raw_colors} if isinstance(raw_colors, (list, tuple, set)) else {str(raw_colors)}
     action = str(config.get("action", "review"))
-    ratios = pd.to_numeric(parameter_table["border_padding_ratio"], errors="coerce")
+    ratios = cast(pd.Series, pd.to_numeric(parameter_table["border_padding_ratio"], errors="coerce"))
     sides = parameter_table["border_padding_sides"].fillna("").astype(str)
     border_colors = parameter_table["border_padding_color"].fillna("unknown").astype(str)
     side_counts = sides.map(lambda value: 0 if not value else len(value.split(",")))
-    failed = ratios.notna() & (ratios > max_ratio) & (side_counts > 0) & border_colors.isin(colors)
+    failed = cast(pd.Series, ratios.notna() & (ratios > max_ratio) & (side_counts > 0)
+               & border_colors.isin(list(colors)))
     reasons = [
         f"border padding ratio above {max_ratio} sides={side_value} color={color_value}" if failed_value else ""
         for side_value, color_value, failed_value in zip(
@@ -569,7 +573,7 @@ def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[st
 def evaluate_animated_image_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 animated 标记生成多帧图片检查结果。"""
     action = str(config.get("action", "review"))
-    frame_count = pd.to_numeric(parameter_table["frame_count"], errors="coerce")
+    frame_count = cast(pd.Series, pd.to_numeric(parameter_table["frame_count"], errors="coerce"))
     animated = parameter_table["animated"].fillna(False).astype(bool)
     return pd.DataFrame(
         {
@@ -585,7 +589,7 @@ def evaluate_animated_image_check(parameter_table: pd.DataFrame, config: dict[st
 def evaluate_orientation_check(parameter_table: pd.DataFrame, config: dict[str, object]) -> pd.DataFrame:
     """根据 EXIF orientation 风险生成方向检查结果。"""
     action = str(config.get("action", "review"))
-    orientations = pd.to_numeric(parameter_table["exif_orientation"], errors="coerce")
+    orientations = cast(pd.Series, pd.to_numeric(parameter_table["exif_orientation"], errors="coerce"))
     risk = parameter_table["orientation_risk"].fillna(False).astype(bool)
     return pd.DataFrame(
         {
@@ -608,7 +612,8 @@ def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[s
         raise ValueError("duplicate.exact_duplicate_check only supports keep='first'")
     action = str(config.get("action", "drop"))
     groups = parameter_table["exact_duplicate_group_id"].fillna("").astype(str)
-    counts = pd.to_numeric(parameter_table["exact_duplicate_count"], errors="coerce").fillna(1).astype(int)
+    counts = cast(pd.Series, pd.to_numeric(parameter_table["exact_duplicate_count"],
+                     errors="coerce")).fillna(1).astype(int)
 
     seen_groups: set[str] = set()
     actions: list[str] = []
@@ -647,8 +652,9 @@ def evaluate_perceptual_duplicate_check(parameter_table: pd.DataFrame, config: d
         raise ValueError("duplicate.perceptual_duplicate_check only supports action='drop'")
 
     groups = parameter_table["perceptual_duplicate_group_id"].fillna("").astype(str)
-    counts = pd.to_numeric(parameter_table["perceptual_duplicate_count"], errors="coerce").fillna(1).astype(int)
-    distances = pd.to_numeric(parameter_table["perceptual_duplicate_distance"], errors="coerce")
+    counts = cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_count"],
+                     errors="coerce")).fillna(1).astype(int)
+    distances = cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_distance"], errors="coerce"))
 
     seen_groups: set[str] = set()
     actions: list[str] = []
@@ -688,8 +694,9 @@ def evaluate_semantic_duplicate_check(parameter_table: pd.DataFrame, config: dic
         raise ValueError("duplicate.semantic_duplicate_check only supports action='drop' or action='review'")
 
     groups = parameter_table["semantic_duplicate_group_id"].fillna("").astype(str)
-    counts = pd.to_numeric(parameter_table["semantic_duplicate_count"], errors="coerce").fillna(1).astype(int)
-    scores = pd.to_numeric(parameter_table["semantic_duplicate_score"], errors="coerce")
+    counts = cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_count"],
+                     errors="coerce")).fillna(1).astype(int)
+    scores = cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_score"], errors="coerce"))
     nearest_ids = parameter_table["semantic_duplicate_nearest_image_id"].fillna("").astype(str)
 
     seen_groups: set[str] = set()

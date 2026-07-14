@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from typing import cast
 
 import pandas as pd
 
@@ -32,7 +33,7 @@ class OperatorSpec:
         missing_columns = [column for column in required_columns if column not in result.columns]
         if missing_columns:
             raise ValueError(f"missing evaluation columns for {self.name}: {missing_columns}")
-        return result[required_columns].copy()
+        return cast(pd.DataFrame, result[required_columns]).copy()
 
 
 @dataclass(frozen=True)

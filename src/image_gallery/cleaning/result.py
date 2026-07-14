@@ -55,7 +55,7 @@ def _read_json_or_empty(path: Path, default: dict[str, object] | list[object]) -
 
 def _normalize_value(value: object) -> object:
     """将 Pandas 的缺失值转为空字符串，便于 HTML/JSON 输出。"""
-    if pd.isna(value):
+    if cast(bool, pd.isna(value)):
         return ""
     return value
 
@@ -360,12 +360,12 @@ class CleanerResult:
         if filters is not None:
             for column, value in filters.items():
                 if column in frame.columns:
-                    frame = frame[frame[column] == value]
+                    frame = cast(pd.DataFrame, frame[frame[column] == value])
 
         if action_column is not None and not resolved.include_all_actions:
-            frame = frame[frame[action_column].isin(resolved.actions)]
+            frame = cast(pd.DataFrame, frame[cast(pd.Series, frame[action_column]).isin(resolved.actions)])
         elif not resolved.include_all_actions:
-            frame = frame[frame["final_action"].isin(resolved.actions)]
+            frame = cast(pd.DataFrame, frame[cast(pd.Series, frame["final_action"]).isin(resolved.actions)])
 
         options = PreviewHtmlOptions(
             action=None,
@@ -383,15 +383,15 @@ class CleanerResult:
             operator_name=operator_name,
         )
         if resolved.sort_by:
-            frame = frame.sort_values(by=resolved.sort_by, ascending=resolved.ascending, kind="mergesort")
+            frame = frame.sort_values(by=resolved.sort_by, ascending=resolved.ascending, kind="mergesort")  # pyright: ignore[reportCallIssue]
 
         dataset = self._dataset
         if dataset is None:
-            dataset_frame = self._load_parameter_table()[["image_id", "image_uri"]]
+            dataset_frame = cast(pd.DataFrame, self._load_parameter_table()[["image_id", "image_uri"]])
             dataset_path = self._run_dir() / "_result_preview_dataset.parquet"
             dataset = Dataset.write(dataset_frame, str(dataset_path))
         return write_preview_html(
-            frame=frame.head(resolved_max_rows),
+            frame=cast(pd.DataFrame, frame.head(resolved_max_rows)),
             path=path,
             dataset=dataset,
             options=options,
@@ -417,7 +417,7 @@ class CleanerResult:
             for column in ["image_id", "image_uri", *operator_outputs[operator_name]]
             if column in table.columns
         ]
-        return table[columns].copy()
+        return cast(pd.DataFrame, table[columns]).copy()
 
     def explain(self, image_id: str) -> dict[str, object]:
         """返回单图解释信息。"""

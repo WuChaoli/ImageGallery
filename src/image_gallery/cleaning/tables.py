@@ -1,5 +1,6 @@
 import json
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 
@@ -25,13 +26,13 @@ def initialize_parameter_table(dataset: Dataset) -> pd.DataFrame:
     columns = ["image_id", "image_uri"]
     if "source_uri" in frame.columns:
         columns.append("source_uri")
-    return frame[columns].copy()
+    return cast(pd.DataFrame, frame[columns]).copy()
 
 
 def initialize_evaluation_table(parameter_table: pd.DataFrame) -> pd.DataFrame:
     """从 parameter_table 初始化 evaluation_table 的基础列。"""
     _require_columns(parameter_table, ["image_id", "image_uri"])
-    evaluation_table = parameter_table[["image_id", "image_uri"]].copy()
+    evaluation_table = cast(pd.DataFrame, parameter_table[["image_id", "image_uri"]].copy())
     evaluation_table["final_action"] = "keep"
     evaluation_table["final_reason"] = ""
     evaluation_table["triggered_operator_names"] = ""
@@ -116,7 +117,7 @@ def update_evaluation_columns(
     for column in output_columns:
         if column not in prepared_updates.columns:
             prepared_updates[column] = pd.NA
-    return result.merge(prepared_updates[[key, *output_columns]], on=key, how="left")
+    return result.merge(cast(pd.DataFrame, prepared_updates[[key, *output_columns]]), on=key, how="left")
 
 
 def update_operator_outputs(

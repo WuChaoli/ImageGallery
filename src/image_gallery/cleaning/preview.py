@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import cast
 
 import pandas as pd
 
@@ -86,14 +87,14 @@ def _build_operator_summary(
     """按算子 action 列生成命中摘要。"""
     rows: list[dict[str, object]] = []
     for operator_name, action_column, _ in _action_specs(operator_outputs):
-        counts = evaluation_table[action_column].fillna("").map(_normalize_action).value_counts()
+        counts = cast(pd.Series, evaluation_table[action_column].fillna("").map(_normalize_action).value_counts())
         rows.append(
             {
                 "operator_name": operator_name,
-                "keep": int(counts.get("keep", 0)),
-                "review": int(counts.get("review", 0)),
-                "drop": int(counts.get("drop", 0)),
-                "restricted": int(counts.get("restricted", 0)),
+                "keep": int(cast("int | float | None", counts.get("keep", 0)) or 0),
+                "review": int(cast("int | float | None", counts.get("review", 0)) or 0),
+                "drop": int(cast("int | float | None", counts.get("drop", 0)) or 0),
+                "restricted": int(cast("int | float | None", counts.get("restricted", 0)) or 0),
             }
         )
     return pd.DataFrame(rows, columns=["operator_name", "keep", "review", "drop", "restricted"])

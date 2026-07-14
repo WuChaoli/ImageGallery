@@ -2,6 +2,7 @@ from collections.abc import Iterable, Iterator
 from dataclasses import dataclass, field
 from io import BytesIO
 from pathlib import Path
+from typing import cast
 from urllib.parse import unquote, urlparse
 
 import pandas as pd
@@ -104,7 +105,7 @@ class Dataset:
         # frame 是从磁盘读取出来的内存 DataFrame，后续筛选都基于它完成。
         frame = _read_frame(self.dataset_path, self.format)
         if columns is not None:
-            return frame[columns]
+            return cast(pd.DataFrame, frame[columns])
         return frame
 
     def read_image_bytes(self, image_uri: str) -> bytes:
@@ -173,9 +174,9 @@ class Dataset:
         if filters:
             for column, value in filters.items():
                 # column 是待过滤字段，value 是该字段必须匹配的目标值。
-                frame = frame[frame[column] == value]
+                frame = cast(pd.DataFrame, frame[frame[column] == value])
         if columns is not None:
-            return frame[columns]
+            return cast(pd.DataFrame, frame[columns])
         return frame
 
     def preview(self, limit: int = 100) -> pd.DataFrame:
