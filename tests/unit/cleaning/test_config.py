@@ -8,11 +8,11 @@ def test_parse_operator_configs_accepts_single_operator_items() -> None:
     parsed = parse_operator_configs(
         [
             {"quality.demo_check": {"threshold": 80, "action": "drop"}},
-            {"size.dimension_check": {}},
+            {"dimension": {}},
         ]
     )
 
-    assert [item.operator_name for item in parsed] == ["quality.demo_check", "size.dimension_check"]
+    assert [item.operator_name for item in parsed] == ["quality.demo_check", "dimension"]
     assert parsed[0].config == {"threshold": 80, "action": "drop"}
     assert parsed[1].config == {}
     assert len(parsed[0].config_hash) == 64

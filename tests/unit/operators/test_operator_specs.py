@@ -50,9 +50,7 @@ def test_operator_spec_evaluate_returns_declared_columns() -> None:
 
     result = spec.evaluate(pd.DataFrame({"image_id": ["img-1"], "demo_score": [1.0]}), {"action": "drop"})
 
-    assert result.to_dict(orient="records") == [
-        {"image_id": "img-1", "demo_action": "drop", "demo_reason": "ok"}
-    ]
+    assert result.to_dict(orient="records") == [{"image_id": "img-1", "demo_action": "drop", "demo_reason": "ok"}]
 
 
 def test_operator_spec_rejects_missing_declared_output_columns() -> None:

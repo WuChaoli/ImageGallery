@@ -42,7 +42,7 @@ def _builtin_specs() -> list[OperatorSpec]:
     """返回第一批 v3 内置逻辑算子规格。"""
     specs = [
         OperatorSpec(
-            name="format.decode_check",
+            name="decode",
             category="format",
             required_parameters=["decode_ok", "decode_error"],
             evaluation_columns=["decode_action", "decode_reason"],
@@ -52,7 +52,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_decode_check,
         ),
         OperatorSpec(
-            name="size.dimension_check",
+            name="dimension",
             category="size",
             required_parameters=["width", "height"],
             evaluation_columns=["dimension_action", "dimension_reason"],
@@ -62,7 +62,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_dimension_check,
         ),
         OperatorSpec(
-            name="size.aspect_ratio_check",
+            name="aspect_ratio",
             category="size",
             required_parameters=["aspect_ratio"],
             evaluation_columns=["aspect_ratio", "aspect_ratio_action", "aspect_ratio_reason"],
@@ -72,7 +72,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_aspect_ratio_check,
         ),
         OperatorSpec(
-            name="size.megapixel_check",
+            name="megapixel",
             category="size",
             required_parameters=["megapixels"],
             evaluation_columns=["megapixels", "megapixel_action", "megapixel_reason"],
@@ -82,7 +82,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_megapixel_check,
         ),
         OperatorSpec(
-            name="quality.blur_check",
+            name="blur",
             category="quality",
             required_parameters=["blur_score"],
             evaluation_columns=["blur_score", "blur_action", "blur_reason"],
@@ -92,7 +92,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_blur_check,
         ),
         OperatorSpec(
-            name="quality.brightness_check",
+            name="brightness",
             category="quality",
             required_parameters=["brightness_score"],
             evaluation_columns=["brightness_score", "brightness_action", "brightness_reason"],
@@ -102,7 +102,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_brightness_check,
         ),
         OperatorSpec(
-            name="quality.contrast_check",
+            name="contrast",
             category="quality",
             required_parameters=["contrast_score"],
             evaluation_columns=["contrast_score", "contrast_action", "contrast_reason"],
@@ -112,7 +112,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_contrast_check,
         ),
         OperatorSpec(
-            name="content.blank_image_check",
+            name="blank",
             category="content",
             required_parameters=["blank_score"],
             evaluation_columns=["blank_score", "blank_action", "blank_reason"],
@@ -122,7 +122,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_blank_image_check,
         ),
         OperatorSpec(
-            name="quality.exposure_check",
+            name="exposure",
             category="quality",
             required_parameters=["dark_pixel_ratio", "bright_pixel_ratio", "clipped_pixel_ratio"],
             evaluation_columns=[
@@ -143,7 +143,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_exposure_check,
         ),
         OperatorSpec(
-            name="quality.noise_check",
+            name="noise",
             category="quality",
             required_parameters=["noise_score"],
             evaluation_columns=["noise_score", "noise_action", "noise_reason"],
@@ -153,7 +153,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_noise_check,
         ),
         OperatorSpec(
-            name="content.mono_color_check",
+            name="mono_color",
             category="content",
             required_parameters=["mono_color_score"],
             evaluation_columns=["mono_color_score", "mono_color_action", "mono_color_reason"],
@@ -163,7 +163,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_mono_color_check,
         ),
         OperatorSpec(
-            name="content.border_padding_check",
+            name="border_padding",
             category="content",
             required_parameters=["border_padding_ratio", "border_padding_sides", "border_padding_color"],
             evaluation_columns=[
@@ -184,7 +184,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_border_padding_check,
         ),
         OperatorSpec(
-            name="format.animated_image_check",
+            name="animated",
             category="format",
             required_parameters=["frame_count", "animated"],
             evaluation_columns=["frame_count", "animated", "animated_action", "animated_reason"],
@@ -194,7 +194,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_animated_image_check,
         ),
         OperatorSpec(
-            name="metadata.orientation_check",
+            name="orientation",
             category="metadata",
             required_parameters=["exif_orientation", "orientation_risk"],
             evaluation_columns=[
@@ -209,7 +209,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_orientation_check,
         ),
         OperatorSpec(
-            name="duplicate.exact_duplicate_check",
+            name="exact_duplicate",
             category="duplicate",
             required_parameters=["exact_duplicate_group_id", "exact_duplicate_count"],
             evaluation_columns=[
@@ -224,7 +224,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_exact_duplicate_check,
         ),
         OperatorSpec(
-            name="duplicate.perceptual_duplicate_check",
+            name="perceptual_duplicate",
             category="duplicate",
             required_parameters=[
                 "perceptual_duplicate_group_id",
@@ -244,7 +244,7 @@ def _builtin_specs() -> list[OperatorSpec]:
             evaluator=evaluate_perceptual_duplicate_check,
         ),
         OperatorSpec(
-            name="duplicate.semantic_duplicate_check",
+            name="semantic_duplicate",
             category="duplicate",
             required_parameters=[
                 "semantic_duplicate_group_id",
@@ -281,57 +281,57 @@ def _builtin_specs() -> list[OperatorSpec]:
 def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
     """为内置算子补齐预览策略默认值。"""
     policies = {
-        "format.decode_check": PreviewPolicy(default_actions=["drop"], caption_columns=["decode_reason"]),
-        "format.animated_image_check": PreviewPolicy(
+        "decode": PreviewPolicy(default_actions=["drop"], caption_columns=["decode_reason"]),
+        "animated": PreviewPolicy(
             default_actions=["review"], caption_columns=["frame_count", "animated_reason"]
         ),
-        "size.dimension_check": PreviewPolicy(
+        "dimension": PreviewPolicy(
             default_actions=["drop"], caption_columns=["width", "height", "dimension_reason"]
         ),
-        "size.aspect_ratio_check": PreviewPolicy(
+        "aspect_ratio": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["aspect_ratio", "aspect_ratio_reason"],
             sort_by=["aspect_ratio"],
         ),
-        "size.megapixel_check": PreviewPolicy(
+        "megapixel": PreviewPolicy(
             default_actions=["review"], caption_columns=["megapixels", "megapixel_reason"], sort_by=["megapixels"]
         ),
-        "quality.blur_check": PreviewPolicy(
+        "blur": PreviewPolicy(
             default_actions=["drop", "review"], caption_columns=["blur_score", "blur_reason"], sort_by=["blur_score"]
         ),
-        "quality.brightness_check": PreviewPolicy(
+        "brightness": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["brightness_score", "brightness_reason"],
             sort_by=["brightness_score"],
         ),
-        "quality.contrast_check": PreviewPolicy(
+        "contrast": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["contrast_score", "contrast_reason"],
             sort_by=["contrast_score"],
         ),
-        "quality.exposure_check": PreviewPolicy(
+        "exposure": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["dark_pixel_ratio", "bright_pixel_ratio", "clipped_pixel_ratio", "exposure_reason"],
         ),
-        "quality.noise_check": PreviewPolicy(
+        "noise": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["noise_score", "noise_reason"],
             sort_by=["noise_score"],
             ascending=False,
         ),
-        "content.blank_image_check": PreviewPolicy(
+        "blank": PreviewPolicy(
             default_actions=["drop", "review"],
             caption_columns=["blank_score", "blank_reason"],
             sort_by=["blank_score"],
             ascending=False,
         ),
-        "content.mono_color_check": PreviewPolicy(
+        "mono_color": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["mono_color_score", "mono_color_reason"],
             sort_by=["mono_color_score"],
             ascending=False,
         ),
-        "content.border_padding_check": PreviewPolicy(
+        "border_padding": PreviewPolicy(
             default_actions=["review"],
             caption_columns=[
                 "border_padding_ratio",
@@ -340,19 +340,19 @@ def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
                 "border_padding_reason",
             ],
         ),
-        "metadata.orientation_check": PreviewPolicy(
+        "orientation": PreviewPolicy(
             default_actions=["review"], caption_columns=["exif_orientation", "orientation_risk", "orientation_reason"]
         ),
-        "duplicate.exact_duplicate_check": PreviewPolicy(
+        "exact_duplicate": PreviewPolicy(
             default_actions=["drop", "review"], groupby="exact_duplicate_group_id", include_group_context=True
         ),
-        "duplicate.perceptual_duplicate_check": PreviewPolicy(
+        "perceptual_duplicate": PreviewPolicy(
             default_actions=["drop", "review"],
             caption_columns=["perceptual_duplicate_distance"],
             groupby="perceptual_duplicate_group_id",
             include_group_context=True,
         ),
-        "duplicate.semantic_duplicate_check": PreviewPolicy(
+        "semantic_duplicate": PreviewPolicy(
             default_actions=["drop", "review"],
             caption_columns=["semantic_duplicate_score", "semantic_duplicate_nearest_image_id"],
             groupby="semantic_duplicate_group_id",
@@ -609,7 +609,7 @@ def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[s
     """根据完全重复组生成去重结果。"""
     keep = str(config.get("keep", "first"))
     if keep != "first":
-        raise ValueError("duplicate.exact_duplicate_check only supports keep='first'")
+        raise ValueError("exact_duplicate only supports keep='first'")
     action = str(config.get("action", "drop"))
     groups = parameter_table["exact_duplicate_group_id"].fillna("").astype(str)
     counts = cast(pd.Series, pd.to_numeric(parameter_table["exact_duplicate_count"],
@@ -646,10 +646,10 @@ def evaluate_perceptual_duplicate_check(parameter_table: pd.DataFrame, config: d
     """根据视觉近重复组生成去重结果。"""
     keep = str(config.get("keep", "first"))
     if keep != "first":
-        raise ValueError("duplicate.perceptual_duplicate_check only supports keep='first'")
+        raise ValueError("perceptual_duplicate only supports keep='first'")
     action = str(config.get("action", "drop"))
     if action != "drop":
-        raise ValueError("duplicate.perceptual_duplicate_check only supports action='drop'")
+        raise ValueError("perceptual_duplicate only supports action='drop'")
 
     groups = parameter_table["perceptual_duplicate_group_id"].fillna("").astype(str)
     counts = cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_count"],
@@ -688,10 +688,10 @@ def evaluate_semantic_duplicate_check(parameter_table: pd.DataFrame, config: dic
     """根据语义重复组生成去重结果。"""
     keep = str(config.get("keep", "first"))
     if keep != "first":
-        raise ValueError("duplicate.semantic_duplicate_check only supports keep='first'")
+        raise ValueError("semantic_duplicate only supports keep='first'")
     action = str(config.get("action", "drop"))
     if action not in {"drop", "review"}:
-        raise ValueError("duplicate.semantic_duplicate_check only supports action='drop' or action='review'")
+        raise ValueError("semantic_duplicate only supports action='drop' or action='review'")
 
     groups = parameter_table["semantic_duplicate_group_id"].fillna("").astype(str)
     counts = cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_count"],

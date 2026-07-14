@@ -192,7 +192,7 @@ def test_planner_rejects_dependency_cycle() -> None:
 
 
 def test_builtin_planner_expands_perceptual_duplicate_dependencies() -> None:
-    parsed = parse_operator_configs([{"duplicate.perceptual_duplicate_check": {}}])
+    parsed = parse_operator_configs([{"perceptual_duplicate": {}}])
 
     plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
 
@@ -211,7 +211,7 @@ def test_builtin_planner_expands_perceptual_duplicate_dependencies() -> None:
 
 
 def test_builtin_planner_expands_semantic_duplicate_dependencies() -> None:
-    parsed = parse_operator_configs([{"duplicate.semantic_duplicate_check": {"provider": "fake"}}])
+    parsed = parse_operator_configs([{"semantic_duplicate": {"provider": "fake"}}])
 
     plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
 
@@ -231,7 +231,7 @@ def test_builtin_planner_expands_semantic_duplicate_dependencies() -> None:
 
 
 def test_builtin_planner_passes_operator_config_to_parameter_computer() -> None:
-    parsed = parse_operator_configs([{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}])
+    parsed = parse_operator_configs([{"perceptual_duplicate": {"max_distance": 0}}])
 
     plan = CleaningRunPlanner(create_default_registry()).compile(parsed)
 

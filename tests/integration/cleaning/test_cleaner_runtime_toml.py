@@ -4,6 +4,7 @@ import pandas as pd
 from PIL import Image
 
 from image_gallery.cleaning import BasicCleaner
+from image_gallery.cleaning.toml_config import CleanerConfig
 from image_gallery.dataset import Dataset
 
 
@@ -26,27 +27,14 @@ def test_from_toml_run_matches_python_api(tmp_path: Path) -> None:
     config_path = tmp_path / "cleaning.toml"
     config_path.write_text(
         """
-[cleaner]
-operators = ["QUALITY"]
-
-[[operator]]
-name = "quality.blur_check"
-min_score = 0.0
-action = "review"
+[operators]
+blur = { min_score = 0.0, action = "review" }
 """.strip(),
         encoding="utf-8",
     )
 
     toml_result = BasicCleaner.from_toml(config_path).run(dataset)
-    python_result = BasicCleaner(
-        ["QUALITY"],
-        operator_config_overrides={
-            "quality.blur_check": {
-                "min_score": 0.0,
-                "action": "review",
-            }
-        },
-    ).run(dataset)
+    python_result = BasicCleaner([{"blur": {"min_score": 0.0, "action": "review"}}]).run(dataset)
 
     toml_evaluation_path = toml_result.export_table("evaluation", tmp_path / "toml_evaluation.parquet")
     python_evaluation_path = python_result.export_table("evaluation", tmp_path / "python_evaluation.parquet")
@@ -65,6 +53,8 @@ def test_export_config_template_writes_selector_and_override_sections(tmp_path: 
     content = template_path.read_text(encoding="utf-8")
 
     assert template_path == tmp_path / "cleaning_runtime.toml"
-    assert '[cleaner]\noperators = ["QUALITY", "DUPLICATE"]' in content
-    assert '[[operator]]\nname = "quality.blur_check"' in content
-    assert '[[operator]]\nname = "duplicate.exact_duplicate_check"' in content
+    assert "[operators]" in content
+    assert "blur = {" in content
+    assert "exact_duplicate = {" in content
+    assert "[select]" not in content
+    assert CleanerConfig.from_toml(template_path).operators

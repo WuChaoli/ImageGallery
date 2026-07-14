@@ -197,7 +197,7 @@ def _build_semantic_execution(tmp_path: Path):
     return BasicCleaner(
         [
             {
-                "duplicate.semantic_duplicate_check": {
+                "semantic_duplicate": {
                     "threshold": 0.9,
                     "action": "drop",
                     "provider": "deterministic",
@@ -245,7 +245,7 @@ def _perceptual_duplicate_registry() -> OperatorRegistry:
     registry.register_parameter_computer(PerceptualDuplicateGroupComputer())
     registry.register_operator(
         OperatorSpec(
-            name="duplicate.perceptual_duplicate_check",
+            name="perceptual_duplicate",
             category="duplicate",
             required_parameters=[
                 "perceptual_duplicate_group_id",
@@ -271,7 +271,7 @@ def _perceptual_duplicate_registry() -> OperatorRegistry:
 @pytest.mark.parametrize("resume_mode", ["run_id", "result"])
 def test_resume_reuses_completed_run_by_run_id_or_result(tmp_path: Path, resume_mode: str) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
+    execution = BasicCleaner([{"decode": {}}]).compile()
     result = execution.run(dataset)
     before = result.export("full", tmp_path / "before.parquet").to_frame()
 
@@ -298,7 +298,7 @@ def test_resume_rejects_dataset_fingerprint_mismatch(tmp_path: Path) -> None:
             }
         ),
     )
-    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
+    execution = BasicCleaner([{"decode": {}}]).compile()
     result = execution.run(dataset)
 
     with pytest.raises(ValueError, match="dataset fingerprint"):
@@ -307,10 +307,10 @@ def test_resume_rejects_dataset_fingerprint_mismatch(tmp_path: Path) -> None:
 
 def test_resume_rejects_plan_hash_mismatch(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    first_execution = BasicCleaner([{"format.decode_check": {}}]).compile()
+    first_execution = BasicCleaner([{"decode": {}}]).compile()
     result = first_execution.run(dataset)
     second_execution = BasicCleaner(
-        [{"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}}],
+        [{"dimension": {"min_width": 8, "min_height": 8, "action": "review"}}],
     ).compile()
 
     with pytest.raises(ValueError, match="plan hash"):
@@ -319,7 +319,7 @@ def test_resume_rejects_plan_hash_mismatch(tmp_path: Path) -> None:
 
 def test_resume_rejects_sample_rule_mismatch(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
+    execution = BasicCleaner([{"decode": {}}]).compile()
     result = execution.run(dataset, sample={"n": 1, "random_state": 1})
 
     with pytest.raises(ValueError, match="sample rule"):
@@ -329,7 +329,7 @@ def test_resume_rejects_sample_rule_mismatch(tmp_path: Path) -> None:
 def test_rerun_allows_evaluation_only_change(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
     execution = BasicCleaner(
-        [{"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}}],
+        [{"dimension": {"min_width": 8, "min_height": 8, "action": "review"}}],
     ).compile()
     result = execution.run(dataset)
     before_parameters = result.export("parameters", tmp_path / "parameters-before.parquet").to_frame()
@@ -337,7 +337,7 @@ def test_rerun_allows_evaluation_only_change(tmp_path: Path) -> None:
 
     rerun_result = execution.rerun(
         result,
-        operators=[{"size.dimension_check": {"min_width": 1, "min_height": 1, "action": "review"}}],
+        operators=[{"dimension": {"min_width": 1, "min_height": 1, "action": "review"}}],
     )
     after_parameters = rerun_result.export("parameters", tmp_path / "parameters-after.parquet").to_frame()
     after_full = rerun_result.export("full", tmp_path / "full-after.parquet").to_frame().set_index("image_id")
@@ -352,13 +352,13 @@ def test_rerun_allows_evaluation_only_change(tmp_path: Path) -> None:
 def test_rerun_rejects_parameter_computer_config_change(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
     execution = BasicCleaner(
-        [{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}],
+        [{"perceptual_duplicate": {"max_distance": 0}}],
         registry=_perceptual_duplicate_registry(),
     ).compile()
     result = execution.run(dataset)
 
     with pytest.raises(ValueError, match="parameter computer config"):
-        execution.rerun(result, operators=[{"duplicate.perceptual_duplicate_check": {"max_distance": 1}}])
+        execution.rerun(result, operators=[{"perceptual_duplicate": {"max_distance": 1}}])
 
 
 def test_resume_reuses_completed_parameter_node_for_unfinished_run(tmp_path: Path) -> None:
@@ -420,7 +420,7 @@ def test_resume_rejects_self_consistent_stale_semantic_config_hashes(tmp_path: P
 
 def test_resume_rejects_missing_parameter_manifest_entry(tmp_path: Path) -> None:
     dataset = _write_dataset(tmp_path, "raw.parquet", _tiny_dataset(tmp_path))
-    execution = BasicCleaner([{"format.decode_check": {}}]).compile()
+    execution = BasicCleaner([{"decode": {}}]).compile()
     result = execution.run(dataset)
     run_dir = result._run_dir()
     manifest_path = run_dir / "manifests" / "parameter_manifest.json"

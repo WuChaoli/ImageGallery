@@ -76,46 +76,46 @@ def _compile_graph_with_runtime_policy(batch_size: int) -> CleaningStateGraph:
 
 def test_state_graph_orders_by_parameter_dependencies() -> None:
     registry = create_default_registry()
-    operators = select_operators([{"duplicate.exact_duplicate_check": {}}], registry)
+    operators = select_operators([{"exact_duplicate": {}}], registry)
 
     graph = CleaningStateGraph.compile(operators, registry)
 
     node_ids = [node.node_id for node in graph.nodes]
     assert node_ids.index("parameter.image_hash_computer") < node_ids.index("parameter.duplicate_group_computer")
     assert node_ids.index("parameter.duplicate_group_computer") < node_ids.index(
-        "evaluation.duplicate.exact_duplicate_check"
+        "evaluation.exact_duplicate"
     )
     assert node_ids[-1] == "merge.final_action"
 
 
 def test_state_graph_includes_evaluation_and_merge_nodes() -> None:
     registry = create_default_registry()
-    operators = select_operators([{"quality.blur_check": {}}], registry)
+    operators = select_operators([{"blur": {}}], registry)
 
     graph = CleaningStateGraph.compile(operators, registry)
 
-    assert "evaluation.quality.blur_check" in [node.node_id for node in graph.nodes]
+    assert "evaluation.blur" in [node.node_id for node in graph.nodes]
     assert "merge.final_action" in [node.node_id for node in graph.nodes]
 
 
 def test_state_graph_rejects_conflicting_shared_node_policy() -> None:
     registry = create_default_registry()
-    operators = select_operators(["quality.blur_check", "quality.contrast_check"], registry)
+    operators = select_operators(["blur", "contrast"], registry)
 
     with pytest.raises(ValueError, match="conflicting operator policy"):
         CleaningStateGraph.compile(
             operators,
             registry,
             operator_policies={
-                "quality.blur_check": NodePolicy(batch=BatchPolicy(size=64)),
-                "quality.contrast_check": NodePolicy(batch=BatchPolicy(size=256)),
+                "blur": NodePolicy(batch=BatchPolicy(size=64)),
+                "contrast": NodePolicy(batch=BatchPolicy(size=256)),
             },
         )
 
 
 def test_state_graph_applies_node_checkpoint_strategy_override_for_aggregate_node() -> None:
     registry = create_default_registry()
-    operators = select_operators([{"duplicate.exact_duplicate_check": {}}], registry)
+    operators = select_operators([{"exact_duplicate": {}}], registry)
 
     graph = CleaningStateGraph.compile(
         operators,
@@ -129,7 +129,7 @@ def test_state_graph_applies_node_checkpoint_strategy_override_for_aggregate_nod
 
 def test_state_graph_rejects_unsupported_parameter_checkpoint_strategy() -> None:
     registry = create_default_registry()
-    operators = select_operators([{"duplicate.exact_duplicate_check": {}}], registry)
+    operators = select_operators([{"exact_duplicate": {}}], registry)
 
     with pytest.raises(ValueError, match="checkpoint strategy"):
         CleaningStateGraph.compile(
@@ -142,12 +142,8 @@ def test_state_graph_rejects_unsupported_parameter_checkpoint_strategy() -> None
 def test_state_graph_parameter_node_policy_hash_depends_on_runtime_policy() -> None:
     default_graph = _compile_graph_with_runtime_policy(128)
     custom_graph = _compile_graph_with_runtime_policy(64)
-    default_node = next(
-        node for node in default_graph.nodes if node.node_id == "parameter.runtime_policy_computer"
-    )
-    custom_node = next(
-        node for node in custom_graph.nodes if node.node_id == "parameter.runtime_policy_computer"
-    )
+    default_node = next(node for node in default_graph.nodes if node.node_id == "parameter.runtime_policy_computer")
+    custom_node = next(node for node in custom_graph.nodes if node.node_id == "parameter.runtime_policy_computer")
 
     assert default_node.policy_hash != custom_node.policy_hash
 
@@ -155,14 +151,10 @@ def test_state_graph_parameter_node_policy_hash_depends_on_runtime_policy() -> N
 def test_semantic_graph_declares_stage_dependencies_and_artifacts() -> None:
     """semantic duplicate 应声明可持久化的 stage 级 artifact/relation contract。"""
     registry = create_default_registry()
-    operators = select_operators([{"duplicate.semantic_duplicate_check": {}}], registry)
+    operators = select_operators([{"semantic_duplicate": {}}], registry)
 
     graph = CleaningStateGraph.compile(operators, registry)
-    semantic_nodes = [
-        node
-        for node in graph.nodes
-        if node.computer_name == "semantic_duplicate_group_computer"
-    ]
+    semantic_nodes = [node for node in graph.nodes if node.computer_name == "semantic_duplicate_group_computer"]
 
     assert [node.node_id for node in semantic_nodes] == [
         "parameter.semantic_duplicate_group_computer.read_embeddings",
@@ -172,7 +164,7 @@ def test_semantic_graph_declares_stage_dependencies_and_artifacts() -> None:
     ]
     assert semantic_nodes[1].produced_artifacts == frozenset({"semantic_index"})
     assert semantic_nodes[-1].produced_relations == frozenset({"semantic_duplicate_pairs"})
-    assert "evaluation.duplicate.semantic_duplicate_check" in [
+    assert "evaluation.semantic_duplicate" in [
         node.node_id
         for node in graph.nodes
         if "parameter.semantic_duplicate_group_computer.write_relations" in node.upstream_node_ids

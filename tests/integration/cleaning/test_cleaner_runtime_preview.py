@@ -35,7 +35,7 @@ def _run_for_operator_actions(tmp_path: Path) -> CleanerResult:
             "image_uri": [first_image, second_image],
             "final_action": ["keep", "drop"],
             "final_reason": ["", ""],
-            "triggered_operator_names": ["format.decode_check", ""],
+            "triggered_operator_names": ["decode", ""],
             "decode_action": ["drop", "keep"],
             "decode_reason": ["decode failure", ""],
         }
@@ -49,7 +49,7 @@ def _run_for_operator_actions(tmp_path: Path) -> CleanerResult:
     (manifests_dir / "operator_outputs.json").write_text(
         json.dumps(
             {
-                "format.decode_check": ["decode_action", "decode_reason"],
+                "decode": ["decode_action", "decode_reason"],
             },
             ensure_ascii=False,
         ),
@@ -63,7 +63,7 @@ def test_result_preview_html_filters_operator_actions(tmp_path: Path) -> None:
     result = _run_for_operator_actions(tmp_path)
     output = result.preview_html(
         tmp_path / "decode_drop.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
         actions="drop",
     )
 
@@ -76,7 +76,7 @@ def test_result_preview_html_operator_actions_clean_maps_to_keep(tmp_path: Path)
     result = _run_for_operator_actions(tmp_path)
     output = result.preview_html(
         tmp_path / "decode_keep.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
         actions="clean",
     )
 
@@ -89,7 +89,7 @@ def test_result_preview_html_full_without_operator_action_filter(tmp_path: Path)
     result = _run_for_operator_actions(tmp_path)
     output = result.preview_html(
         tmp_path / "decode_full.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
         actions="full",
     )
 
@@ -103,7 +103,7 @@ def test_result_preview_html_uses_execution_preview_policies(tmp_path: Path) -> 
         registry = create_default_registry()
         registry.register_operator(
             replace(
-                registry.get_operator("format.decode_check"),
+                registry.get_operator("decode"),
                 preview_policy=PreviewPolicy(max_rows=1, columns_per_row=1),
             )
         )
@@ -121,11 +121,11 @@ def test_result_preview_html_uses_execution_preview_policies(tmp_path: Path) -> 
         str(tmp_path / "raw.parquet"),
     )
 
-    cleaner = BasicCleaner([{"format.decode_check": {}}], registry=custom_registry())
+    cleaner = BasicCleaner([{"decode": {}}], registry=custom_registry())
     result = cleaner.run(dataset)
     output = result.preview_html(
         tmp_path / "preview.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
     ).read_text(encoding="utf-8")
 
     assert "first.png" in output
@@ -134,7 +134,7 @@ def test_result_preview_html_uses_execution_preview_policies(tmp_path: Path) -> 
 
     output_all = result.preview_html(
         tmp_path / "preview_all.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
         max_rows=2,
     ).read_text(encoding="utf-8")
 

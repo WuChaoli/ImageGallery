@@ -74,8 +74,8 @@ def test_basic_cleaner_runs_builtin_operators_on_s3_dataset(tmp_path: Path) -> N
 
     cleaner = BasicCleaner(
         [
-            {"format.decode_check": {}},
-            {"size.dimension_check": {"min_width": 10, "min_height": 10, "action": "review"}},
+            {"decode": {}},
+            {"dimension": {"min_width": 10, "min_height": 10, "action": "review"}},
         ]
     )
 
@@ -83,8 +83,8 @@ def test_basic_cleaner_runs_builtin_operators_on_s3_dataset(tmp_path: Path) -> N
 
     parameter_table = pd.read_parquet(result._run_dir() / "tables" / "parameter_table.parquet")
     assert {"width", "height", "decode_ok", "decode_error"}.issubset(parameter_table.columns)
-    assert result.result("format.decode_check")["decode_action"].tolist() == ["keep", "keep"]
-    assert result.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "review"]
+    assert result.result("decode")["decode_action"].tolist() == ["keep", "keep"]
+    assert result.result("dimension")["dimension_action"].tolist() == ["keep", "review"]
 
 
 def test_result_preview_html_embeds_s3_images_from_runtime_dataset(tmp_path: Path) -> None:
@@ -104,10 +104,10 @@ def test_result_preview_html_embeds_s3_images_from_runtime_dataset(tmp_path: Pat
         storage=storage,
     )
 
-    result = BasicCleaner([{"format.decode_check": {}}]).run(dataset)
+    result = BasicCleaner([{"decode": {}}]).run(dataset)
     output_path = result.preview_html(
         tmp_path / "preview.html",
-        operator_name="format.decode_check",
+        operator_name="decode",
         actions="full",
     )
 

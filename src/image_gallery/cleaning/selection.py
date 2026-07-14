@@ -66,16 +66,26 @@ def _expand_selector(selector: str, registry: OperatorRegistry) -> list[str]:
 
     if selector.upper() == "ALL":
         return [spec.name for spec in registry.list_operator_specs()]
+
+    if selector in registry.list_operators():
+        return [selector]
+
     category = selector.upper()
     categories = {name.upper() for name in registry.list_categories()}
     if category in categories:
         return [spec.name for spec in registry.list_operator_specs() if spec.category.upper() == category]
 
     if "." in selector:
-        registry.get_operator(selector)
-        return [selector]
+        raise ValueError(
+            f"old long operator name is no longer supported: {selector}; "
+            f"please use short names. available operators: {registry.list_operators()}; "
+            f"available categories: {registry.list_categories()}"
+        )
 
-    raise ValueError(f"unknown selector: {selector}; available categories: {registry.list_categories()}")
+    raise ValueError(
+        f"unknown selector: {selector}; available operators: {registry.list_operators()}; "
+        f"available categories: {registry.list_categories()}"
+    )
 
 
 def _normalize_operator_selectors(

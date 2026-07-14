@@ -66,7 +66,7 @@ def _perceptual_duplicate_registry() -> OperatorRegistry:
     registry.register_parameter_computer(PerceptualDuplicateGroupComputer())
     registry.register_operator(
         OperatorSpec(
-            name="duplicate.perceptual_duplicate_check",
+            name="perceptual_duplicate",
             category="duplicate",
             required_parameters=[
                 "perceptual_duplicate_group_id",
@@ -124,16 +124,16 @@ def test_basic_cleaner_runs_first_batch_builtin_operators(tmp_path: Path) -> Non
 
     cleaner = BasicCleaner(
         [
-            {"format.decode_check": {}},
-            {"size.dimension_check": {"min_width": 10, "min_height": 10, "action": "drop"}},
-            {"size.aspect_ratio_check": {}},
-            {"size.megapixel_check": {"min_megapixels": 0.00001}},
-            {"quality.blur_check": {"min_score": 0.0}},
-            {"quality.brightness_check": {}},
-            {"quality.contrast_check": {"min_score": 0.0}},
-            {"content.blank_image_check": {}},
-            {"duplicate.exact_duplicate_check": {}},
-            {"duplicate.perceptual_duplicate_check": {}},
+            {"decode": {}},
+            {"dimension": {"min_width": 10, "min_height": 10, "action": "drop"}},
+            {"aspect_ratio": {}},
+            {"megapixel": {"min_megapixels": 0.00001}},
+            {"blur": {"min_score": 0.0}},
+            {"brightness": {}},
+            {"contrast": {"min_score": 0.0}},
+            {"blank": {}},
+            {"exact_duplicate": {}},
+            {"perceptual_duplicate": {}},
         ]
     )
     result = cleaner.run(dataset)
@@ -174,7 +174,7 @@ def test_perceptual_duplicate_max_distance_reaches_parameter_computer(tmp_path: 
     registry = _perceptual_duplicate_registry()
 
     strict_cleaner = BasicCleaner(
-        [{"duplicate.perceptual_duplicate_check": {"max_distance": 0}}],
+        [{"perceptual_duplicate": {"max_distance": 0}}],
         registry=registry,
     )
     strict_result = strict_cleaner.run(dataset)
@@ -183,7 +183,7 @@ def test_perceptual_duplicate_max_distance_reaches_parameter_computer(tmp_path: 
     strict_manifest = pd.read_json(strict_run_dir / "manifests" / "parameter_manifest.json", typ="series").to_dict()
 
     loose_cleaner = BasicCleaner(
-        [{"duplicate.perceptual_duplicate_check": {"max_distance": 1}}],
+        [{"perceptual_duplicate": {"max_distance": 1}}],
         registry=registry,
     )
     loose_result = loose_cleaner.run(dataset)
@@ -297,12 +297,12 @@ def test_basic_cleaner_runs_second_batch_light_quality_operators(tmp_path: Path)
 
     cleaner = BasicCleaner(
         [
-            {"quality.exposure_check": {}},
-            {"content.border_padding_check": {}},
-            {"quality.noise_check": {"max_score": 0.01}},
-            {"content.mono_color_check": {}},
-            {"format.animated_image_check": {}},
-            {"metadata.orientation_check": {}},
+            {"exposure": {}},
+            {"border_padding": {}},
+            {"noise": {"max_score": 0.01}},
+            {"mono_color": {}},
+            {"animated": {}},
+            {"orientation": {}},
         ]
     )
     result = cleaner.run(dataset)

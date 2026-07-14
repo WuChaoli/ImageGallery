@@ -31,11 +31,15 @@ def non_semantic_real_result(sample_1000_dataset):
     """执行一次真实非语义全量清洗，后续测试复用结果降低成本。"""
     events = []
     configs = get_cleaning_v3_non_semantic_all_operator_configs()
-    result = BasicCleaner(configs).compile().run(
-        sample_1000_dataset,
-        progress=events.append,
-        label="sample-1000-stategraph-real",
-        tags=["sample_1000", "stategraph", "non_semantic_all"],
+    result = (
+        BasicCleaner(configs)
+        .compile()
+        .run(
+            sample_1000_dataset,
+            progress=events.append,
+            label="sample-1000-stategraph-real",
+            tags=["sample_1000", "stategraph", "non_semantic_all"],
+        )
     )
     return result, events
 
@@ -80,8 +84,8 @@ def test_selector_compile_on_sample_1000_dry_run(sample_1000_dataset) -> None:
     dry_run = execution.dry_run(sample_1000_dataset)
 
     assert dry_run.errors == []
-    assert any(name.startswith("quality.") for name in dry_run.selected_operators)
-    assert any(name.startswith("duplicate.") for name in dry_run.selected_operators)
+    assert {"blur", "brightness", "contrast", "exposure", "noise"}.issubset(dry_run.selected_operators)
+    assert {"exact_duplicate", "perceptual_duplicate", "semantic_duplicate"}.issubset(dry_run.selected_operators)
     assert len(dry_run.selected_operators) == len(set(dry_run.selected_operators))
 
 
@@ -157,7 +161,7 @@ def test_real_result_preview_html_policy_and_overrides(non_semantic_real_result)
     preview_dir = result._run_dir() / "_test_exports" / "previews"
 
     overall = result.preview_html(preview_dir / "overall.html")
-    blur = result.preview_html(preview_dir / "blur.html", operator_name="quality.blur_check")
+    blur = result.preview_html(preview_dir / "blur.html", operator_name="blur")
     clean = result.preview_html(
         preview_dir / "clean.html",
         actions="clean",
@@ -229,16 +233,11 @@ def test_real_toml_recipe_runs_on_sample_1000(sample_1000_dataset, tmp_path: Pat
     recipe_path.write_text(
         "\n".join(
             [
-                "[cleaner]",
-                'operators = ["QUALITY", "DUPLICATE"]',
-                "",
-                "[[operator]]",
-                'name = "quality.blur_check"',
+                "[operators.blur]",
                 "min_score = 0.0",
                 'action = "review"',
                 "",
-                "[[operator]]",
-                'name = "duplicate.exact_duplicate_check"',
+                "[operators.exact_duplicate]",
                 'action = "drop"',
                 "",
             ]

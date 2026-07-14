@@ -8,23 +8,23 @@ def test_default_registry_contains_builtin_v3_operators() -> None:
     registry = create_default_registry()
 
     assert registry.list_operators() == [
-        "content.blank_image_check",
-        "content.border_padding_check",
-        "content.mono_color_check",
-        "duplicate.exact_duplicate_check",
-        "duplicate.perceptual_duplicate_check",
-        "duplicate.semantic_duplicate_check",
-        "format.animated_image_check",
-        "format.decode_check",
-        "metadata.orientation_check",
-        "quality.blur_check",
-        "quality.brightness_check",
-        "quality.contrast_check",
-        "quality.exposure_check",
-        "quality.noise_check",
-        "size.aspect_ratio_check",
-        "size.dimension_check",
-        "size.megapixel_check",
+        "animated",
+        "aspect_ratio",
+        "blank",
+        "blur",
+        "border_padding",
+        "brightness",
+        "contrast",
+        "decode",
+        "dimension",
+        "exact_duplicate",
+        "exposure",
+        "megapixel",
+        "mono_color",
+        "noise",
+        "orientation",
+        "perceptual_duplicate",
+        "semantic_duplicate",
     ]
 
 
@@ -38,16 +38,16 @@ def test_default_registry_excludes_fastdup_and_near_duplicate() -> None:
 @pytest.mark.parametrize(
     ("operator_name", "default_actions", "caption_columns", "groupby"),
     [
-        ("format.decode_check", ["drop"], ["decode_reason"], None),
-        ("quality.blur_check", ["drop", "review"], ["blur_score", "blur_reason"], None),
+        ("decode", ["drop"], ["decode_reason"], None),
+        ("blur", ["drop", "review"], ["blur_score", "blur_reason"], None),
         (
-            "duplicate.perceptual_duplicate_check",
+            "perceptual_duplicate",
             ["drop", "review"],
             ["perceptual_duplicate_distance"],
             "perceptual_duplicate_group_id",
         ),
         (
-            "duplicate.semantic_duplicate_check",
+            "semantic_duplicate",
             ["drop", "review"],
             ["semantic_duplicate_score", "semantic_duplicate_nearest_image_id"],
             "semantic_duplicate_group_id",
@@ -70,8 +70,8 @@ def test_builtin_preview_policy_matches_runtime_contract(
 def test_decode_and_dimension_specs_declare_required_parameters() -> None:
     registry = create_default_registry()
 
-    decode_spec = registry.get_operator("format.decode_check")
-    dimension_spec = registry.get_operator("size.dimension_check")
+    decode_spec = registry.get_operator("decode")
+    dimension_spec = registry.get_operator("dimension")
 
     assert decode_spec.required_parameters == ["decode_ok", "decode_error"]
     assert decode_spec.evaluation_columns == ["decode_action", "decode_reason"]
@@ -82,8 +82,8 @@ def test_decode_and_dimension_specs_declare_required_parameters() -> None:
 def test_size_derived_specs_declare_required_parameters() -> None:
     registry = create_default_registry()
 
-    aspect_spec = registry.get_operator("size.aspect_ratio_check")
-    megapixel_spec = registry.get_operator("size.megapixel_check")
+    aspect_spec = registry.get_operator("aspect_ratio")
+    megapixel_spec = registry.get_operator("megapixel")
 
     assert aspect_spec.required_parameters == ["aspect_ratio"]
     assert aspect_spec.evaluation_columns == ["aspect_ratio", "aspect_ratio_action", "aspect_ratio_reason"]
@@ -94,10 +94,10 @@ def test_size_derived_specs_declare_required_parameters() -> None:
 def test_quality_specs_declare_required_parameters() -> None:
     registry = create_default_registry()
 
-    assert registry.get_operator("quality.blur_check").required_parameters == ["blur_score"]
-    assert registry.get_operator("quality.brightness_check").required_parameters == ["brightness_score"]
-    assert registry.get_operator("quality.contrast_check").required_parameters == ["contrast_score"]
-    assert registry.get_operator("content.blank_image_check").required_parameters == ["blank_score"]
+    assert registry.get_operator("blur").required_parameters == ["blur_score"]
+    assert registry.get_operator("brightness").required_parameters == ["brightness_score"]
+    assert registry.get_operator("contrast").required_parameters == ["contrast_score"]
+    assert registry.get_operator("blank").required_parameters == ["blank_score"]
 
 
 def test_quality_evaluators_return_expected_actions() -> None:
@@ -112,16 +112,16 @@ def test_quality_evaluators_return_expected_actions() -> None:
         }
     )
 
-    assert registry.get_operator("quality.blur_check").evaluate(frame, {"min_score": 100.0, "action": "review"})[
+    assert registry.get_operator("blur").evaluate(frame, {"min_score": 100.0, "action": "review"})[
         "blur_action"
     ].tolist() == ["keep", "review"]
-    assert registry.get_operator("quality.brightness_check").evaluate(
+    assert registry.get_operator("brightness").evaluate(
         frame, {"min_score": 30.0, "max_score": 225.0, "action": "review"}
     )["brightness_action"].tolist() == ["keep", "review"]
-    assert registry.get_operator("quality.contrast_check").evaluate(frame, {"min_score": 10.0, "action": "review"})[
+    assert registry.get_operator("contrast").evaluate(frame, {"min_score": 10.0, "action": "review"})[
         "contrast_action"
     ].tolist() == ["keep", "review"]
-    assert registry.get_operator("content.blank_image_check").evaluate(frame, {"threshold": 0.98, "action": "drop"})[
+    assert registry.get_operator("blank").evaluate(frame, {"threshold": 0.98, "action": "drop"})[
         "blank_action"
     ].tolist() == ["keep", "drop"]
 
@@ -129,20 +129,20 @@ def test_quality_evaluators_return_expected_actions() -> None:
 def test_light_quality_specs_declare_required_parameters() -> None:
     registry = create_default_registry()
 
-    assert registry.get_operator("quality.exposure_check").required_parameters == [
+    assert registry.get_operator("exposure").required_parameters == [
         "dark_pixel_ratio",
         "bright_pixel_ratio",
         "clipped_pixel_ratio",
     ]
-    assert registry.get_operator("quality.noise_check").required_parameters == ["noise_score"]
-    assert registry.get_operator("content.mono_color_check").required_parameters == ["mono_color_score"]
-    assert registry.get_operator("content.border_padding_check").required_parameters == [
+    assert registry.get_operator("noise").required_parameters == ["noise_score"]
+    assert registry.get_operator("mono_color").required_parameters == ["mono_color_score"]
+    assert registry.get_operator("border_padding").required_parameters == [
         "border_padding_ratio",
         "border_padding_sides",
         "border_padding_color",
     ]
-    assert registry.get_operator("format.animated_image_check").required_parameters == ["frame_count", "animated"]
-    assert registry.get_operator("metadata.orientation_check").required_parameters == [
+    assert registry.get_operator("animated").required_parameters == ["frame_count", "animated"]
+    assert registry.get_operator("orientation").required_parameters == [
         "exif_orientation",
         "orientation_risk",
     ]
@@ -168,28 +168,29 @@ def test_light_quality_evaluators_return_expected_actions() -> None:
         }
     )
 
-    assert registry.get_operator("quality.exposure_check").evaluate(frame, {})["exposure_action"].tolist() == [
+    assert registry.get_operator("exposure").evaluate(frame, {})["exposure_action"].tolist() == [
         "keep",
         "review",
     ]
-    assert registry.get_operator("quality.noise_check").evaluate(frame, {})["noise_action"].tolist() == [
+    assert registry.get_operator("noise").evaluate(frame, {})["noise_action"].tolist() == [
         "keep",
         "review",
     ]
-    assert registry.get_operator("content.mono_color_check").evaluate(frame, {})["mono_color_action"].tolist() == [
+    assert registry.get_operator("mono_color").evaluate(frame, {})["mono_color_action"].tolist() == [
         "keep",
         "review",
     ]
-    assert registry.get_operator("content.border_padding_check").evaluate(frame, {})[
+    assert registry.get_operator("border_padding").evaluate(frame, {})[
         "border_padding_action"
     ].tolist() == ["keep", "review"]
-    assert registry.get_operator("format.animated_image_check").evaluate(frame, {})["animated_action"].tolist() == [
+    assert registry.get_operator("animated").evaluate(frame, {})["animated_action"].tolist() == [
         "keep",
         "review",
     ]
-    assert registry.get_operator("metadata.orientation_check").evaluate(frame, {})[
-        "orientation_action"
-    ].tolist() == ["keep", "review"]
+    assert registry.get_operator("orientation").evaluate(frame, {})["orientation_action"].tolist() == [
+        "keep",
+        "review",
+    ]
 
 
 def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
@@ -202,7 +203,7 @@ def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
         }
     )
 
-    result = registry.get_operator("duplicate.exact_duplicate_check").evaluate(
+    result = registry.get_operator("exact_duplicate").evaluate(
         frame, {"keep": "first", "action": "drop"}
     )
 
@@ -212,7 +213,7 @@ def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
 def test_perceptual_duplicate_spec_declares_required_parameters() -> None:
     registry = create_default_registry()
 
-    spec = registry.get_operator("duplicate.perceptual_duplicate_check")
+    spec = registry.get_operator("perceptual_duplicate")
 
     assert spec.default_config == {"max_distance": 10, "keep": "first", "action": "drop"}
     assert spec.required_parameters == [
@@ -240,7 +241,7 @@ def test_perceptual_duplicate_evaluator_drops_non_first_group_members() -> None:
         }
     )
 
-    result = registry.get_operator("duplicate.perceptual_duplicate_check").evaluate(
+    result = registry.get_operator("perceptual_duplicate").evaluate(
         frame,
         {"max_distance": 4, "keep": "first", "action": "drop"},
     )
@@ -252,7 +253,7 @@ def test_perceptual_duplicate_evaluator_drops_non_first_group_members() -> None:
 def test_semantic_duplicate_spec_declares_required_parameters() -> None:
     registry = create_default_registry()
 
-    spec = registry.get_operator("duplicate.semantic_duplicate_check")
+    spec = registry.get_operator("semantic_duplicate")
 
     assert spec.required_parameters == [
         "semantic_duplicate_group_id",
@@ -284,10 +285,10 @@ def test_semantic_duplicate_evaluator_supports_drop_and_review() -> None:
         }
     )
 
-    drop_result = registry.get_operator("duplicate.semantic_duplicate_check").evaluate(
+    drop_result = registry.get_operator("semantic_duplicate").evaluate(
         frame, {"keep": "first", "action": "drop"}
     )
-    review_result = registry.get_operator("duplicate.semantic_duplicate_check").evaluate(
+    review_result = registry.get_operator("semantic_duplicate").evaluate(
         frame, {"keep": "first", "action": "review"}
     )
 
@@ -322,7 +323,7 @@ def test_builtin_specs_have_preview_policy() -> None:
 def test_duplicate_specs_group_preview_by_duplicate_group() -> None:
     registry = create_default_registry()
 
-    spec = registry.get_operator("duplicate.semantic_duplicate_check")
+    spec = registry.get_operator("semantic_duplicate")
 
     assert spec.preview_policy.groupby == "semantic_duplicate_group_id"
     assert spec.preview_policy.include_group_context is True

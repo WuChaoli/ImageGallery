@@ -31,8 +31,8 @@ def test_basic_cleaner_exports_builtin_views_and_preserves_counts(tmp_path: Path
     )
     cleaner = BasicCleaner(
         [
-            {"format.decode_check": {"action": "drop"}},
-            {"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}},
+            {"decode": {"action": "drop"}},
+            {"dimension": {"min_width": 8, "min_height": 8, "action": "review"}},
         ]
     )
     result = cleaner.run(dataset)
@@ -70,7 +70,7 @@ def test_basic_cleaner_writes_html_preview(tmp_path: Path) -> None:
         ),
         str(tmp_path / "raw.parquet"),
     )
-    cleaner = BasicCleaner([{"format.decode_check": {"action": "drop"}}])
+    cleaner = BasicCleaner([{"decode": {"action": "drop"}}])
     result = cleaner.run(dataset)
 
     output_path = result.preview_html(
@@ -124,9 +124,7 @@ def test_toml_full_runtime_exports_previews_and_cleanup(tmp_path: Path) -> None:
     operator_names = [next(iter(item)) for item in operator_configs]
     recipe_path = tmp_path / "recipe.toml"
     recipe_path.write_text(
-        "[cleaner]\noperators = ["
-        + ", ".join(f'\"{operator_name}\"' for operator_name in operator_names)
-        + "]\n",
+        "[operators]\n" + "\n".join(f"{operator_name} = {{}}" for operator_name in operator_names),
         encoding="utf-8",
     )
     events: list[RuntimeEvent] = []

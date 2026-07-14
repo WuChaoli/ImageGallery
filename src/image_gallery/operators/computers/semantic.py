@@ -1,6 +1,7 @@
 import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from importlib.util import find_spec
 from pathlib import Path
 from typing import cast
 
@@ -17,6 +18,7 @@ from image_gallery.operators.computers.base import (
     ParameterStageSpec,
 )
 from image_gallery.operators.semantic_provider import (
+    SemanticDependencyError,
     SemanticEmbeddingProvider,
     SemanticEmbeddingResult,
     load_semantic_provider,
@@ -35,6 +37,19 @@ class SemanticEmbeddingComputer(ParameterComputer):
 
     def __init__(self, providers: dict[str, SemanticEmbeddingProvider] | None = None) -> None:
         self._providers = providers or {}
+
+    def before_run_check(self) -> None:
+        """校验语义 embedding 可选依赖和模型路径。"""
+        # 已有外部 provider 时跳过 import 检查
+        if not self._providers:
+            if find_spec("onnxruntime") is None:
+                raise SemanticDependencyError(
+                    "onnxruntime is required for semantic embedding; install image-gallery[semantic]"
+                )
+            if find_spec("huggingface_hub") is None:
+                raise SemanticDependencyError(
+                    "huggingface_hub is required for semantic embedding; install image-gallery[semantic]"
+                )
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """提取有效图片的语义 embedding 并产出引用参数。"""
@@ -210,6 +225,13 @@ class SemanticDuplicateGroupComputer(ParameterComputer):
             artifact_contract="semantic_duplicate_pairs",
         ),
     )
+
+    def before_run_check(self) -> None:
+        """校验语义重复检测所需的 faiss-cpu 依赖。"""
+        if find_spec("faiss") is None:
+            raise SemanticDependencyError(
+                "faiss-cpu is required for semantic duplicate index; install image-gallery[semantic]"
+            )
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """读取 embedding artifact，构建 Faiss index，并生成语义重复关系。"""

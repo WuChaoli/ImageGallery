@@ -8,22 +8,27 @@ from image_gallery.operators.spec import ConfiguredOperatorSpec
 def test_select_all_expands_registry_order() -> None:
     selected = select_operators("ALL", create_default_registry())
 
-    assert "format.decode_check" in [item.operator_name for item in selected]
-    assert "duplicate.semantic_duplicate_check" in [item.operator_name for item in selected]
+    assert "decode" in [item.operator_name for item in selected]
+    assert "semantic_duplicate" in [item.operator_name for item in selected]
 
 
 def test_select_category_expands_matching_operators() -> None:
     selected = select_operators(["QUALITY"], create_default_registry())
 
     assert {item.spec.category for item in selected} == {"quality"}
-    assert "quality.blur_check" in [item.operator_name for item in selected]
+    assert "blur" in [item.operator_name for item in selected]
 
 
 def test_select_name_and_category_deduplicates() -> None:
-    selected = select_operators(["quality.blur_check", "QUALITY"], create_default_registry())
+    selected = select_operators(["blur", "QUALITY"], create_default_registry())
 
     names = [item.operator_name for item in selected]
-    assert names.count("quality.blur_check") == 1
+    assert names.count("blur") == 1
+
+
+def test_select_old_long_name_has_migration_error() -> None:
+    with pytest.raises(ValueError, match="old long operator name"):
+        select_operators(["quality.blur_check"], create_default_registry())
 
 
 def test_select_unknown_category_has_helpful_error() -> None:
@@ -33,7 +38,7 @@ def test_select_unknown_category_has_helpful_error() -> None:
 
 def test_select_operator_spec_registers_it_and_uses_default_config() -> None:
     registry = create_default_registry()
-    spec = registry.get_operator("quality.blur_check")
+    spec = registry.get_operator("blur")
     custom_spec = type(spec)(
         name="custom.blur_check",
         category=spec.category,
@@ -56,7 +61,7 @@ def test_select_operator_spec_registers_it_and_uses_default_config() -> None:
 
 def test_select_configured_operator_spec_preserves_config_and_source() -> None:
     registry = create_default_registry()
-    spec = registry.get_operator("quality.blur_check")
+    spec = registry.get_operator("blur")
     custom_spec = type(spec)(
         name="custom.configured_blur_check",
         category=spec.category,
@@ -77,7 +82,7 @@ def test_select_configured_operator_spec_preserves_config_and_source() -> None:
 
 def test_select_duplicate_temporary_spec_requires_override() -> None:
     registry = create_default_registry()
-    spec = registry.get_operator("quality.blur_check")
+    spec = registry.get_operator("blur")
 
     with pytest.raises(ValueError, match="already exists"):
         select_operators([spec], registry)

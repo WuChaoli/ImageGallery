@@ -27,10 +27,15 @@ from image_gallery.operators.registry import OperatorRegistry
 class CleanerConfig:
     """从 TOML 解析的清洗配置承载对象。"""
 
-    operators: OperatorSelectorInput
+    selectors: OperatorSelectorInput
     operator_configs: dict[str, dict[str, object]]
     node_policy: NodePolicy
     operator_policies: dict[str, NodePolicy]
+
+    @property
+    def operators(self) -> OperatorSelectorInput:
+        """返回传给清洗运行时的算子选择器。"""
+        return self.selectors
 
     @classmethod
     def from_toml(cls, path: str | Path) -> "CleanerConfig":
@@ -44,13 +49,16 @@ class CleanerConfig:
     def from_mapping(cls, payload: dict[str, object]) -> "CleanerConfig":
         """从 TOML 映射对象加载配置。"""
         payload_map = _as_mapping(payload, "root")
-        cleaner_payload = _as_mapping(payload_map.get("cleaner", {}), "cleaner")
-        operators = _parse_operators(cleaner_payload.get("operators"))
-        operator_configs = _parse_operator_configs(payload_map.get("operator"))
-        node_policy = _parse_node_policy(payload_map.get("node_policy"), "node_policy")
-        operator_policies = _parse_operator_policies(payload_map.get("operator_policies"))
+        has_select = "select" in payload_map
+        has_operators = "operators" in payload_map
+        if has_select and has_operators:
+            raise ValueError("select and operators sections are mutually exclusive")
+
+        selectors = _parse_selectors(payload_map.get("select"), payload_map.get("operators"))
+        operator_configs, operator_policies = _parse_operators_section(payload_map.get("operators"))
+        node_policy = _parse_runtime_policy(payload_map.get("runtime"), "runtime")
         return cls(
-            operators=operators,
+            selectors=selectors,
             operator_configs=operator_configs,
             node_policy=node_policy,
             operator_policies=operator_policies,
@@ -68,63 +76,110 @@ def build_cleaner_toml_template(
     configured = select_operators(cast(OperatorSelectorInput, normalized_operators), selected_registry)
 
     lines = [
-        "[cleaner]",
-        f"operators = {_format_toml_list(normalized_operators)}",
-        "",
-        "[node_policy.batch]",
-        "size = 128",
-        "",
-        "[node_policy.failure]",
-        "fail_fast = false",
-        "max_errors = 100",
+        "[operators]",
     ]
     for operator in configured:
-        lines.extend(
-            [
-                "",
-                "[[operator]]",
-                f'name = "{operator.operator_name}"',
-            ]
-        )
-        for key, value in operator.config.items():
-            if value is None:
-                continue
-            lines.append(f"{key} = {_format_toml_value(value)}")
+        config_items = [
+            f"{key} = {_format_toml_value(value)}" for key, value in operator.config.items() if value is not None
+        ]
+        inline_config = "{ " + ", ".join(config_items) + " }" if config_items else "{}"
+        lines.append(f"{operator.operator_name} = {inline_config}")
+
+    lines.extend(
+        [
+            "",
+            "[runtime]",
+            "batch_size = 128",
+            "fail_fast = false",
+            "max_errors = 100",
+        ]
+    )
     return "\n".join(lines) + "\n"
 
 
-def _parse_operator_configs(raw: object) -> dict[str, dict[str, object]]:
-    """解析 [[operator]] 中的业务配置。"""
+def _parse_selectors(select_raw: object, operators_raw: object) -> OperatorSelectorInput:
+    """解析 select/operators 两种互斥选择来源。"""
+    if operators_raw is not None:
+        operators_payload = _as_mapping(operators_raw, "operators")
+        return list(operators_payload)
+    if select_raw is None:
+        return ["ALL"]
+
+    select_payload = _as_mapping(select_raw, "select")
+    categories = select_payload.get("categories")
+    if isinstance(categories, str) and categories:
+        return [categories]
+    if isinstance(categories, list) and all(isinstance(item, str) and item for item in categories):
+        return categories
+    raise ValueError("select.categories must be a non-empty string or list of strings")
+
+
+def _parse_operators_section(raw: object) -> tuple[dict[str, dict[str, object]], dict[str, NodePolicy]]:
+    """解析 operators 段中的算子配置和算子级 runtime 覆盖。"""
     if raw is None:
-        return {}
-    if not isinstance(raw, list):
-        raise ValueError("operator section must be a list")
+        return {}, {}
 
-    parsed: dict[str, dict[str, object]] = {}
-    for item in raw:
-        if not isinstance(item, Mapping):
-            raise ValueError("each operator entry must be a mapping")
+    payload = _as_mapping(raw, "operators")
+    operator_configs: dict[str, dict[str, object]] = {}
+    operator_policies: dict[str, NodePolicy] = {}
+    for operator_name, raw_config in payload.items():
+        if not isinstance(operator_name, str) or not operator_name:
+            raise ValueError("operators keys must be non-empty strings")
+        config = _as_mapping(raw_config, f"operators.{operator_name}")
+        runtime_config = config.pop("runtime", None)
+        operator_configs[operator_name] = config
+        if runtime_config is not None:
+            operator_policies[operator_name] = _parse_runtime_policy(
+                runtime_config,
+                f"operators.{operator_name}.runtime",
+            )
+    return operator_configs, operator_policies
 
-        if "name" in item:
-            name = item["name"]
-            if not isinstance(name, str) or not name:
-                raise ValueError("operator name must be a non-empty string")
-            config = dict(item)
-            config.pop("name")
-        elif len(item) == 1:
-            name, config_value = next(iter(item.items()))
-            if not isinstance(name, str) or not name:
-                raise ValueError("operator name must be a non-empty string")
-            if not isinstance(config_value, Mapping):
-                raise ValueError(f"operator config for {name} must be a mapping")
-            config = dict(config_value)
+
+def _parse_runtime_policy(raw: object, scope: str) -> NodePolicy:
+    """解析拍平 runtime 字段为 NodePolicy。"""
+    payload = _as_mapping(raw, scope, allow_none=True)
+    nested_payload: dict[str, object] = {
+        "batch": {},
+        "checkpoint": {},
+        "cache": {},
+        "failure": {},
+        "resources": {},
+        "artifacts": {},
+    }
+    field_map = {
+        "batch_size": ("batch", "size"),
+        "checkpoint_enabled": ("checkpoint", "enabled"),
+        "checkpoint_strategy": ("checkpoint", "strategy"),
+        "cache_scope": ("cache", "scope"),
+        "cache_reuse": ("cache", "reuse"),
+        "cache_cleanup": ("cache", "cleanup"),
+        "fail_fast": ("failure", "fail_fast"),
+        "max_errors": ("failure", "max_errors"),
+        "bad_image_action": ("failure", "bad_image_action"),
+        "retry_max_attempts": ("failure", "retry.max_attempts"),
+        "retry_backoff_seconds": ("failure", "retry.backoff_seconds"),
+        "retry_on": ("failure", "retry.retry_on"),
+        "max_workers": ("resources", "max_workers"),
+        "device": ("resources", "device"),
+        "retain_intermediate": ("artifacts", "retain_intermediate"),
+        "write_debug_manifest": ("artifacts", "write_debug_manifest"),
+    }
+    for key, value in payload.items():
+        if key not in field_map:
+            raise ValueError(f"{scope}.{key} is not a supported runtime field")
+        section, target = field_map[key]
+        section_payload = _as_mapping(nested_payload[section], f"{scope}.{section}")
+        if "." in target:
+            nested_key, leaf_key = target.split(".", maxsplit=1)
+            nested = _as_mapping(section_payload.get(nested_key, {}), f"{scope}.{section}.{nested_key}")
+            nested[leaf_key] = value
+            section_payload[nested_key] = nested
         else:
-            raise ValueError("operator entry must contain name field or one operator key")
+            section_payload[target] = value
+        nested_payload[section] = section_payload
 
-        if not isinstance(config, dict):
-            raise ValueError(f"operator config for {name} must be a mapping")
-        parsed[name] = config
-    return parsed
+    return _parse_node_policy(nested_payload, scope)
 
 
 def _normalize_template_operators(raw: object) -> list[str]:
@@ -141,11 +196,6 @@ def _normalize_template_operators(raw: object) -> list[str]:
     return normalized
 
 
-def _format_toml_list(values: list[str]) -> str:
-    """格式化字符串列表为 TOML 数组。"""
-    return "[" + ", ".join(f'"{value}"' for value in values) + "]"
-
-
 def _format_toml_value(value: object) -> str:
     """把基础 Python 值格式化为 TOML 字面量。"""
     if isinstance(value, bool):
@@ -159,32 +209,6 @@ def _format_toml_value(value: object) -> str:
     if isinstance(value, tuple):
         return "[" + ", ".join(_format_toml_value(item) for item in value) + "]"
     raise TypeError(f"unsupported TOML template value: {value!r}")
-
-
-def _parse_operators(raw: object) -> OperatorSelectorInput:
-    """解析 cleaner section 的 operators 选择字段。"""
-    if isinstance(raw, str):
-        return [raw]
-    if raw is None:
-        return ["ALL"]
-    if isinstance(raw, list):
-        if not all(isinstance(item, str) for item in raw):
-            raise ValueError("operators entries must be strings")
-        return raw
-    raise ValueError("operators must be a string or list of strings")
-
-
-def _parse_operator_policies(raw: object) -> dict[str, NodePolicy]:
-    """解析 operator_policies 分段。"""
-    if raw is None:
-        return {}
-    payload = _as_mapping(raw, "operator_policies")
-    policies: dict[str, NodePolicy] = {}
-    for operator_name, policy_payload in payload.items():
-        if not isinstance(operator_name, str) or not operator_name:
-            raise ValueError("operator_policies keys must be non-empty strings")
-        policies[operator_name] = _parse_node_policy(policy_payload, f"operator_policies.{operator_name}")
-    return policies
 
 
 def _parse_node_policy(raw: object, scope: str) -> NodePolicy:

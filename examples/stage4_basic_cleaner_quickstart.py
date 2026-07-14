@@ -30,9 +30,9 @@ def main() -> None:
         )
         cleaner = BasicCleaner(
             [
-                {"format.decode_check": {}},
-                {"size.dimension_check": {"min_width": 10, "min_height": 10}},
-                {"duplicate.exact_duplicate_check": {"action": "drop"}},
+                {"decode": {}},
+                {"dimension": {"min_width": 10, "min_height": 10}},
+                {"exact_duplicate": {"action": "drop"}},
             ]
         )
         result = cleaner.run(raw_dataset, output_dir=root / "cleaning")

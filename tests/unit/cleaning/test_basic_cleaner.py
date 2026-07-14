@@ -22,7 +22,7 @@ def _dataset(tmp_path: Path) -> Dataset:
 
 
 def test_basic_cleaner_compile_returns_execution() -> None:
-    cleaner = BasicCleaner([{"format.decode_check": {}}])
+    cleaner = BasicCleaner([{"decode": {}}])
 
     execution = cleaner.compile()
 
@@ -31,15 +31,15 @@ def test_basic_cleaner_compile_returns_execution() -> None:
 
 def test_basic_cleaner_plan_auto_compiles_without_running_dataset(tmp_path: Path) -> None:
     del tmp_path
-    cleaner = BasicCleaner([{"format.decode_check": {}}])
+    cleaner = BasicCleaner([{"decode": {}}])
 
     frame = cleaner.plan()
 
-    assert "evaluation.format.decode_check" in frame["node_id"].tolist()
+    assert "evaluation.decode" in frame["node_id"].tolist()
 
 
 def test_basic_cleaner_run_returns_result_and_hides_process_outputs(tmp_path: Path) -> None:
-    result = BasicCleaner([{"format.decode_check": {}}]).run(_dataset(tmp_path), label="unit")
+    result = BasicCleaner([{"decode": {}}]).run(_dataset(tmp_path), label="unit")
 
     assert isinstance(result, CleanerResult)
     assert result.status() == "completed"
@@ -54,7 +54,7 @@ def test_basic_cleaner_exposes_toml_but_not_yaml_config_entrypoint() -> None:
 def test_basic_cleaner_run_accepts_progress_callback(tmp_path: Path) -> None:
     events: list[RuntimeEvent] = []
 
-    result = BasicCleaner([{"format.decode_check": {}}]).run(
+    result = BasicCleaner([{"decode": {}}]).run(
         _dataset(tmp_path),
         progress=events.append,
     )
@@ -66,7 +66,7 @@ def test_basic_cleaner_run_accepts_progress_callback(tmp_path: Path) -> None:
 
 
 def test_basic_cleaner_run_auto_progress_prints_notebook_friendly_lines(tmp_path: Path, capsys) -> None:
-    result = BasicCleaner([{"format.decode_check": {}}]).run(
+    result = BasicCleaner([{"decode": {}}]).run(
         _dataset(tmp_path),
         progress="auto",
     )
@@ -81,7 +81,7 @@ def test_basic_cleaner_run_auto_progress_prints_notebook_friendly_lines(tmp_path
 
 def test_basic_cleaner_exposes_builder_lifecycle_only(tmp_path: Path) -> None:
     del tmp_path
-    cleaner = BasicCleaner([{"format.decode_check": {}}])
+    cleaner = BasicCleaner([{"decode": {}}])
 
     for name in ("preview", "preview_html", "state", "rerun", "result", "export"):
         assert not hasattr(cleaner, name)
@@ -89,7 +89,7 @@ def test_basic_cleaner_exposes_builder_lifecycle_only(tmp_path: Path) -> None:
 
 def test_basic_cleaner_can_explicitly_override_registered_operator_spec() -> None:
     registry = create_default_registry()
-    original = registry.get_operator("quality.blur_check")
+    original = registry.get_operator("blur")
     replacement = type(original)(
         name=original.name,
         category=original.category,

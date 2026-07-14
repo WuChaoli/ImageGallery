@@ -18,7 +18,7 @@ def test_basic_cleaner_dimension_rerun_updates_evaluation_only_policy(tmp_path: 
     )
     cleaner = BasicCleaner(
         [
-            {"size.dimension_check": {"min_width": 8, "min_height": 8, "action": "review"}},
+            {"dimension": {"min_width": 8, "min_height": 8, "action": "review"}},
         ]
     )
     execution = cleaner.compile()
@@ -29,10 +29,10 @@ def test_basic_cleaner_dimension_rerun_updates_evaluation_only_policy(tmp_path: 
 
     rerun_result = execution.rerun(
         result,
-        [{"size.dimension_check": {"min_width": 1, "min_height": 1, "action": "review"}}],
+        [{"dimension": {"min_width": 1, "min_height": 1, "action": "review"}}],
     )
 
     assert rerun_result.preview().review_count == 0
-    assert rerun_result.result("size.dimension_check")["dimension_action"].tolist() == ["keep", "keep"]
+    assert rerun_result.result("dimension")["dimension_action"].tolist() == ["keep", "keep"]
     after_parameters = rerun_result.export("parameters", str(tmp_path / "parameters_after.parquet")).to_frame()
     assert before_parameters.equals(after_parameters)

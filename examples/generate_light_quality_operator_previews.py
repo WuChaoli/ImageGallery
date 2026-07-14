@@ -22,7 +22,7 @@ class OperatorPreviewCase:
 
 OPERATOR_PREVIEW_CASES = [
     OperatorPreviewCase(
-        operator_name="quality.exposure_check",
+        operator_name="exposure",
         config={},
         action_column="exposure_action",
         caption_columns=[
@@ -36,7 +36,7 @@ OPERATOR_PREVIEW_CASES = [
         ],
     ),
     OperatorPreviewCase(
-        operator_name="content.border_padding_check",
+        operator_name="border_padding",
         config={},
         action_column="border_padding_action",
         caption_columns=[
@@ -50,25 +50,25 @@ OPERATOR_PREVIEW_CASES = [
         ],
     ),
     OperatorPreviewCase(
-        operator_name="quality.noise_check",
+        operator_name="noise",
         config={"max_score": 0.01},
         action_column="noise_action",
         caption_columns=["image_id", "final_action", "noise_score", "noise_action", "noise_reason"],
     ),
     OperatorPreviewCase(
-        operator_name="content.mono_color_check",
+        operator_name="mono_color",
         config={},
         action_column="mono_color_action",
         caption_columns=["image_id", "final_action", "mono_color_score", "mono_color_action", "mono_color_reason"],
     ),
     OperatorPreviewCase(
-        operator_name="format.animated_image_check",
+        operator_name="animated",
         config={},
         action_column="animated_action",
         caption_columns=["image_id", "final_action", "frame_count", "animated", "animated_action", "animated_reason"],
     ),
     OperatorPreviewCase(
-        operator_name="metadata.orientation_check",
+        operator_name="orientation",
         config={},
         action_column="orientation_action",
         caption_columns=[
@@ -119,11 +119,11 @@ def _write_case_dataset(operator_name: str, case_dir: Path) -> Dataset:
 
 def _write_trigger_image(operator_name: str, images_dir: Path) -> Path:
     """根据算子类型写出稳定触发样本。"""
-    if operator_name == "quality.exposure_check":
+    if operator_name == "exposure":
         path = images_dir / "trigger_dark.png"
         Image.new("RGB", (32, 32), color=(0, 0, 0)).save(path)
         return path
-    if operator_name == "content.border_padding_check":
+    if operator_name == "border_padding":
         path = images_dir / "trigger_border.png"
         image = Image.new("RGB", (32, 32), color=(255, 255, 255))
         for x in range(10, 22):
@@ -131,7 +131,7 @@ def _write_trigger_image(operator_name: str, images_dir: Path) -> Path:
                 image.putpixel((x, y), (30, 80, 130))
         image.save(path)
         return path
-    if operator_name == "quality.noise_check":
+    if operator_name == "noise":
         path = images_dir / "trigger_noise.png"
         image = Image.new("RGB", (32, 32), color=(0, 0, 0))
         for x in range(32):
@@ -140,11 +140,11 @@ def _write_trigger_image(operator_name: str, images_dir: Path) -> Path:
                     image.putpixel((x, y), (255, 255, 255))
         image.save(path)
         return path
-    if operator_name == "content.mono_color_check":
+    if operator_name == "mono_color":
         path = images_dir / "trigger_mono.png"
         Image.new("RGB", (32, 32), color=(18, 90, 170)).save(path)
         return path
-    if operator_name == "format.animated_image_check":
+    if operator_name == "animated":
         path = images_dir / "trigger_animated.gif"
         frames = [
             Image.new("RGB", (32, 32), color=(200, 40, 40)),
@@ -152,7 +152,7 @@ def _write_trigger_image(operator_name: str, images_dir: Path) -> Path:
         ]
         frames[0].save(path, save_all=True, append_images=frames[1:], duration=100, loop=0)
         return path
-    if operator_name == "metadata.orientation_check":
+    if operator_name == "orientation":
         path = images_dir / "trigger_orientation.jpg"
         image = Image.new("RGB", (32, 48), color=(100, 120, 140))
         exif = image.getexif()

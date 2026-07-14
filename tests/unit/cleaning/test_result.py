@@ -62,9 +62,9 @@ def test_result_export_full_returns_expected_rows(tmp_path: Path) -> None:
             "triggered_operator_names": ["", ""],
         }
     ).to_parquet(tables_dir / "evaluation_table.parquet", index=False)
-    pd.DataFrame(
-        {"image_id": ["img-1", "img-2"], "decode_ok": [True, False], "decode_error": ["", ""]}
-    ).to_parquet(tables_dir / "parameter_table.parquet", index=False)
+    pd.DataFrame({"image_id": ["img-1", "img-2"], "decode_ok": [True, False], "decode_error": ["", ""]}).to_parquet(
+        tables_dir / "parameter_table.parquet", index=False
+    )
 
     result = CleanerResult(run_id="run-1", cache_root=tmp_path)
     output = result.export("full", tmp_path / "full.parquet")

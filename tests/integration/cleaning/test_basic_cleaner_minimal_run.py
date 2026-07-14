@@ -15,7 +15,7 @@ def test_basic_cleaner_minimal_run_writes_v3_outputs(tmp_path: Path) -> None:
         str(tmp_path / "raw.parquet"),
     )
 
-    cleaner = BasicCleaner([{"format.decode_check": {}}])
+    cleaner = BasicCleaner([{"decode": {}}])
     result = cleaner.run(dataset)
 
     assert result.preview().clean_count == 1

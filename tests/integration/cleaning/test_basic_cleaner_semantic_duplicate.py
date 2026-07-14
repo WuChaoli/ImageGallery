@@ -72,7 +72,7 @@ def _build_semantic_execution(tmp_path: Path):
     return BasicCleaner(
         [
             {
-                "duplicate.semantic_duplicate_check": {
+                "semantic_duplicate": {
                     "threshold": 0.9,
                     "action": "drop",
                     "provider": "deterministic",
@@ -135,7 +135,7 @@ def test_rerun_rejects_semantic_index_manifest_without_config_hash(tmp_path: Pat
             result,
             operators=[
                 {
-                    "duplicate.semantic_duplicate_check": {
+                    "semantic_duplicate": {
                         "threshold": 0.9,
                         "action": "drop",
                         "provider": "deterministic",

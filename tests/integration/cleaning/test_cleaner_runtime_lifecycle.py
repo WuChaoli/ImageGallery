@@ -28,7 +28,7 @@ def _tiny_dataset(tmp_path: Path) -> Dataset:
 
 def test_basic_cleaner_run_returns_result_and_hides_process_outputs(tmp_path: Path) -> None:
     dataset = _tiny_dataset(tmp_path)
-    result = BasicCleaner([{"format.decode_check": {}}]).run(dataset, label="smoke")
+    result = BasicCleaner([{"decode": {}}]).run(dataset, label="smoke")
 
     assert result.status() == "completed"
     assert not (tmp_path / "parameter_table.parquet").exists()
@@ -36,7 +36,7 @@ def test_basic_cleaner_run_returns_result_and_hides_process_outputs(tmp_path: Pa
 
 def test_result_exports_execution_plan_and_artifacts_manifests(tmp_path: Path) -> None:
     dataset = _tiny_dataset(tmp_path)
-    result = BasicCleaner([{"format.decode_check": {}}]).run(dataset)
+    result = BasicCleaner([{"decode": {}}]).run(dataset)
 
     execution_plan = result.export_manifest("execution_plan", tmp_path / "execution_plan.json")
     artifacts = result.export_manifest("artifacts", tmp_path / "artifacts.json")

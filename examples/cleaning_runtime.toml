@@ -1,14 +1,8 @@
-[cleaner]
-operators = ["QUALITY", "DUPLICATE"]
+[operators]
+blur = { min_score = 100.0, action = "review" }
+exact_duplicate = { action = "drop" }
 
-[node_policy.batch]
-size = 128
-
-[node_policy.failure]
+[runtime]
+batch_size = 128
 fail_fast = false
 max_errors = 100
-
-[[operator]]
-name = "quality.blur_check"
-min_score = 100.0
-action = "review"

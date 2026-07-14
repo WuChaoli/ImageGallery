@@ -4,7 +4,7 @@
 TBD - created by archiving change init-specs-from-codebase. Update Purpose after archive.
 ## Requirements
 ### Requirement: OperatorSpec 逻辑算子规格
-系统 SHALL 提供 `OperatorSpec`，描述算子的名称、分类、所需参数、评估输出列、默认配置、action 列、reason 列和评估器函数。
+系统 SHALL 提供 `OperatorSpec`，描述算子的名称、分类、所需参数、评估输出列、默认配置、action 列、reason 列和评估器函数。算子名称 SHALL 使用短名格式。
 
 #### Scenario: 算子评估
 - **WHEN** 调用 `spec.evaluate(parameter_table, config)`
@@ -53,31 +53,31 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **THEN** 返回所有算子分类名称列表
 
 ### Requirement: 内置算子目录
-系统 SHALL 通过 `create_default_registry()` 提供以下内置逻辑算子，按能力域分类。
+系统 SHALL 通过 `create_default_registry()` 提供以下内置逻辑算子，按能力域分类，使用短名作为主标识。
 
 #### Scenario: format 类算子
 - **WHEN** 检查注册表中的 format 类算子
-- **THEN** 包含 `format.decode_check` 和 `format.animated_image_check`
+- **THEN** 包含 `decode` 和 `animated`
 
 #### Scenario: size 类算子
 - **WHEN** 检查注册表中的 size 类算子
-- **THEN** 包含 `size.dimension_check`、`size.aspect_ratio_check` 和 `size.megapixel_check`
+- **THEN** 包含 `dimension`、`aspect_ratio` 和 `megapixel`
 
 #### Scenario: quality 类算子
 - **WHEN** 检查注册表中的 quality 类算子
-- **THEN** 包含 `quality.blur_check`、`quality.brightness_check`、`quality.contrast_check`、`quality.exposure_check` 和 `quality.noise_check`
+- **THEN** 包含 `blur`、`brightness`、`contrast`、`exposure` 和 `noise`
 
 #### Scenario: content 类算子
 - **WHEN** 检查注册表中的 content 类算子
-- **THEN** 包含 `content.blank_image_check`、`content.mono_color_check` 和 `content.border_padding_check`
+- **THEN** 包含 `blank`、`mono_color` 和 `border_padding`
 
 #### Scenario: metadata 类算子
 - **WHEN** 检查注册表中的 metadata 类算子
-- **THEN** 包含 `metadata.orientation_check`
+- **THEN** 包含 `orientation`
 
 #### Scenario: duplicate 类算子
 - **WHEN** 检查注册表中的 duplicate 类算子
-- **THEN** 包含 `duplicate.exact_duplicate_check`、`duplicate.perceptual_duplicate_check` 和 `duplicate.semantic_duplicate_check`
+- **THEN** 包含 `exact_duplicate`、`perceptual_duplicate` 和 `semantic_duplicate`
 
 ### Requirement: ParameterComputer 参数计算单元
 系统 SHALL 提供 `ParameterComputer` 抽象基类，作为参数节点的计算后端，支持按 ExecutionMode 声明执行模式。
@@ -90,7 +90,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** 创建注册表时传入 semantic_providers
 - **THEN** SemanticEmbeddingComputer 使用指定的提供者进行语义嵌入计算
 
-### Requirement: 算子短名命名（PLANNED）
+### Requirement: 算子短名命名
 系统 SHALL 将所有内置逻辑算子的主标识从 `category.operator_check` 长名格式迁移为短名格式，不保留旧长名兼容。
 
 #### Scenario: 短名映射
@@ -106,12 +106,12 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **THEN** 与 "quality" 等效
 
 #### Scenario: 旧长名报错
-- **WHEN** 使用 "quality.blur_check" 等旧长名格式
-- **THEN** 抛出 ValueError 提示使用短名
+- **WHEN** 使用 "quality.blur_check" 等旧长名格式（含 `.` 且不在注册表中）
+- **THEN** 抛出 ValueError，提示可用的短名和分类列表
 
 #### Scenario: 短名算子注册表
 - **WHEN** 调用 `create_default_registry().list_operators()`
-- **THEN** 返回按字母排序的 17 个短名列表
+- **THEN** 返回 17 个短名算子
 
 ### Requirement: 算子用户规则元数据（PLANNED）
 系统 SHALL 为每个 OperatorSpec 附加用户规则元数据，描述该算子面向用户的动作规则结构。
@@ -123,4 +123,3 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 #### Scenario: Preview Policy 短名映射
 - **WHEN** 检查内置算子的 PreviewPolicy 字典键
 - **THEN** 使用短名作为键
-
