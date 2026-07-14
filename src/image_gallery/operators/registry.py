@@ -21,8 +21,7 @@ class OperatorRegistry:
             existing_computer = self._parameter_producers.get(parameter_name)
             if existing_computer is not None and existing_computer != computer.name:
                 raise ValueError(
-                    f"parameter already has producer: {parameter_name} "
-                    f"({existing_computer}, {computer.name})"
+                    f"parameter already has producer: {parameter_name} ({existing_computer}, {computer.name})"
                 )
         self._parameter_computers[computer.name] = computer
         for parameter_name in computer.produced_parameters:

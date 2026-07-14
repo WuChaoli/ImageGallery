@@ -35,9 +35,11 @@ def render_image_grid(
         for row in frame.to_dict("records")
     ]
     grid_columns = _grid_columns(thumbnail_width=thumbnail_width, columns=columns)
-    return f'<div style="display:grid;grid-template-columns:{grid_columns};gap:12px;align-items:start;">' + "".join(
-        cards
-    ) + "</div>"
+    return (
+        f'<div style="display:grid;grid-template-columns:{grid_columns};gap:12px;align-items:start;">'
+        + "".join(cards)
+        + "</div>"
+    )
 
 
 def show_image_grid(

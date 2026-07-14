@@ -51,6 +51,15 @@ class BasicCleaner(Cleaner):
         )
 
     @classmethod
+    def from_recipe(cls, yaml_path: str | Path) -> BasicCleaner:
+        """从 YAML 配方文件构造 BasicCleaner。"""
+        from image_gallery.cleaning.recipe import CleanerRecipe
+
+        recipe = CleanerRecipe.from_yaml(yaml_path)
+        selectors = recipe.compile_selectors()
+        return cls(cast(OperatorSelectorInput, selectors))
+
+    @classmethod
     def from_toml(cls, path: str | Path) -> BasicCleaner:
         """从 TOML 配置构造 BasicCleaner。"""
         return cls.from_config(CleanerConfig.from_toml(path))

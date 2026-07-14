@@ -19,6 +19,7 @@ from image_gallery.cleaning.graph import CleaningStateGraph, GraphNode
 from image_gallery.cleaning.planner import CleaningRunPlanner, CompiledCleaningPlan
 from image_gallery.cleaning.preview import apply_final_action
 from image_gallery.cleaning.result import CleanerResult
+from image_gallery.cleaning.run_store import DiskRunStore, RunStore
 from image_gallery.cleaning.runtime_state import RunRecord, SQLiteRunStateStore
 from image_gallery.cleaning.scheduler import ParameterScheduler
 from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore, OperatorRunState
@@ -64,6 +65,7 @@ class CleaningRuntime:
         cache_root: str | Path,
         registry: OperatorRegistry | None = None,
         progress_callback: Callable[[RuntimeEvent], None] | None = None,
+        run_store: RunStore | None = None,
     ) -> None:
         """初始化运行时组件。"""
         self._cache_root = Path(cache_root)
@@ -71,6 +73,15 @@ class CleaningRuntime:
         self.state_store: SQLiteRunStateStore | None = None
         self._progress = ProgressReporter(progress_callback)
         self._artifact_manager: ArtifactManager | None = None
+        self._run_store = run_store
+
+    def get_run_store(self, run_id: str | None = None) -> RunStore:
+        """返回当前运行的 RunStore，缺省使用 DiskRunStore。"""
+        if self._run_store is not None:
+            return self._run_store
+        if run_id is None:
+            raise ValueError("run_id is required when no run_store is configured")
+        return DiskRunStore(self._cache_root, run_id)
 
     def run_graph(
         self,
@@ -354,9 +365,7 @@ class CleaningRuntime:
                 dataset_fingerprint=dataset.fingerprint(),
                 parsed_operators=parsed_operators,
                 operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={
-                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
-                },
+                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
                 paths=paths,
                 artifact_paths=artifact_paths,
                 relation_paths=relation_paths,
@@ -495,9 +504,7 @@ class CleaningRuntime:
                 dataset_fingerprint=dataset.fingerprint(),
                 parsed_operators=parsed_operators,
                 operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={
-                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
-                },
+                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
                 paths=paths,
                 artifact_paths=artifact_paths,
                 relation_paths=relation_paths,
@@ -524,9 +531,7 @@ class CleaningRuntime:
                 dataset_fingerprint=dataset.fingerprint(),
                 parsed_operators=parsed_operators,
                 operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={
-                    step.computer_name: step.config_hash for step in plan.parameter_plan.steps
-                },
+                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
                 paths=paths,
                 artifact_paths=artifact_paths,
                 relation_paths=relation_paths,
@@ -634,9 +639,7 @@ class CleaningRuntime:
             dataset_fingerprint=dataset_fingerprint,
             parsed_operators=parsed_operators,
             operator_config_hashes=plan.operator_config_hashes,
-            parameter_config_hashes={
-                step.computer_name: step.config_hash for step in plan.parameter_plan.steps
-            },
+            parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
             paths=paths,
             artifact_paths=artifact_paths,
             relation_paths=relation_paths,

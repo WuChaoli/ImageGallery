@@ -7,11 +7,7 @@ def test_real_stategraph_notebook_exports_drop_review_previews() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     notebook_path = repo_root / "notebooks" / "cleaner_runtime_stategraph_real_test.ipynb"
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
-    source = "\n".join(
-        "".join(cell.get("source", []))
-        for cell in notebook["cells"]
-        if cell.get("cell_type") == "code"
-    )
+    source = "\n".join("".join(cell.get("source", [])) for cell in notebook["cells"] if cell.get("cell_type") == "code")
 
     assert "cleaner_runtime_non_semantic_all.toml" in source
     assert "BasicCleaner.from_toml(recipe_path)" in source

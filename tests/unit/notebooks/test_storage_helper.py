@@ -103,7 +103,7 @@ def test_load_minio_storage_falls_back_to_main_checkout_env(
     main_root = tmp_path / "ImageGallery"
     worktree_root = main_root / ".worktrees" / "feature"
     worktree_root.mkdir(parents=True)
-    (worktree_root / "pyproject.toml").write_text("[project]\nname = \"image-gallery\"\n", encoding="utf-8")
+    (worktree_root / "pyproject.toml").write_text('[project]\nname = "image-gallery"\n', encoding="utf-8")
     (main_root / ".env").write_text(
         "\n".join(
             [

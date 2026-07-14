@@ -49,8 +49,7 @@ class DuplicateGroupComputer(ParameterComputer):
         valid_hash = cast(pd.Series, frame["content_hash"]).fillna("").astype(str) != ""
         counts = cast(pd.Series, frame.loc[valid_hash, "content_hash"].value_counts())
         duplicate_hashes = {
-            str(hash_value) for hash_value, count in counts.items()
-            if int(cast("int | float", count)) > 1
+            str(hash_value) for hash_value, count in counts.items() if int(cast("int | float", count)) > 1
         }
 
         rows: list[dict[str, object]] = []

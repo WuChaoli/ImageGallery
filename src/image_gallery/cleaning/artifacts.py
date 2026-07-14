@@ -147,9 +147,7 @@ class ArtifactManager:
 
 def _hash_schema(frame: pd.DataFrame) -> str:
     """根据 DataFrame schema 生成稳定 hash。"""
-    schema_payload: dict[str, Any] = {
-        "columns": [(column, str(dtype)) for column, dtype in frame.dtypes.items()]
-    }
+    schema_payload: dict[str, Any] = {"columns": [(column, str(dtype)) for column, dtype in frame.dtypes.items()]}
     return sha256(json.dumps(schema_payload, sort_keys=True).encode("utf-8")).hexdigest()
 
 

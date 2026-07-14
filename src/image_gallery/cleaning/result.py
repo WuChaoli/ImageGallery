@@ -413,9 +413,7 @@ class CleanerResult:
             raise KeyError(f"unknown operator_name: {operator_name}")
         table = self._load_evaluation_table()
         columns = [
-            column
-            for column in ["image_id", "image_uri", *operator_outputs[operator_name]]
-            if column in table.columns
+            column for column in ["image_id", "image_uri", *operator_outputs[operator_name]] if column in table.columns
         ]
         return cast(pd.DataFrame, table[columns]).copy()
 

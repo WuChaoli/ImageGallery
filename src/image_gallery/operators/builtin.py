@@ -11,6 +11,7 @@ from image_gallery.operators.computers.hash import ImageHashComputer, ImagePerce
 from image_gallery.operators.computers.metadata import ImageFormatDetailComputer, ImageMetadataComputer
 from image_gallery.operators.computers.quality import ImageQualityComputer, ImageQualityDetailComputer
 from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
+from image_gallery.operators.metric_spec import MetricSpec
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider
 from image_gallery.operators.spec import OperatorSpec
@@ -278,6 +279,124 @@ def _builtin_specs() -> list[OperatorSpec]:
     return [_to_builtin_preview_spec(spec) for spec in specs]
 
 
+def create_default_metric_specs() -> dict[str, MetricSpec]:
+    """返回 17 个内置算子的 MetricSpec 注册表。
+
+    键为算子名，值为该算子的主指标 MetricSpec。
+    """
+    return {
+        # 格式类
+        "decode": MetricSpec(
+            name="decode_ok",
+            value_type="categorical",
+            direction="categorical",
+        ),
+        "animated": MetricSpec(
+            name="animated",
+            value_type="categorical",
+            direction="categorical",
+        ),
+        # 尺寸类
+        "dimension": MetricSpec(
+            name="min_width",
+            value_type="absolute",
+            direction="higher_better",
+        ),
+        "aspect_ratio": MetricSpec(
+            name="aspect_ratio",
+            value_type="absolute",
+            direction="higher_better",
+        ),
+        "megapixel": MetricSpec(
+            name="megapixels",
+            value_type="absolute",
+            direction="higher_better",
+        ),
+        # 质量类
+        "blur": MetricSpec(
+            name="blur_score",
+            value_type="relative",
+            direction="higher_better",
+            absolute_min=0.0,
+            absolute_max=300.0,
+        ),
+        "brightness": MetricSpec(
+            name="brightness_score",
+            value_type="absolute",
+            direction="higher_better",
+        ),
+        "contrast": MetricSpec(
+            name="contrast_score",
+            value_type="relative",
+            direction="higher_better",
+            absolute_min=0.0,
+            absolute_max=100.0,
+        ),
+        "exposure": MetricSpec(
+            name="dark_pixel_ratio",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+        "noise": MetricSpec(
+            name="noise_score",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+        # 内容类
+        "blank": MetricSpec(
+            name="blank_score",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+        "mono_color": MetricSpec(
+            name="mono_color_score",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+        "border_padding": MetricSpec(
+            name="border_padding_ratio",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+        # 元数据类
+        "orientation": MetricSpec(
+            name="orientation_risk",
+            value_type="categorical",
+            direction="categorical",
+        ),
+        # 去重类
+        "exact_duplicate": MetricSpec(
+            name="exact_duplicate_count",
+            value_type="categorical",
+            direction="categorical",
+        ),
+        "perceptual_duplicate": MetricSpec(
+            name="perceptual_duplicate_distance",
+            value_type="relative",
+            direction="lower_better",
+            absolute_min=0.0,
+            absolute_max=100.0,
+        ),
+        "semantic_duplicate": MetricSpec(
+            name="semantic_duplicate_score",
+            value_type="relative",
+            direction="higher_better",
+            absolute_min=0.0,
+            absolute_max=1.0,
+        ),
+    }
+
+
 def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
     """为内置算子补齐预览策略默认值。"""
     policies = {
@@ -466,8 +585,12 @@ def evaluate_contrast_check(parameter_table: pd.DataFrame, config: dict[str, obj
     scores = cast(pd.Series, pd.to_numeric(parameter_table["contrast_score"], errors="coerce"))
     failed = cast(pd.Series, scores.notna() & (scores < min_score))
     return _score_threshold_frame(
-        cast(pd.Series, parameter_table["image_id"]), scores, failed, "contrast", action,
-        f"contrast score below {min_score}"
+        cast(pd.Series, parameter_table["image_id"]),
+        scores,
+        failed,
+        "contrast",
+        action,
+        f"contrast score below {min_score}",
     )
 
 
@@ -478,8 +601,12 @@ def evaluate_blank_image_check(parameter_table: pd.DataFrame, config: dict[str, 
     scores = cast(pd.Series, pd.to_numeric(parameter_table["blank_score"], errors="coerce"))
     failed = cast(pd.Series, scores.notna() & (scores >= threshold))
     return _score_threshold_frame(
-        cast(pd.Series, parameter_table["image_id"]), scores, failed, "blank", action,
-        f"blank score at least {threshold}"
+        cast(pd.Series, parameter_table["image_id"]),
+        scores,
+        failed,
+        "blank",
+        action,
+        f"blank score at least {threshold}",
     )
 
 
@@ -550,8 +677,9 @@ def evaluate_border_padding_check(parameter_table: pd.DataFrame, config: dict[st
     sides = parameter_table["border_padding_sides"].fillna("").astype(str)
     border_colors = parameter_table["border_padding_color"].fillna("unknown").astype(str)
     side_counts = sides.map(lambda value: 0 if not value else len(value.split(",")))
-    failed = cast(pd.Series, ratios.notna() & (ratios > max_ratio) & (side_counts > 0)
-               & border_colors.isin(list(colors)))
+    failed = cast(
+        pd.Series, ratios.notna() & (ratios > max_ratio) & (side_counts > 0) & border_colors.isin(list(colors))
+    )
     reasons = [
         f"border padding ratio above {max_ratio} sides={side_value} color={color_value}" if failed_value else ""
         for side_value, color_value, failed_value in zip(
@@ -612,8 +740,9 @@ def evaluate_exact_duplicate_check(parameter_table: pd.DataFrame, config: dict[s
         raise ValueError("exact_duplicate only supports keep='first'")
     action = str(config.get("action", "drop"))
     groups = parameter_table["exact_duplicate_group_id"].fillna("").astype(str)
-    counts = cast(pd.Series, pd.to_numeric(parameter_table["exact_duplicate_count"],
-                     errors="coerce")).fillna(1).astype(int)
+    counts = (
+        cast(pd.Series, pd.to_numeric(parameter_table["exact_duplicate_count"], errors="coerce")).fillna(1).astype(int)
+    )
 
     seen_groups: set[str] = set()
     actions: list[str] = []
@@ -652,8 +781,11 @@ def evaluate_perceptual_duplicate_check(parameter_table: pd.DataFrame, config: d
         raise ValueError("perceptual_duplicate only supports action='drop'")
 
     groups = parameter_table["perceptual_duplicate_group_id"].fillna("").astype(str)
-    counts = cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_count"],
-                     errors="coerce")).fillna(1).astype(int)
+    counts = (
+        cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_count"], errors="coerce"))
+        .fillna(1)
+        .astype(int)
+    )
     distances = cast(pd.Series, pd.to_numeric(parameter_table["perceptual_duplicate_distance"], errors="coerce"))
 
     seen_groups: set[str] = set()
@@ -694,8 +826,11 @@ def evaluate_semantic_duplicate_check(parameter_table: pd.DataFrame, config: dic
         raise ValueError("semantic_duplicate only supports action='drop' or action='review'")
 
     groups = parameter_table["semantic_duplicate_group_id"].fillna("").astype(str)
-    counts = cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_count"],
-                     errors="coerce")).fillna(1).astype(int)
+    counts = (
+        cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_count"], errors="coerce"))
+        .fillna(1)
+        .astype(int)
+    )
     scores = cast(pd.Series, pd.to_numeric(parameter_table["semantic_duplicate_score"], errors="coerce"))
     nearest_ids = parameter_table["semantic_duplicate_nearest_image_id"].fillna("").astype(str)
 

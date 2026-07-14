@@ -49,11 +49,7 @@ def resolve_preview_policy(
 ) -> ResolvedPreviewOptions:
     """把策略与用户覆盖参数合并为最终预览配置。"""
     action_filter: ActionFilter = normalize_actions(actions, policy.default_actions)
-    resolved_actions = (
-        []
-        if action_filter.include_all
-        else sorted(action_filter.stored_actions)
-    )
+    resolved_actions = [] if action_filter.include_all else sorted(action_filter.stored_actions)
 
     resolved_caption_columns = list(caption_columns or policy.caption_columns or [])
     resolved_sort_by = list(sort_by or policy.sort_by or [])

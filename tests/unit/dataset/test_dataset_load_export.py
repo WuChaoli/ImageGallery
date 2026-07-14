@@ -58,6 +58,4 @@ def test_dataset_export_uses_tabular_exporter_and_drops_source_uri(tmp_path: Pat
     assert isinstance(result, DatasetExportResult)
     assert result.output_path == str(output_path)
     exported = Dataset.load(str(output_path))
-    assert exported.to_frame().to_dict("records") == [
-        {"image_id": "img-1", "image_uri": "/managed/a.jpg", "width": 10}
-    ]
+    assert exported.to_frame().to_dict("records") == [{"image_id": "img-1", "image_uri": "/managed/a.jpg", "width": 10}]

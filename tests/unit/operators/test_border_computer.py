@@ -26,9 +26,7 @@ def test_border_computer_detects_simple_white_padding(tmp_path) -> None:
     result = ImageBorderComputer().compute(
         ParameterRequest(
             parameter_table=pd.DataFrame({"image_id": ["bordered"]}),
-            requested_parameters=frozenset(
-                {"border_padding_ratio", "border_padding_sides", "border_padding_color"}
-            ),
+            requested_parameters=frozenset({"border_padding_ratio", "border_padding_sides", "border_padding_color"}),
             config={},
             config_hash="border-v1",
             artifacts_dir=tmp_path,
@@ -50,9 +48,7 @@ def test_border_computer_reports_empty_values_without_border(tmp_path) -> None:
     result = ImageBorderComputer().compute(
         ParameterRequest(
             parameter_table=pd.DataFrame({"image_id": ["plain"]}),
-            requested_parameters=frozenset(
-                {"border_padding_ratio", "border_padding_sides", "border_padding_color"}
-            ),
+            requested_parameters=frozenset({"border_padding_ratio", "border_padding_sides", "border_padding_color"}),
             config={},
             config_hash="border-v1",
             artifacts_dir=tmp_path,
@@ -72,9 +68,7 @@ def test_border_computer_writes_na_for_decode_errors(tmp_path) -> None:
     result = ImageBorderComputer().compute(
         ParameterRequest(
             parameter_table=pd.DataFrame({"image_id": ["bad"]}),
-            requested_parameters=frozenset(
-                {"border_padding_ratio", "border_padding_sides", "border_padding_color"}
-            ),
+            requested_parameters=frozenset({"border_padding_ratio", "border_padding_sides", "border_padding_color"}),
             config={},
             config_hash="border-v1",
             artifacts_dir=tmp_path,
