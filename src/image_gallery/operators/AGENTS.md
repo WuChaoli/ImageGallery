@@ -14,6 +14,7 @@
 
 - 用户侧算子按能力命名，底层库保持实现细节。
 - OperatorSpec 只表达逻辑评估；ParameterComputer 负责生成可复用参数和 relation artifact。
+- ParameterComputer 可覆盖 `before_run_check(config)` 做运行前依赖和资源校验，默认实现为空操作。
 - 新算子必须声明所需参数、输出列、默认配置和预览策略。
 - 语义算子依赖缺失应在运行前检查阶段给出明确错误。
 

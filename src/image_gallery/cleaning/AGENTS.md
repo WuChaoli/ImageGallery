@@ -15,6 +15,7 @@
 - Raw Dataset 不可原地修改；clean、dropped、full 只能由 merge policy 生成。
 - `clean + dropped = full` 按 `image_id` 集合成立。
 - 运行状态由 SQLite/RunStore 管理，图片仍通过 Dataset 与 Storage 访问。
+- 运行和 dry-run 在参数计算前调用相关 ParameterComputer 的 `before_run_check(config)`，用于提前暴露可选依赖或资源错误。
 - 逻辑算子名称面向能力，不向用户暴露 OpenCV、fastdup 等实现后端。
 - 单张图片计算失败应按策略记录，不能默认终止整个批次。
 

@@ -1,4 +1,5 @@
 import json
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from importlib.util import find_spec
@@ -34,22 +35,24 @@ class SemanticEmbeddingComputer(ParameterComputer):
     name = "semantic_embedding_computer"
     execution_mode = ExecutionMode.PER_IMAGE
     produced_parameters = frozenset({SEMANTIC_EMBEDDING_REF})
+    config_parameters = frozenset({"batch_size", "model_path", "provider"})
 
     def __init__(self, providers: dict[str, SemanticEmbeddingProvider] | None = None) -> None:
         self._providers = providers or {}
 
-    def before_run_check(self) -> None:
+    def before_run_check(self, config: Mapping[str, object] | None = None) -> None:
         """校验语义 embedding 可选依赖和模型路径。"""
-        # 已有外部 provider 时跳过 import 检查
+        resolved_config = config or {}
+        model_path = resolved_config.get("model_path")
+        if isinstance(model_path, (str, Path)) and not Path(model_path).exists():
+            raise FileNotFoundError(
+                f"model_path does not exist: {model_path}; download the model or set a valid model_path"
+            )
+
+        # 已有外部 provider 时跳过 import 检查。
         if not self._providers:
-            if find_spec("onnxruntime") is None:
-                raise SemanticDependencyError(
-                    "onnxruntime is required for semantic embedding; install image-gallery[semantic]"
-                )
-            if find_spec("huggingface_hub") is None:
-                raise SemanticDependencyError(
-                    "huggingface_hub is required for semantic embedding; install image-gallery[semantic]"
-                )
+            _require_semantic_dependency("onnxruntime", "semantic embedding")
+            _require_semantic_dependency("huggingface_hub", "semantic embedding")
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """提取有效图片的语义 embedding 并产出引用参数。"""
@@ -201,6 +204,7 @@ class SemanticDuplicateGroupComputer(ParameterComputer):
         }
     )
     required_parameters = frozenset({SEMANTIC_EMBEDDING_REF})
+    config_parameters = frozenset({"index", "threshold"})
     stages = (
         ParameterStageSpec(
             name="read_embeddings",
@@ -226,12 +230,10 @@ class SemanticDuplicateGroupComputer(ParameterComputer):
         ),
     )
 
-    def before_run_check(self) -> None:
-        """校验语义重复检测所需的 faiss-cpu 依赖。"""
-        if find_spec("faiss") is None:
-            raise SemanticDependencyError(
-                "faiss-cpu is required for semantic duplicate index; install image-gallery[semantic]"
-            )
+    def before_run_check(self, config: Mapping[str, object] | None = None) -> None:
+        """校验语义重复检测所需的可选依赖。"""
+        _require_semantic_dependency("onnxruntime", "semantic duplicate")
+        _require_semantic_dependency("faiss", "semantic duplicate index", package_name="faiss-cpu")
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         """读取 embedding artifact，构建 Faiss index，并生成语义重复关系。"""
@@ -308,6 +310,20 @@ def _write_faiss_index(embeddings: NDArray[np.float32], path: Path) -> None:
     index = faiss.IndexFlatIP(int(embeddings.shape[1]))
     index.add(np.ascontiguousarray(embeddings.astype(np.float32)))
     faiss.write_index(index, str(path))
+
+
+def _require_semantic_dependency(
+    module_name: str,
+    feature_name: str,
+    *,
+    package_name: str | None = None,
+) -> None:
+    """校验语义算子可选依赖是否可导入。"""
+    if find_spec(module_name) is None:
+        dependency_name = package_name or module_name
+        raise SemanticDependencyError(
+            f"{dependency_name} is required for {feature_name}; install image-gallery[semantic]"
+        )
 
 
 def _write_index_manifest(

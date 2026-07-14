@@ -207,13 +207,25 @@ def _collect_parameter_plan(
         computer_by_name,
     )
 
+    def collect_computer_names(parameter_name: str, seen: set[str]) -> set[str]:
+        computer = registry.get_parameter_producer(parameter_name)
+        if computer.name in seen:
+            return set()
+        seen.add(computer.name)
+        names = {computer.name}
+        for required_parameter in computer.required_parameters:
+            names.update(collect_computer_names(required_parameter, seen))
+        return names
+
     for configured in configured_operators:
-        for parameter_name in configured.spec.required_parameters:
-            computer = registry.get_parameter_producer(parameter_name)
+        computer_names: set[str] = set()
+        for required_parameter in configured.spec.required_parameters:
+            computer_names.update(collect_computer_names(required_parameter, set()))
+
+        for computer_name in sorted(computer_names):
+            computer = registry.get_parameter_computer(computer_name)
             projected_config = {
-                key: configured.config[key]
-                for key in sorted(computer.config_parameters)
-                if key in configured.config
+                key: configured.config[key] for key in sorted(computer.config_parameters) if key in configured.config
             }
             config_hash = hash_config(projected_config) if projected_config else "default"
             entry = (projected_config, config_hash)
@@ -345,8 +357,8 @@ def compile_state_graph(
         for configured in configured_operators
     }
 
-    ordered_computer_names, upstream_by_computer, config_hash_by_computer = (
-        _collect_parameter_plan(configured_operators, registry)
+    ordered_computer_names, upstream_by_computer, config_hash_by_computer = _collect_parameter_plan(
+        configured_operators, registry
     )
     parameter_node_policies = _select_parameter_node_policies(
         configured_operators,
@@ -370,9 +382,7 @@ def compile_state_graph(
             previous_upstreams = upstream_node_ids
             for index, stage in enumerate(computer.stages):
                 produced_parameters = (
-                    frozenset(computer.produced_parameters)
-                    if index == len(computer.stages) - 1
-                    else frozenset()
+                    frozenset(computer.produced_parameters) if index == len(computer.stages) - 1 else frozenset()
                 )
                 parameter_nodes.append(
                     GraphNode(
@@ -458,9 +468,11 @@ def compile_state_graph(
         checkpoint_strategy="none",
     )
 
-    ordered_nodes = tuple([
-        *parameter_nodes,
-        *evaluation_nodes,
-        merge_node,
-    ])
+    ordered_nodes = tuple(
+        [
+            *parameter_nodes,
+            *evaluation_nodes,
+            merge_node,
+        ]
+    )
     return CleaningStateGraph(nodes=ordered_nodes, plan_hash=_hash_graph_nodes(ordered_nodes))

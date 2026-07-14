@@ -1,7 +1,9 @@
+from collections.abc import Mapping
 from io import BytesIO
 from pathlib import Path
 
 import pandas as pd
+import pytest
 from PIL import Image
 
 from image_gallery.cleaning.config import parse_operator_configs
@@ -43,6 +45,14 @@ class CountingImageComputer(ParameterComputer):
                 }
             },
         )
+
+
+class FailingBeforeRunComputer(CountingImageComputer):
+    name = "failing_before_run_computer"
+    produced_parameters = frozenset({"image_score"})
+
+    def before_run_check(self, config: Mapping[str, object] | None = None) -> None:
+        raise RuntimeError("preflight failed")
 
 
 class TableComputer(ParameterComputer):
@@ -145,6 +155,24 @@ def _registry(image_computer: CountingImageComputer) -> OperatorRegistry:
     return registry
 
 
+def _failing_registry(image_computer: FailingBeforeRunComputer) -> OperatorRegistry:
+    registry = OperatorRegistry()
+    registry.register_parameter_computer(image_computer)
+    registry.register_operator(
+        OperatorSpec(
+            name="demo.before_run_check",
+            category="demo",
+            required_parameters=["image_score"],
+            evaluation_columns=["demo_action", "demo_reason"],
+            default_config={},
+            action_column="demo_action",
+            reason_column="demo_reason",
+            evaluator=_evaluate,
+        )
+    )
+    return registry
+
+
 def _dataset(tmp_path: Path) -> CountingReadDataset:
     image_buffer = BytesIO()
     Image.new("RGB", (2, 2), color=(255, 0, 0)).save(image_buffer, format="PNG")
@@ -181,3 +209,24 @@ def test_scheduler_executes_plan_and_merges_outputs(tmp_path: Path) -> None:
     assert set(result.tables.parameter_manifest) == {"image_score", "table_score", "group_id"}
     assert result.artifact_paths == {"counting_image_computer": str(context.paths.artifacts_dir / "image")}
     assert result.relation_paths["demo_pairs"].replace("\\", "/").endswith("relations/demo_pairs.parquet")
+
+
+def test_scheduler_runs_before_run_check_before_compute(tmp_path: Path) -> None:
+    image_computer = FailingBeforeRunComputer()
+    registry = _failing_registry(image_computer)
+    dataset = _dataset(tmp_path)
+    parsed_configs = parse_operator_configs([{"demo.before_run_check": {}}])
+    context = create_run_context(dataset, "basic", parsed_configs, tmp_path / "cleaning")
+    parameter_table = initialize_parameter_table(dataset)
+    tables = CleaningTables(
+        parameter_table=parameter_table,
+        evaluation_table=initialize_evaluation_table(parameter_table),
+        operator_outputs={},
+        parameter_manifest={},
+    )
+    plan = CleaningRunPlanner(registry).compile(parsed_configs)
+
+    with pytest.raises(RuntimeError, match="preflight failed"):
+        ParameterScheduler(registry).run(plan.parameter_plan, context, tables)
+
+    assert image_computer.calls == 0

@@ -46,6 +46,14 @@ class ParameterScheduler:
         completed_node_ids: set[str] | None = None,
     ) -> ParameterScheduleResult:
         """执行参数计划，并返回更新后的 tables 和产物路径。"""
+        # 运行前校验：收集所有涉及的 Computer 并逐个调用 before_run_check
+        checked: set[str] = set()
+        for step in plan.steps:
+            if step.computer_name not in checked:
+                computer = self._registry.get_parameter_computer(step.computer_name)
+                computer.before_run_check(step.config)
+                checked.add(step.computer_name)
+
         artifact_paths: dict[str, str] = {}
         relation_paths: dict[str, str] = {}
         image_batch = self._build_image_batch(context, tables) if self._requires_image_batch(plan) else None
@@ -163,11 +171,7 @@ class ParameterScheduler:
             artifact_refs = []
             if "artifact_ref" in frame.columns:
                 artifact_refs = sorted(
-                    {
-                        value
-                        for value in frame["artifact_ref"].fillna("").astype(str).tolist()
-                        if value
-                    }
+                    {value for value in frame["artifact_ref"].fillna("").astype(str).tolist() if value}
                 )
             payload = {
                 "artifact_schema_version": 1,

@@ -1,4 +1,5 @@
 import json
+from importlib.machinery import ModuleSpec
 from pathlib import Path
 
 import numpy as np
@@ -8,7 +9,11 @@ from PIL import Image
 
 from image_gallery.operators.computers.base import ImageBatch, ImageBatchItem, ParameterRequest
 from image_gallery.operators.computers.semantic import SemanticDuplicateGroupComputer, SemanticEmbeddingComputer
-from image_gallery.operators.semantic_provider import SemanticEmbeddingProvider, SemanticEmbeddingResult
+from image_gallery.operators.semantic_provider import (
+    SemanticDependencyError,
+    SemanticEmbeddingProvider,
+    SemanticEmbeddingResult,
+)
 
 
 class FakeSemanticProvider(SemanticEmbeddingProvider):
@@ -125,6 +130,54 @@ def test_semantic_embedding_computer_batches_provider_calls(tmp_path: Path) -> N
     artifact_dir = tmp_path / "artifacts" / "semantic_embeddings"
     assert np.load(artifact_dir / "embeddings.npy").shape == (5, 3)
     assert result.parameter_updates["semantic_embedding_ref"].ne("").all()
+
+
+def test_semantic_embedding_before_run_check_reports_missing_onnxruntime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_find_spec(name: str) -> ModuleSpec | None:
+        if name == "onnxruntime":
+            return None
+        return ModuleSpec(name, loader=None)
+
+    monkeypatch.setattr("image_gallery.operators.computers.semantic.find_spec", fake_find_spec)
+
+    with pytest.raises(SemanticDependencyError, match="install image-gallery\\[semantic\\]"):
+        SemanticEmbeddingComputer().before_run_check()
+
+
+def test_semantic_embedding_before_run_check_passes_when_dependencies_exist(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_find_spec(name: str) -> ModuleSpec:
+        return ModuleSpec(name, loader=None)
+
+    monkeypatch.setattr("image_gallery.operators.computers.semantic.find_spec", fake_find_spec)
+
+    SemanticEmbeddingComputer().before_run_check()
+
+
+def test_semantic_embedding_before_run_check_reports_missing_model_path(tmp_path: Path) -> None:
+    missing_path = tmp_path / "missing.onnx"
+
+    with pytest.raises(FileNotFoundError, match="model_path does not exist"):
+        SemanticEmbeddingComputer({"fake": FakeSemanticProvider(np.empty((0, 3), dtype=np.float32))}).before_run_check(
+            {"model_path": str(missing_path)}
+        )
+
+
+def test_semantic_duplicate_before_run_check_reports_missing_onnxruntime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_find_spec(name: str) -> ModuleSpec | None:
+        if name == "onnxruntime":
+            return None
+        return ModuleSpec(name, loader=None)
+
+    monkeypatch.setattr("image_gallery.operators.computers.semantic.find_spec", fake_find_spec)
+
+    with pytest.raises(SemanticDependencyError, match="onnxruntime"):
+        SemanticDuplicateGroupComputer().before_run_check()
 
 
 def _write_embedding_artifact(tmp_path: Path) -> str:

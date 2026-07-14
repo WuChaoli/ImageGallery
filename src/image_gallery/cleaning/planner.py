@@ -167,11 +167,26 @@ class CleaningRunPlanner:
         self,
         resolved_runs: tuple[ResolvedOperatorRun, ...],
     ) -> dict[str, tuple[dict[str, object], str]]:
-        """把逻辑算子配置绑定到其 required parameters 的生产 computer。"""
+        """把逻辑算子配置绑定到其参数依赖闭包内的 computer。"""
         configs: dict[str, tuple[dict[str, object], str]] = {}
+
+        def collect_computer_names(parameter_name: str, seen: set[str]) -> set[str]:
+            computer = self._registry.get_parameter_producer(parameter_name)
+            if computer.name in seen:
+                return set()
+            seen.add(computer.name)
+            names = {computer.name}
+            for required_parameter in computer.required_parameters:
+                names.update(collect_computer_names(required_parameter, seen))
+            return names
+
         for run in resolved_runs:
-            for parameter_name in run.spec.required_parameters:
-                computer = self._registry.get_parameter_producer(parameter_name)
+            computer_names: set[str] = set()
+            for required_parameter in run.spec.required_parameters:
+                computer_names.update(collect_computer_names(required_parameter, set()))
+
+            for computer_name in sorted(computer_names):
+                computer = self._registry.get_parameter_computer(computer_name)
                 projected_config = {
                     key: run.merged_config[key]
                     for key in sorted(computer.config_parameters)

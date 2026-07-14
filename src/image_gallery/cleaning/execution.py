@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pandas as pd
 
-from image_gallery.cleaning.config import OperatorConfigInput
+from image_gallery.cleaning.config import OperatorConfigInput, hash_config
 from image_gallery.cleaning.events import RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.policy import NodePolicy
@@ -47,6 +47,7 @@ def build_dry_run_result(
     graph: CleaningStateGraph,
     configured_operators: list[ConfiguredOperatorSpec],
     dataset: Dataset | None = None,
+    registry: OperatorRegistry | None = None,
 ) -> DryRunResult:
     """构建不执行参数计算的运行前诊断。"""
     errors: list[str] = []
@@ -59,13 +60,26 @@ def build_dry_run_result(
     elif dataset is None:
         warnings.append("dataset was not provided; schema validation was skipped")
 
+    # 运行前依赖校验
+    if registry is not None:
+        checked: set[str] = set()
+        config_by_computer = _parameter_computer_configs(configured_operators, registry)
+        for node in graph.nodes:
+            if node.node_type == "parameter" and node.computer_name is not None:
+                if node.computer_name not in checked:
+                    try:
+                        computer = registry.get_parameter_computer(node.computer_name)
+                        computer.before_run_check(config_by_computer.get(node.computer_name, ({}, "default"))[0])
+                    except Exception as exc:
+                        errors.append(f"before_run_check failed for {node.computer_name}: {exc}")
+                    checked.add(node.computer_name)
+
     estimated_artifacts = ["tables/parameter_table.parquet", "tables/evaluation_table.parquet"]
     for node in graph.nodes:
         if node.node_type == "parameter" and node.computer_name is not None:
             estimated_artifacts.append(f"artifacts/{node.computer_name}")
     preview_policies: dict[str, object] = {
-        configured.operator_name: configured.spec.preview_policy
-        for configured in configured_operators
+        configured.operator_name: configured.spec.preview_policy for configured in configured_operators
     }
     return DryRunResult(
         selected_operators=[spec.spec.name for spec in configured_operators],
@@ -77,6 +91,44 @@ def build_dry_run_result(
         estimated_artifacts=estimated_artifacts,
         preview_policies=preview_policies,
     )
+
+
+def _parameter_computer_configs(
+    configured_operators: list[ConfiguredOperatorSpec],
+    registry: OperatorRegistry,
+) -> dict[str, tuple[dict[str, object], str]]:
+    """把 dry-run 的逻辑算子配置映射到参数依赖闭包内的 computer。"""
+    configs: dict[str, tuple[dict[str, object], str]] = {}
+
+    def collect_computer_names(parameter_name: str, seen: set[str]) -> set[str]:
+        computer = registry.get_parameter_producer(parameter_name)
+        if computer.name in seen:
+            return set()
+        seen.add(computer.name)
+        names = {computer.name}
+        for required_parameter in computer.required_parameters:
+            names.update(collect_computer_names(required_parameter, seen))
+        return names
+
+    for configured in configured_operators:
+        computer_names: set[str] = set()
+        for required_parameter in configured.spec.required_parameters:
+            computer_names.update(collect_computer_names(required_parameter, set()))
+
+        for computer_name in sorted(computer_names):
+            computer = registry.get_parameter_computer(computer_name)
+            projected_config = {
+                key: configured.config[key]
+                for key in sorted(computer.config_parameters)
+                if key in configured.config
+            }
+            config_hash = hash_config(projected_config) if projected_config else "default"
+            next_config = (projected_config, config_hash)
+            existing_config = configs.get(computer.name)
+            if existing_config is not None and existing_config != next_config:
+                raise ValueError(f"conflicting parameter computer config: {computer.name}")
+            configs[computer.name] = next_config
+    return configs
 
 
 def _coerce_run_id(run_options: Mapping[str, object], fallback: str | None = None) -> str:
@@ -239,7 +291,7 @@ class CleanerExecution:
 
     def dry_run(self, dataset: Dataset | None = None) -> DryRunResult:
         """返回 dry-run 结果（当前只包含最小元信息）。"""
-        return build_dry_run_result(self.graph, self.configured_operators, dataset)
+        return build_dry_run_result(self.graph, self.configured_operators, dataset, registry=self.registry)
 
     def run(self, dataset: Dataset, **run_options: object) -> CleanerResult:
         """按已编译图执行一次清洗运行。"""

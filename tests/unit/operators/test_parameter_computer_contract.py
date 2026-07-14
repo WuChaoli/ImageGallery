@@ -96,7 +96,10 @@ def test_parameter_computer_contract_uses_shared_image_batch(tmp_path: Path) -> 
 
     result = DemoComputer().compute(request)
 
-    assert result.parameter_updates.to_dict(orient="records") == [
-        {"image_id": "img-1", "demo_score": 1.0}
-    ]
+    assert result.parameter_updates.to_dict(orient="records") == [{"image_id": "img-1", "demo_score": 1.0}]
     assert result.parameter_manifest["demo_score"]["computer"] == "demo_computer"
+
+
+def test_before_run_check_default_is_noop() -> None:
+    computer = DemoComputer()
+    computer.before_run_check()  # 不抛异常即通过

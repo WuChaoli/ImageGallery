@@ -1,4 +1,5 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
@@ -82,6 +83,14 @@ class ParameterComputer(ABC):
     runtime_policy: ComputerRuntimePolicy = ComputerRuntimePolicy()
     capability: ComputerCapability = ComputerCapability()
     stages: tuple[ParameterStageSpec, ...] = ()
+
+    def before_run_check(self, config: Mapping[str, object] | None = None) -> None:
+        """运行前校验依赖和资源，默认空操作。子类可覆盖以提前校验。
+
+        Args:
+            config: 参数计算单元本次运行使用的配置子集。
+        """
+        return None
 
     @abstractmethod
     def compute(self, request: ParameterRequest) -> ParameterResult:
