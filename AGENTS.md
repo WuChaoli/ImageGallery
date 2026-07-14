@@ -2,7 +2,7 @@
 
 ## 项目结构与模块组织
 
-本仓库当前以文档先行为主。产品需求位于 `docs/prds/`，架构入口位于 `docs/architecture/`，模块设计位于 `docs/architecture/modules/`，分阶段开发计划位于 `docs/development/`。
+本仓库以 openspec 规范驱动开发。行为规范位于 `openspec/specs/`，最新设计规格和实现计划位于 `docs/superpowers/`。原始设计文档已备份至根目录 `docs-backup.tar.gz`。
 
 计划中的 Python 包结构是 `src/image_gallery/`，按领域拆分为 `storage`、`dataset`、`schemas`、`state`、`importers`、`cleaning`、`operators`、`visualization`、`reports` 和 `utils`。测试应放在 `tests/unit/` 与 `tests/integration/`；示例和 Notebook 验证入口应放在 `examples/` 与 `notebooks/`。
 
@@ -54,26 +54,15 @@ Pull Request 应说明变更范围，列出已运行的验证命令，链接相�
 
 保持 V1 边界清晰：Parquet 存数据集，SQLite 存运行状态，Storage 存图片。导入后 `image_uri` 是图片主引用；`source_uri` 用于追溯。clean、dropped 和 full 数据集必须通过 merge policy 基于逻辑算子结果生成。
 
-## docs/ 文档状态索引
+## docs/ 文档状态
 
-以下文档为历史参考，行为规范以 `openspec/specs/` 为准：
+行为规范以 `openspec/specs/` 为准。原始设计文档（PRD、架构、开发计划）已备份至 `docs-backup.tar.gz`。
 
-| 文档 | 状态 | 说明 |
+| 目录 | 状态 | 说明 |
 |------|------|------|
-| `docs/prds/图片数据集处理框架-PRD.md` | 参考 | 产品需求，已提取至 openspec specs |
-| `docs/architecture/总体架构.md` | 参考 | 核心决策和数据流仍有参考价值 |
-| `docs/architecture/modules/清洗平台与算子库.md` | 已 superseded | V1 原始设计，已被 V2→V3 迭代替代 |
-| `docs/architecture/modules/清洗平台接口.md` | 已 superseded | V1 接口设计 |
-| `docs/architecture/modules/清洗平台接口-v2.md` | 已 superseded | V2 接口设计 |
-| `docs/architecture/modules/清洗平台接口-v2-文件类函数设计.md` | 已 superseded | V2 文件设计 |
-| `docs/architecture/modules/清洗平台与算子库-v3.md` | 参考 | V3 设计基础，最新设计在 superpowers/ |
-| `docs/architecture/modules/存储系统.md` | 参考 | 存储设计仍有参考价值 |
-| `docs/architecture/modules/图片导入与元数据.md` | 参考 | 导入设计仍有参考价值 |
-| `docs/architecture/modules/数据集管理与可视化.md` | 参考 | 数据集设计仍有参考价值 |
-| `docs/architecture/modules/错误处理与恢复.md` | 参考 | 状态存储和恢复设计仍有参考价值 |
-| `docs/architecture/modules/性能与扩展.md` | 参考 | 性能设计仍有参考价值 |
-| `docs/development/` | 历史 | 分阶段开发计划，作为历史记录保留 |
-| `docs/superpowers/` | 已迁移 | 最新设计已迁移至 openspec changes |
+| `docs/superpowers/` | 参考 | 最新设计规格和实现计划，作为新开发参考 |
+| `docs/testing/` | 参考 | 测试检查清单 |
+| `docs-backup.tar.gz` | 备份 | 包含原 `docs/prds/`、`docs/architecture/`、`docs/development/` 全部内容 |
 
 ## 重构说明
 
