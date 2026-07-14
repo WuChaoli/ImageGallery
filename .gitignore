@@ -11,3 +11,4 @@ __pycache__/
 .env
 notebooks/.importers_test_library/
 datasets/
+.qoder/

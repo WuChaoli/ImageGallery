@@ -1,0 +1,24 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python 3.10, src/ layout, 4-space indent
+  Dependencies: Pillow, OpenCV, pandas, pyarrow, minio, pyyaml
+  Domain: Image dataset processing framework (local-first)
+  Architecture: storage / dataset / schemas / importers / cleaning / operators / visualization / reports
+  Key conventions:
+    - image_uri is the primary image reference; source_uri for traceability
+    - Parquet for datasets, SQLite for run state, Storage for images
+    - Operators use capability-first naming (quality.blur_check, duplicate.exact_duplicate_check)
+    - clean + dropped = full (merge policy)
+    - Chinese comments, Google-style docstrings
+  Dev: uv venv, pytest, ruff, mypy
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours
