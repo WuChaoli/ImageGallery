@@ -35,17 +35,17 @@
 
 - [x] 6.1 新增最小权限的发布工作流，从干净 checkout 重新构建并重复 wheel 隔离安装与 smoke test
 - [x] 6.2 为通过验证的发布产物生成 CycloneDX SBOM，并验证 SBOM 能对应锁定依赖和发布产物
-- [ ] 6.3 为发布产物生成 GitHub artifact attestation；若仓库能力不支持，则记录限制并在支持前禁止宣称产物已具备来源证明
-- [ ] 6.4 验证构建、安装、smoke test、SBOM 或 attestation 任一失败都不会创建正式发布
+- [x] 6.3 为发布产物生成 GitHub artifact attestation；若仓库能力不支持，则记录限制并在支持前禁止宣称产物已具备来源证明
+- [x] 6.4 验证构建、安装、smoke test、SBOM 或 attestation 任一失败都不会创建正式发布
 
 ## 7. GitHub 合并保护
 
-- [ ] 7.1 在工作流稳定运行后创建默认分支 ruleset 或 branch protection，要求 PR、review conversation resolution 和唯一稳定的质量/安全 required checks
-- [ ] 7.2 禁止普通维护者直接推送、force push 和删除默认分支，并配置受审计的紧急恢复路径而非日常 bypass
-- [ ] 7.3 用一个成功 PR 和分别触发 lint、test、secret、dependency、workflow 与 build 失败的验证 PR，确认 GitHub 实际拒绝合并
+- [x] 7.1 在工作流稳定运行后创建默认分支 ruleset 或 branch protection，要求 PR、review conversation resolution 和唯一稳定的质量/安全 required checks
+- [x] 7.2 禁止普通维护者直接推送、force push 和删除默认分支，并配置受审计的紧急恢复路径而非日常 bypass
+- [x] 7.3 用一个成功 PR 和分别触发 lint、test、secret、dependency、workflow 与 build 失败的验证 PR，确认 GitHub 实际拒绝合并
 
 ## 8. 文档与完成验证
 
 - [x] 8.1 更新 README 或开发文档，解释各工作流、失败排查、本地复现、安全告警和限时豁免流程
 - [x] 8.2 运行 `make check`、全部安全入口、workflow lint、OpenSpec validate 和发布 dry run，记录真实通过结果
-- [ ] 8.3 检查 required check 名称与 GitHub ruleset 完全一致、无悬空检查，并确认所有 OpenSpec tasks 完成后再进入文档同步与归档流程
+- [x] 8.3 检查 required check 名称与 GitHub ruleset 完全一致、无悬空检查，并确认所有 OpenSpec tasks 完成后再进入文档同步与归档流程

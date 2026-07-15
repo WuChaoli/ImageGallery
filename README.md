@@ -43,4 +43,4 @@ uv run python -m build --outdir .tmp/ci-dist
 
 任何已知依赖漏洞都会阻断合并。安全告警不得通过禁用整个扫描器或跳过源码目录来处理。确属误报或暂不可修复时，在 `.security-exceptions.yml` 中登记具体发现；每条例外必须包含 `id`、`tool`、`scope`、`reason`、`owner` 和 `expires`，过期例外会让 CI 失败。真实密钥一旦进入 Git 历史，必须立即吊销和轮换，仅删除文件或添加豁免不能消除泄露。
 
-每周定时任务会重新扫描主分支和完整 Git 历史。手动触发 `Release artifacts` 工作流后，只有 wheel 隔离安装、SBOM 和 artifact attestation 全部成功，构建产物才会上传。当前仓库为私有仓库，CodeQL 与 GitHub Secret Scanning 仍需在仓库套餐支持并启用后加入 required checks。
+每周定时任务会重新扫描主分支和完整 Git 历史。手动触发 `Release artifacts` 工作流后，只有 wheel 隔离安装、SBOM 和 artifact attestation 全部成功，构建产物才会上传。仓库已公开并验证 artifact attestation 可以成功生成；SBOM 和来源证明只提供组件清单与构建来源，不代表代码不存在漏洞。`master` 受分支保护：变更必须经过 Pull Request、至少一次审批、解决审查对话，并通过 `lint`、`test`、`package`、`secrets`、`dependencies` 和 `workflows` 六项检查。force push、删除分支和管理员日常绕过均被禁止；紧急恢复只能由管理员临时修改保护规则，并保留 GitHub 审计记录。
