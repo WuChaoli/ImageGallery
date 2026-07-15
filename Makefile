@@ -58,7 +58,8 @@ security_exceptions:
 security: security_exceptions security_secrets security_dependencies security_workflows
 
 package:
-	uv run python -m build --outdir .tmp/ci-dist
+	@echo "intentional package gate validation failure"
+	@exit 1
 
 package_smoke:
 	uv run --isolated --no-project --with "$$(ls -t .tmp/ci-dist/*.whl | head -1)" python -c "import image_gallery"

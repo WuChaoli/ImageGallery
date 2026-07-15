@@ -6,8 +6,7 @@ on:
   push:
     branches: [master]
 
-permissions:
-  contents: read
+permissions: write-all
 
 env:
   UV_FROZEN: "1"
