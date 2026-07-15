@@ -32,6 +32,8 @@ def test_get_default_minio_sample_1000_raw_path_falls_back_to_main_checkout(
     assert get_default_minio_sample_1000_raw_path() == main_dataset_path
 
 
+@pytest.mark.slow
+@pytest.mark.real_dataset
 def test_load_default_minio_sample_1000_frame_reads_existing_parquet() -> None:
     raw_path = get_default_minio_sample_1000_raw_path()
     if not raw_path.exists():
@@ -44,6 +46,8 @@ def test_load_default_minio_sample_1000_frame_reads_existing_parquet() -> None:
     assert "image_uri" in frame.columns
 
 
+@pytest.mark.slow
+@pytest.mark.real_dataset
 def test_load_default_minio_sample_1000_dataset_requires_storage_backing() -> None:
     raw_path = get_default_minio_sample_1000_raw_path()
     if not raw_path.exists():

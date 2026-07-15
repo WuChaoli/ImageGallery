@@ -56,24 +56,34 @@ src/image_gallery/
 ```bash
 # 安装开发环境
 uv venv .venv --python 3.10 --seed
-uv sync --group dev
+uv sync --extra dev
 
 # 一键 lint（ruff 代码风格 + docstring + pyright 类型检查）
 make lint
 # 等价手动命令：
-python -m ruff check src tests
-python -m pyright src/image_gallery
+uv run ruff check src tests
+uv run pyright src/image_gallery
 
 # 运行测试
 make test
 # 等价手动命令：
-uv run --group test pytest -q
+uv run pytest -n auto --disable-socket --allow-unix-socket -m "not slow" tests/
+
+# 运行依赖 sample_1000 和 MinIO 的真实数据验收
+make test_real
+# 等价手动命令：
+uv run pytest -n 0 --disable-socket -o addopts= -m "real_dataset" tests/
+
+# 运行包含 slow 的完整测试
+make test_all
+# 等价手动命令：
+uv run pytest -n auto --disable-socket --allow-unix-socket -o addopts= tests/
 
 # lint + test 全量检查
 make check
 
 # 运行单个测试文件
-uv run --group test pytest tests/unit/cleaning/test_specific.py
+uv run pytest tests/unit/cleaning/test_specific.py
 ```
 
 **注意**：Windows 用户如未安装 GNU Make，可直接使用等价手工命令。`pyright` 类型检查中 warning 不阻断，error 阻断。
@@ -118,7 +128,9 @@ Docstring 使用 Google Python 风格：第一行说明函数或类职责；必�
 
 新增行为优先采用测试先行。单元测试应按包领域组织，例如 `tests/unit/storage/test_uri.py`。集成测试只在所需底层模块已经存在后覆盖端到端流程。
 
-测试和 Notebook 验证应优先复用 `notebooks/_helpers/` 中已有的路径、存储、数据集和清洗配置入口，避免在测试里重复编写项目根目录定位、MinIO 初始化、默认数据集加载或算子配置样板代码。测试功能行为需要使用真实数据集时，统一复用 `notebooks/_helpers/datasets.py` 提供的默认数据集加载入口，例如 `load_default_minio_sample_1000_dataset()` 或 `load_default_minio_sample_1000_frame()`；不要在测试或 Notebook 验证中临时自造一套功能测试数据集。
+默认功能测试统一使用 `tests/fixtures/sample_10/` 中固定的 10 张本地图片，并通过 `tests/helpers/sample_dataset.py` 装配为当前 checkout 可读取的 Dataset，不得连接 MinIO。完全重复、近似重复、空白和异常尺寸等精确边界行为继续使用测试内专用确定性输入，不假定 sample_10 包含特定类别。
+
+`sample_1000` 仅用于 Notebook 人工验证和带 `slow`、`real_dataset` marker 的真实数据验收。需要该数据集时统一复用 `notebooks/_helpers/datasets.py` 的 `load_default_minio_sample_1000_dataset()` 或 `load_default_minio_sample_1000_frame()`；默认 `make test` 排除这些测试，使用 `make test_real` 显式运行。
 
 ### 测试覆盖检查清单
 

@@ -1,13 +1,11 @@
 from pathlib import Path
 
 import pandas as pd
-import pytest
 from notebooks._helpers.cleaning_configs import (
     get_cleaning_v3_first_batch_operator_configs,
 )
-from notebooks._helpers.datasets import get_default_minio_sample_1000_raw_path
-from notebooks._helpers.storage import load_minio_storage
 from PIL import Image
+from tests.helpers.sample_dataset import SAMPLE_10_SIZE, materialize_sample_10_dataset
 
 from image_gallery.cleaning import BasicCleaner
 from image_gallery.dataset import Dataset
@@ -16,14 +14,8 @@ from image_gallery.operators.computers.base import ExecutionMode, ParameterCompu
 from image_gallery.operators.computers.duplicate import PerceptualDuplicateGroupComputer
 from image_gallery.operators.registry import OperatorRegistry
 from image_gallery.operators.spec import OperatorSpec
-from image_gallery.storage.errors import StorageConnectionError
 
-SAMPLE_DATASET_PATH = get_default_minio_sample_1000_raw_path()
 FIRST_BATCH_OPERATORS = get_cleaning_v3_first_batch_operator_configs()
-
-
-def _build_sample_1000_dataset() -> Dataset:
-    return Dataset.load(str(SAMPLE_DATASET_PATH), storage=load_minio_storage())
 
 
 def _write_image(path: Path, size: tuple[int, int] = (20, 20)) -> None:
@@ -197,22 +189,13 @@ def test_perceptual_duplicate_max_distance_reaches_parameter_computer(tmp_path: 
     assert loose_manifest["perceptual_duplicate_group_id"]["max_distance"] == 1
 
 
-def test_basic_cleaner_runs_first_batch_operators_on_sample_1000_raw_parquet(tmp_path: Path) -> None:
-    assert SAMPLE_DATASET_PATH == get_default_minio_sample_1000_raw_path()
-
-    if not SAMPLE_DATASET_PATH.exists():
-        pytest.skip(f"sample raw dataset not found: {SAMPLE_DATASET_PATH}")
-
-    try:
-        dataset = _build_sample_1000_dataset()
-    except (KeyError, StorageConnectionError) as exc:
-        pytest.skip(f"skip sample_1000 integration test: {exc}")
-
+def test_basic_cleaner_runs_first_batch_operators_on_sample_10(tmp_path: Path) -> None:
+    dataset = materialize_sample_10_dataset(tmp_path / "sample-10")
     cleaner = BasicCleaner(FIRST_BATCH_OPERATORS)
     result = cleaner.run(dataset)
 
     preview = result.preview()
-    assert preview.total_count == 1000
+    assert preview.total_count == SAMPLE_10_SIZE
 
     state = result.state()
     assert list(state["operator_name"]) == [

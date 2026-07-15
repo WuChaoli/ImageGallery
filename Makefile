@@ -1,4 +1,4 @@
-.PHONY: lint test check format lint_diff lint_package lint_tests security security_secrets security_dependencies security_workflows security_exceptions package package_smoke sbom help
+.PHONY: lint test test_real test_all check format lint_diff lint_package lint_tests security security_secrets security_dependencies security_workflows security_exceptions package package_smoke sbom help
 
 # Windows 兼容：使用 Git Bash 作为 shell
 ifeq ($(OS),Windows_NT)
@@ -39,6 +39,12 @@ format:
 test:
 	uv run pytest -n auto --disable-socket --allow-unix-socket $(PYTEST_EXTRA) $(TEST_FILE)
 
+test_real:
+	uv run pytest -n 0 --disable-socket -o addopts= -m real_dataset $(PYTEST_EXTRA) $(TEST_FILE)
+
+test_all:
+	uv run pytest -n auto --disable-socket --allow-unix-socket -o addopts= $(PYTEST_EXTRA) $(TEST_FILE)
+
 # ── 一键检查 ──────────────────────────────────────
 check: lint test
 
@@ -75,6 +81,8 @@ help:
 	$(info lint_diff         - 仅检查当前分支相比 master 的变更文件)
 	$(info format            - 一键 ruff 格式化 + lint 修复)
 	$(info test              - 运行测试（并行 -n auto + 网络隔离 --disable-socket）)
+	$(info test_real         - 仅运行依赖 sample_1000/MinIO 的真实数据验收)
+	$(info test_all          - 运行包含 slow 的完整测试集合)
 	$(info   TEST_FILE=path  - 指定测试文件或目录（默认 tests/）)
 	$(info   PYTEST_EXTRA=   - 传递额外 pytest 参数)
 	$(info check             - lint + test 全量检查)

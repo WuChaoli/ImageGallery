@@ -92,7 +92,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** 调用 `BasicCleaner.export_config_template(path, operators)`
 - **THEN** 将 TOML 模板写入指定路径并返回 Path
 
-### Requirement: YAML Recipe 系统（PLANNED）
+### Requirement: YAML Recipe 系统
 系统 SHALL 提供 `CleanerRecipe` 类，从 YAML 文件加载用户友好的清洗配方，编译为内部 operator selector 列表。
 
 #### Scenario: 从 YAML 加载
@@ -119,7 +119,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** 调用 `BasicCleaner.from_recipe(yaml_path)`
 - **THEN** 解析 YAML 并构造 BasicCleaner 实例
 
-### Requirement: ActionRange 区间规则解析（PLANNED）
+### Requirement: ActionRange 区间规则解析
 系统 SHALL 提供 `ActionRange` 类，解析数学区间语法表达的动作阈值。
 
 #### Scenario: 闭区间
@@ -142,7 +142,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** 解析包含 infinity 的区间
 - **THEN** 抛出 ValueError（第一版不支持）
 
-### Requirement: MetricSpec 阈值元数据（PLANNED）
+### Requirement: MetricSpec 阈值元数据
 系统 SHALL 提供 `MetricSpec` 数据类，描述每个算子用户可调指标的类型、范围和方向。
 
 #### Scenario: 绝对值指标
@@ -165,7 +165,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** decode 算子的 decode_ok 指标
 - **THEN** value_type="categorical"，direction="categorical"
 
-### Requirement: 双级动作评估（PLANNED）
+### Requirement: 双级动作评估
 系统 SHALL 支持基于区间规则的双级动作评估（drop 和 review），按优先级 drop > review > keep 顺序评估。
 
 #### Scenario: 相对指标的区间评估

@@ -143,7 +143,7 @@ TBD - created by archiving change init-specs-from-codebase. Update Purpose after
 - **WHEN** 清洗尚未完成时访问 `cleaner_run.result`
 - **THEN** 抛出 CleanerRunNotReadyError
 
-### Requirement: RunStore 存储模式（PLANNED）
+### Requirement: RunStore 存储模式
 系统 SHALL 提供 RunStore 抽象，支持 memory、temporary、disk 三种运行存储模式。
 
 #### Scenario: memory 模式

@@ -52,6 +52,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+addopts = '-m "not slow"'
+markers = [
+  "slow: tests requiring large datasets or long-running processing",
+  "real_dataset: tests requiring sample_1000 and MinIO",
+]
 
 [tool.ruff]
 line-length = 120

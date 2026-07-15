@@ -4,6 +4,31 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 
 当前版本以 Python package API 和 Jupyter 验证为核心，不包含服务端 API 或 Web UI。
 
+## 清洗入口
+
+当前 `image_gallery.cleaning` 提供两类面向用户的清洗配置入口：
+
+- `BasicCleaner.from_toml(path)`：从 TOML 配置加载现有清洗规则。
+- `BasicCleaner.from_recipe(path)`：从 YAML recipe 加载声明式配方，适合用区间语法表达 `drop` / `review` 阈值。
+
+YAML recipe 当前支持 `version`、`run` 和 `operators` 三段，其中 `operators` 可混用三种写法：
+
+```yaml
+version: 1
+operators:
+  - use: blur
+    rules:
+      drop: "[0, 0.3]"
+      review: "(0.3, 0.6]"
+  - use: dimension
+    drop:
+      min_width: 256
+  - use: decode
+    action: drop
+```
+
+运行时产物存储支持 `DiskRunStore`、`TemporaryRunStore` 和 `MemoryRunStore` 三种实现；默认运行路径仍为磁盘 `cache_root / run_id`，测试或无文件 IO 场景可显式传入其他 `RunStore`。
+
 ## 文档
 
 - 当前产品行为：`openspec/specs/`
@@ -11,6 +36,30 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 - AI 开发规范：根目录及各模块的 `AGENTS.md`
 
 `docs/superpowers/` 只保留历史设计记录，不是当前开发的权威来源。
+
+## 测试分层
+
+默认测试使用仓库内固定的 `tests/fixtures/sample_10/` 本地样本，不依赖 MinIO。可直接运行：
+
+```bash
+make test
+```
+
+Windows 未安装 GNU Make 时，运行：
+
+```powershell
+uv run pytest -n auto --disable-socket --allow-unix-socket -m "not slow" tests/
+```
+
+依赖 `sample_1000` 和 MinIO 的真实数据验收已隔离到 `real_dataset` 层，需要显式运行：
+
+```bash
+make test_real
+```
+
+```powershell
+uv run pytest -n 0 --disable-socket -o addopts= -m "real_dataset" tests/
+```
 
 ## CI 安全门槛
 
