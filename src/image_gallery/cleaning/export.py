@@ -14,9 +14,7 @@ def export_cleaning_result(
     """按 kind 导出清洗结果，并返回 Dataset。"""
     if kind in {"parameters", "parameter"}:
         frame = tables.parameter_table
-    elif kind in {"evaluations", "evaluation"}:
-        frame = tables.evaluation_table
-    elif kind == "full":
+    elif kind in {"evaluations", "evaluation"} or kind == "full":
         frame = tables.evaluation_table
     elif kind == "clean":
         frame = cast(pd.DataFrame, tables.evaluation_table[tables.evaluation_table["final_action"] == "keep"])

@@ -79,7 +79,7 @@ def _ensure_str_list(values: list[object], *, context: str) -> list[str]:
         if isinstance(value, str):
             normalized.append(value)
         else:
-            raise ValueError(f"invalid {context}: {value!r}")
+            raise TypeError(f"invalid {context}: {value!r}")
     return normalized
 
 
@@ -428,7 +428,7 @@ class CleanerResult:
         parameter_rows = parameter_table[parameter_table["image_id"] == image_id]
         parameter_payload = parameter_rows.iloc[0].to_dict() if not parameter_rows.empty else {}
         evaluation_payload = rows.iloc[0].to_dict()
-        explanation = {
+        return {
             "image_id": image_id,
             "final_action": _normalize_value(evaluation_payload.get("final_action")),
             "final_reason": _normalize_value(evaluation_payload.get("final_reason")),
@@ -439,7 +439,6 @@ class CleanerResult:
             "parameter_manifest": self._load_parameter_manifest(),
             "relation_names": self._load_relation_names(),
         }
-        return explanation
 
     def cleanup(self) -> None:
         """清理本次运行产物目录。"""

@@ -143,7 +143,8 @@ def _read_format_details(item: ImageBatchItem) -> tuple[int, bool, int | None]:
                 frame_count = int(getattr(image, "n_frames", 1) or 1)
                 animated = bool(getattr(image, "is_animated", False) or frame_count > 1)
                 return frame_count, animated, _read_exif_orientation(image)
-        except Exception:
+        # Pillow 插件解码失败时回退到已加载的 image 对象。
+        except Exception:  # noqa: BLE001
             return _read_format_details_from_image(item.image)
     return _read_format_details_from_image(item.image)
 
@@ -164,7 +165,8 @@ def _read_exif_orientation(image: object) -> int | None:
         return None
     try:
         orientation = getexif().get(274)
-    except Exception:
+    # EXIF 后端异常类型不稳定，方向缺失按 None 处理。
+    except Exception:  # noqa: BLE001
         return None
     if orientation is None:
         return None

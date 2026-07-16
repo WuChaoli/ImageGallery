@@ -6,8 +6,14 @@ import pandas as pd
 import pytest
 
 from image_gallery.cleaning.preview_policy import PreviewPolicy
-from image_gallery.cleaning.result import CleanerResult
+from image_gallery.cleaning.result import CleanerResult, _ensure_str_list
 from image_gallery.cleaning.state import CleanerRunState, JsonRunStateStore
+
+
+def test_result_string_list_rejects_non_string_values() -> None:
+    """持久化结果中的字符串列表类型错误必须明确失败。"""
+    with pytest.raises(TypeError, match="invalid relation names"):
+        _ensure_str_list(["valid", 1], context="relation names")
 
 
 def test_result_export_table_writes_copy(tmp_path: Path) -> None:
@@ -309,12 +315,8 @@ def test_result_export_relations_rejects_unknown_relation(tmp_path: Path) -> Non
     )
     result = CleanerResult(run_id="run-1", cache_root=tmp_path)
 
-    try:
+    with pytest.raises(KeyError, match="missing"):
         result.export_relations("missing", tmp_path / "missing.parquet")
-    except KeyError as error:
-        assert "missing" in str(error)
-    else:
-        raise AssertionError("expected KeyError")
 
 
 def test_result_preview_html_applies_configured_operator_preview_policy(tmp_path: Path) -> None:

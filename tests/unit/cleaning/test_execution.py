@@ -75,9 +75,7 @@ def test_dry_run_reports_missing_dataset_columns(tmp_path: Path) -> None:
 def test_dry_run_reports_before_run_check_errors() -> None:
     dry_run = BasicCleaner([{"demo.dry_run_check": {}}], registry=_dry_run_registry()).compile().dry_run(dataset=None)
 
-    assert dry_run.errors == [
-        "before_run_check failed for dry_run_failing_computer: dry-run preflight failed"
-    ]
+    assert dry_run.errors == ["before_run_check failed for dry_run_failing_computer: dry-run preflight failed"]
 
 
 def test_run_persists_label_tags_and_stable_sample(tmp_path: Path) -> None:

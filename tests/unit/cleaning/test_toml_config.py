@@ -62,3 +62,28 @@ def test_cleaner_config_rejects_select_and_operators_together() -> None:
 def test_cleaner_config_exposes_toml_but_not_yaml_config_entrypoint() -> None:
     assert hasattr(CleanerConfig, "from_toml")
     assert not hasattr(CleanerConfig, "from_yaml")
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("checkpoint_enabled", "yes", "enabled must be bool"),
+        ("checkpoint_strategy", 1, "strategy must be string"),
+        ("device", 1, "device must be string"),
+        ("cache_scope", 1, "scope must be string"),
+        ("cache_reuse", 1, "reuse must be string"),
+        ("cache_cleanup", 1, "cleanup must be string"),
+        ("retain_intermediate", "yes", "retain_intermediate must be bool"),
+        ("write_debug_manifest", "yes", "write_debug_manifest must be bool"),
+        ("fail_fast", "yes", "fail_fast must be bool"),
+        ("bad_image_action", 1, "bad_image_action must be string"),
+    ],
+)
+def test_cleaner_config_rejects_runtime_policy_type_mismatches(
+    field: str,
+    value: object,
+    message: str,
+) -> None:
+    """运行策略字段类型错误必须稳定报告 TypeError。"""
+    with pytest.raises(TypeError, match=message):
+        CleanerConfig.from_mapping({"runtime": {field: value}})

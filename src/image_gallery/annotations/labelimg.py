@@ -10,6 +10,8 @@ from typing import Any, cast
 from xml.etree import ElementTree
 
 import pandas as pd
+from defusedxml import ElementTree as SafeElementTree
+from defusedxml.common import DefusedXmlException
 from PIL import Image
 
 from image_gallery.dataset.io import DatasetExportResult
@@ -151,7 +153,7 @@ def relative_bbox_to_voc_bbox(annotation: dict[str, object], width: int, height:
     """把 Dataset 相对 bbox 转换成 Pascal VOC 整数像素 bbox。"""
     bbox = annotation.get("bbox")
     if not isinstance(bbox, dict):
-        raise ValueError(f"invalid bbox: {bbox}")
+        raise TypeError(f"invalid bbox: {bbox}")
     if annotation.get("format", "relative_xyxy") != "relative_xyxy":
         raise ValueError(f"unsupported annotation format: {annotation.get('format')}")
 
@@ -250,7 +252,12 @@ def write_pascal_voc_xml(
 
 def read_pascal_voc_xml(xml_path: str | Path) -> PascalVocAnnotation:
     """读取 Pascal VOC XML 并返回相对坐标标注。"""
-    root = ElementTree.parse(xml_path).getroot()
+    try:
+        root = SafeElementTree.parse(xml_path).getroot()
+    except DefusedXmlException as exc:
+        raise ValueError(f"unsafe annotation XML: {xml_path}") from exc
+    if root is None:
+        raise ValueError(f"annotation XML has no root element: {xml_path}")
     filename = _required_text(root, "filename")
     size = root.find("size")
     if size is None:
@@ -285,7 +292,7 @@ def read_pascal_voc_xml(xml_path: str | Path) -> PascalVocAnnotation:
 def _require_ratio(value: object, name: str) -> float:
     """读取并校验相对坐标。"""
     if not isinstance(value, int | float):
-        raise ValueError(f"invalid bbox coordinate {name}: {value}")
+        raise TypeError(f"invalid bbox coordinate {name}: {value}")
     ratio = float(value)
     if ratio < 0.0 or ratio > 1.0:
         raise ValueError(f"invalid bbox coordinate {name}: {value}")
@@ -361,9 +368,7 @@ def _is_missing(value: object) -> bool:
     """判断 DataFrame 单元格是否为空值。"""
     if value is None:
         return True
-    if isinstance(value, float) and math.isnan(value):
-        return True
-    return False
+    return bool(isinstance(value, float) and math.isnan(value))
 
 
 def _image_extension(row: dict[str, object], image_bytes: bytes) -> str:

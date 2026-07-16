@@ -65,14 +65,14 @@ def build_dry_run_result(
         checked: set[str] = set()
         config_by_computer = _parameter_computer_configs(configured_operators, registry)
         for node in graph.nodes:
-            if node.node_type == "parameter" and node.computer_name is not None:
-                if node.computer_name not in checked:
-                    try:
-                        computer = registry.get_parameter_computer(node.computer_name)
-                        computer.before_run_check(config_by_computer.get(node.computer_name, ({}, "default"))[0])
-                    except Exception as exc:
-                        errors.append(f"before_run_check failed for {node.computer_name}: {exc}")
-                    checked.add(node.computer_name)
+            if node.node_type == "parameter" and node.computer_name is not None and node.computer_name not in checked:
+                try:
+                    computer = registry.get_parameter_computer(node.computer_name)
+                    computer.before_run_check(config_by_computer.get(node.computer_name, ({}, "default"))[0])
+                # 算子运行前检查是插件隔离边界，单个插件失败需要收集到 dry-run 结果。
+                except Exception as exc:  # noqa: BLE001
+                    errors.append(f"before_run_check failed for {node.computer_name}: {exc}")
+                checked.add(node.computer_name)
 
     estimated_artifacts = ["tables/parameter_table.parquet", "tables/evaluation_table.parquet"]
     for node in graph.nodes:
@@ -118,9 +118,7 @@ def _parameter_computer_configs(
         for computer_name in sorted(computer_names):
             computer = registry.get_parameter_computer(computer_name)
             projected_config = {
-                key: configured.config[key]
-                for key in sorted(computer.config_parameters)
-                if key in configured.config
+                key: configured.config[key] for key in sorted(computer.config_parameters) if key in configured.config
             }
             config_hash = hash_config(projected_config) if projected_config else "default"
             next_config = (projected_config, config_hash)

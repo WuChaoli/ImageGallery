@@ -40,6 +40,20 @@ class MemoryStorage(Storage):
         return f"memory://{object_path}"
 
 
+class FailureStorage(MemoryStorage):
+    """在指定 exists 调用上模拟后端失败。"""
+
+    def _write_bytes(self, object_path: str, data: bytes, overwrite: bool = False) -> str:
+        if object_path == "images/broken.jpg":
+            raise RuntimeError("backend unavailable")
+        return super()._write_bytes(object_path, data, overwrite)
+
+    def exists(self, object_path: str) -> bool:
+        if object_path == "images/broken.jpg":
+            raise RuntimeError("backend unavailable")
+        return super().exists(object_path)
+
+
 def test_storage_batch_write_bytes_returns_per_object_results() -> None:
     storage = MemoryStorage()
 
@@ -73,3 +87,29 @@ def test_storage_batch_write_bytes_rejects_mismatched_data_count() -> None:
     assert results[0].object_path == "images/a.jpg"
     assert results[0].ok is False
     assert "same length" in str(results[0].error)
+
+
+def test_storage_batch_exists_and_delete_isolate_object_failures() -> None:
+    """批量 exists/delete 必须把单对象异常转换为结构化结果。"""
+    storage = FailureStorage()
+    storage.write_bytes("images/a.jpg", b"a")
+
+    exists_results = storage.exists_many(["images/a.jpg", "images/broken.jpg"])
+    delete_results = storage.delete_many(["images/a.jpg", "images/missing.jpg"])
+
+    assert exists_results == [
+        StorageBatchResult("images/a.jpg", True, True),
+        StorageBatchResult("images/broken.jpg", False, error="backend unavailable"),
+    ]
+    assert delete_results[0] == StorageBatchResult("images/a.jpg", True)
+    assert delete_results[1].ok is False
+    assert "object not found" in str(delete_results[1].error)
+
+
+def test_storage_batch_write_isolates_backend_failure() -> None:
+    """批量写入必须把单对象后端异常转换为结构化结果。"""
+    storage = FailureStorage()
+
+    results = storage.batch_write_bytes([("images/broken.jpg", b"data")])
+
+    assert results == [StorageBatchResult("images/broken.jpg", False, error="backend unavailable")]

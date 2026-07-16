@@ -403,12 +403,8 @@ def _to_builtin_preview_spec(spec: OperatorSpec) -> OperatorSpec:
     """为内置算子补齐预览策略默认值。"""
     policies = {
         "decode": PreviewPolicy(default_actions=["drop"], caption_columns=["decode_reason"]),
-        "animated": PreviewPolicy(
-            default_actions=["review"], caption_columns=["frame_count", "animated_reason"]
-        ),
-        "dimension": PreviewPolicy(
-            default_actions=["drop"], caption_columns=["width", "height", "dimension_reason"]
-        ),
+        "animated": PreviewPolicy(default_actions=["review"], caption_columns=["frame_count", "animated_reason"]),
+        "dimension": PreviewPolicy(default_actions=["drop"], caption_columns=["width", "height", "dimension_reason"]),
         "aspect_ratio": PreviewPolicy(
             default_actions=["review"],
             caption_columns=["aspect_ratio", "aspect_ratio_reason"],

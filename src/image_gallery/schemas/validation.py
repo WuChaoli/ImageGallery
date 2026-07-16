@@ -19,7 +19,7 @@ def _validate_tags(tags_series: pd.Series[Any]) -> None:
     """校验层级 tags 列的最小结构，不维护合法标签字典。"""
     for row_index, tags in tags_series.items():
         if not isinstance(tags, (list, tuple)):
-            raise ValueError(f"invalid raw dataset tags at row {row_index}: tags must be a list or tuple")
+            raise TypeError(f"invalid raw dataset tags at row {row_index}: tags must be a list or tuple")
         for tag_path in tags:
             if not _is_valid_tag_path(tag_path):
                 raise ValueError(f"invalid raw dataset tags at row {row_index}: {tag_path!r}")

@@ -66,7 +66,7 @@ class CleanerRecipe:
             data = yaml.safe_load(f)
 
         if not isinstance(data, dict):
-            raise ValueError("recipe YAML root must be a mapping")
+            raise TypeError("recipe YAML root must be a mapping")
 
         version = int(data.get("version", 1))
         if version != 1:
