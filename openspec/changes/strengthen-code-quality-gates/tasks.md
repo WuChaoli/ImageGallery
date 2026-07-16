@@ -65,7 +65,7 @@
 
 ## 10. 验证与 GitHub 强制
 
-- [ ] 10.1 在 Windows 通过 Python CI 入口运行格式、精选 lint、Pyright、默认测试、覆盖率、安全和包验证
+- [x] 10.1 在 Windows 通过 Python CI 入口运行格式、精选 lint、Pyright、默认测试、覆盖率、安全和包验证
 - [x] 10.2 运行 slow/real-data 显式验收及定时任务的可执行 smoke test，记录无法在本地复现的平台边界
 - [x] 10.3 运行 workflow、包、suppression 和 OpenSpec 契约测试及 `openspec validate --strict`
 - [x] 10.4 通过真实 PR 验证 required checks、CodeQL High/Critical 保护、最低/最新 Python 与覆盖率行为

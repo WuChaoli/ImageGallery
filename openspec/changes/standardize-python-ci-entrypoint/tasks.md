@@ -14,7 +14,7 @@
 
 - [x] 3.1 将默认测试、真实数据测试、完整测试、安全检查、包构建、安装 smoke test 和 SBOM 命令迁移到 Python CI 任务
 - [x] 3.2 将 Makefile 目标改为 Python CI 的薄兼容转发，并增加测试防止重复维护底层参数
-- [ ] 3.3 手动验证 Makefile 兼容目标与对应 Python CI 任务具有一致的成功和失败结果
+- [x] 3.3 手动验证 Makefile 兼容目标与对应 Python CI 任务具有一致的成功和失败结果
 
 ## 4. GitHub CI 迁移
 
@@ -25,11 +25,11 @@
 ## 5. 文档与本地验证
 
 - [x] 5.1 同步根与相关模块 AGENTS.md、README 和命令帮助，明确 Python 入口为权威入口、Makefile 为临时兼容层
-- [ ] 5.2 在 Windows 手动运行 `format-check`、`lint`、默认测试、安全检查、包构建与 smoke test，并记录真实结果
+- [x] 5.2 在 Windows 手动运行 `format-check`、`lint`、默认测试、安全检查、包构建与 smoke test，并记录真实结果
 - [x] 5.3 运行 Ruff、Pyright、默认 pytest、CI 工具单元测试和 `openspec validate --strict`，确认工作树没有非预期格式修改
 
 ## 6. GitHub 验证与兼容期结论
 
 - [x] 6.1 通过 Pull Request 验证 `lint`、`test`、`package`、`secrets`、`dependencies` 和 `workflows` required checks 均使用新入口并成功
-- [ ] 6.2 记录 Windows 手动验证与 GitHub CI 结果，确认本轮继续保留 Makefile
+- [x] 6.2 记录 Windows 手动验证与 GitHub CI 结果，确认本轮继续保留 Makefile
 - [x] 6.3 仅在后续独立变更中评估删除 Makefile，不在本 change 中执行删除
