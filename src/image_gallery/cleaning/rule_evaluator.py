@@ -39,10 +39,8 @@ def evaluate_with_rules(
         and metric_spec.absolute_max is not None
     )
     if is_relative:
-        assert metric_spec.absolute_min is not None  # narrowed by is_relative
-        assert metric_spec.absolute_max is not None  # narrowed by is_relative
-        abs_min: float = metric_spec.absolute_min
-        abs_max: float = metric_spec.absolute_max
+        abs_min = cast(float, metric_spec.absolute_min)
+        abs_max = cast(float, metric_spec.absolute_max)
         abs_range = abs_max - abs_min
         if abs_range == 0:
             normalized = cast(pd.Series, raw_values - abs_min)

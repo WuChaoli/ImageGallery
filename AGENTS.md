@@ -51,7 +51,7 @@ src/image_gallery/
 
 ## 构建、测试与开发命令
 
-使用 `uv` 管理环境和依赖。以下命令提供了 `make` 快捷方式和底层等价命令：
+使用 `uv` 管理环境和依赖。跨平台 Python CI 入口是开发者与 GitHub Actions 的权威命令；Makefile 当前仅保留为兼容别名：
 
 ```bash
 # 安装开发环境
@@ -59,34 +59,31 @@ uv venv .venv --python 3.10 --seed
 uv sync --extra dev
 
 # 一键 lint（ruff 代码风格 + docstring + pyright 类型检查）
-make lint
-# 等价手动命令：
-uv run ruff check src tests
-uv run pyright src/image_gallery
+uv run python -m tools.ci lint
+
+# 检查 Ruff formatter，不修改文件
+uv run python -m tools.ci format-check
+
+# 自动修复并格式化 Python 文件
+uv run python -m tools.ci format
 
 # 运行测试
-make test
-# 等价手动命令：
-uv run pytest -n auto --disable-socket --allow-unix-socket -m "not slow" tests/
+uv run python -m tools.ci test
 
 # 运行依赖 sample_1000 和 MinIO 的真实数据验收
-make test_real
-# 等价手动命令：
-uv run pytest -n 0 --disable-socket -o addopts= -m "real_dataset" tests/
+uv run python -m tools.ci test-real
 
 # 运行包含 slow 的完整测试
-make test_all
-# 等价手动命令：
-uv run pytest -n auto --disable-socket --allow-unix-socket -o addopts= tests/
+uv run python -m tools.ci test-all
 
-# lint + test 全量检查
-make check
+# 格式 + lint + test 全量检查
+uv run python -m tools.ci check
 
 # 运行单个测试文件
 uv run pytest tests/unit/cleaning/test_specific.py
 ```
 
-**注意**：Windows 用户如未安装 GNU Make，可直接使用等价手工命令。`pyright` 类型检查中 warning 不阻断，error 阻断。
+**注意**：`make lint`、`make test` 等目标只转发到对应 Python CI 任务，不再维护独立参数。`pyright` 类型检查中 warning 不阻断，error 阻断。
 
 创建 git worktree 时，继续复用原仓库的 `.venv` 作为开发与验证环境，不要在 worktree 内重新创建独立虚拟环境。
 
@@ -110,6 +107,8 @@ Docstring 使用 Google Python 风格：第一行说明函数或类职责；必�
 
 项目使用 pyright strict 模式进行编译期类型检查。Any 相关规则（reportAny、reportUnknownVariableType 等）设为 warning 不阻断；缺失类型标注、参数类型不匹配等规则设为 error 阻断。
 
+`Any` 只允许停留在 JSON/TOML、DataFrame、第三方库返回值和插件载荷等动态解析边界。进入 Storage、Dataset、Cleaning、Operator 等核心领域逻辑前，必须通过显式结构校验、类型守卫、schema/model 构造或精确 `cast` 窄化；公开 API 的参数与返回值不得用 `Any` 掩盖领域契约。Pyright warning 用于持续暴露第三方类型欠债，不得通过文件级关闭或宽泛 ignore 消音。
+
 **pandas 类型窄化规则**：pyright 对 pandas DataFrame/Series 的类型推断较宽（返回联合类型），需要在关键位置用 `typing.cast` 显式窄化：
 
 - `pd.to_numeric(...)` 返回联合类型，必须 `cast(pd.Series, pd.to_numeric(...))`
@@ -130,7 +129,7 @@ Docstring 使用 Google Python 风格：第一行说明函数或类职责；必�
 
 默认功能测试统一使用 `tests/fixtures/sample_10/` 中固定的 10 张本地图片，并通过 `tests/helpers/sample_dataset.py` 装配为当前 checkout 可读取的 Dataset，不得连接 MinIO。完全重复、近似重复、空白和异常尺寸等精确边界行为继续使用测试内专用确定性输入，不假定 sample_10 包含特定类别。
 
-`sample_1000` 仅用于 Notebook 人工验证和带 `slow`、`real_dataset` marker 的真实数据验收。需要该数据集时统一复用 `notebooks/_helpers/datasets.py` 的 `load_default_minio_sample_1000_dataset()` 或 `load_default_minio_sample_1000_frame()`；默认 `make test` 排除这些测试，使用 `make test_real` 显式运行。
+`sample_1000` 仅用于 Notebook 人工验证和带 `slow`、`real_dataset` marker 的真实数据验收。需要该数据集时统一复用 `notebooks/_helpers/datasets.py` 的 `load_default_minio_sample_1000_dataset()` 或 `load_default_minio_sample_1000_frame()`；默认 `uv run python -m tools.ci test` 排除这些测试，使用 `uv run python -m tools.ci test-real` 显式运行。
 
 ### 测试覆盖检查清单
 

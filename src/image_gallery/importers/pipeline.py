@@ -78,7 +78,8 @@ class ImportPipeline:
                         **metadata,
                     }
                 )
-            except Exception as exc:
+            # 导入流水线必须将单个来源失败写入结构化 failures。
+            except Exception as exc:  # noqa: BLE001
                 failures.append(
                     {
                         "source_uri": record.source_uri,

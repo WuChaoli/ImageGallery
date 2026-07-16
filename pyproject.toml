@@ -12,6 +12,7 @@ authors = [
   { name = "ImageGallery Maintainers" }
 ]
 dependencies = [
+  "defusedxml>=0.7",
   "minio>=7.2",
   "numpy>=1.26",
   "pandas>=2.2,<2.3",
@@ -25,6 +26,7 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
   "pytest>=8",
+  "pytest-cov>=7",
   "pytest-xdist>=3",
   "pytest-socket>=0.7",
   "ruff>=0.5",
@@ -34,6 +36,13 @@ dev = [
   "pip-audit>=2.10.1",
   "cyclonedx-bom>=7.3.0",
   "zizmor>=1.27.0",
+  "diff-cover>=9",
+  "codespell>=2.4",
+  "pymarkdownlnt>=0.9",
+  "vulture>=2.14",
+  "pytest-randomly>=4",
+  "pytest-repeat>=0.9",
+  "mutmut>=3",
 ]
 semantic = [
   "onnxruntime>=1.18,<1.24",
@@ -53,10 +62,25 @@ where = ["src"]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
 addopts = '-m "not slow"'
+strict_markers = true
+strict_config = true
 markers = [
   "slow: tests requiring large datasets or long-running processing",
   "real_dataset: tests requiring sample_1000 and MinIO",
+  "stability: tests covering concurrency, state, cache, or resource lifecycle risks",
 ]
+
+[tool.codespell]
+ignore-words-list = "cleane,fo,nd,statics,te"
+skip = "*.lock,*.json,*.ipynb,*.csv,*.parquet,*.xml,.git,.tmp,.venv,docs-backup.tar.gz"
+
+[tool.mutmut]
+source_paths = [
+  "src/image_gallery/cleaning/action_range.py",
+  "src/image_gallery/cleaning/rule_evaluator.py",
+  "src/image_gallery/schemas/validation.py",
+]
+pytest_add_cli_args_test_selection = ["tests/unit/cleaning", "tests/unit/schemas"]
 
 [tool.ruff]
 line-length = 120
@@ -64,10 +88,35 @@ target-version = "py310"
 src = ["src", "tests"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "D101", "D102", "D103", "D205", "D300"]
+select = [
+  "E",
+  "F",
+  "I",
+  "UP",
+  "B",
+  "D101",
+  "D102",
+  "D103",
+  "D205",
+  "D300",
+  "S",
+  "BLE001",
+  "TRY004",
+  "PT",
+  "C901",
+  "C4",
+  "SIM102",
+  "SIM103",
+  "SIM114",
+  "SIM115",
+  "RET504",
+]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["D"]
+"tests/**" = ["D", "S101", "S105", "S106", "S108"]
 
 [tool.pyright]
 typeCheckingMode = "strict"

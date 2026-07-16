@@ -65,7 +65,7 @@ def test_artifact_manager_rejects_directory_traversal(tmp_path: Path) -> None:
     manager = ArtifactManager(tmp_path)
     frame = pd.DataFrame({"image_id": ["img-1"], "score": [1.0]})
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must not contain parent traversal"):
         manager.commit_dataframe_artifact(
             artifact_id="artifact-2",
             artifact_type="parameter_part",
@@ -84,7 +84,7 @@ def test_artifact_manager_rejects_absolute_path(tmp_path: Path) -> None:
     frame = pd.DataFrame({"image_id": ["img-1"], "score": [1.0]})
     outside = tmp_path.parent / "outside.artifact.parquet"
 
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="must not be absolute"):
         manager.commit_dataframe_artifact(
             artifact_id="artifact-3",
             artifact_type="parameter_part",

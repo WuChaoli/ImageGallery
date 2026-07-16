@@ -79,19 +79,19 @@ def test_validate_raw_dataset_accepts_empty_tags() -> None:
 
 
 @pytest.mark.parametrize(
-    "tags",
+    ("tags", "expected_exception"),
     [
-        None,
-        "scene/indoor",
-        [123],
-        [""],
-        ["/scene"],
-        ["scene/"],
-        ["scene//indoor"],
+        (None, TypeError),
+        ("scene/indoor", TypeError),
+        ([123], ValueError),
+        ([""], ValueError),
+        (["/scene"], ValueError),
+        (["scene/"], ValueError),
+        (["scene//indoor"], ValueError),
     ],
 )
-def test_validate_raw_dataset_rejects_invalid_tags(tags: object) -> None:
+def test_validate_raw_dataset_rejects_invalid_tags(tags: object, expected_exception: type[Exception]) -> None:
     frame = pd.DataFrame([_raw_row(tags=tags)])
 
-    with pytest.raises(ValueError, match="invalid raw dataset tags"):
+    with pytest.raises(expected_exception, match="invalid raw dataset tags"):
         validate_raw_dataset(frame)

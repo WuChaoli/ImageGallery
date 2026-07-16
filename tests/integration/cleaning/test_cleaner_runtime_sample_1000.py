@@ -21,7 +21,8 @@ def sample_1000_dataset():
     """加载真实 sample_1000，不可用时明确跳过。"""
     try:
         return load_default_minio_sample_1000_dataset()
-    except Exception as exc:
+    # 真实数据环境可能在网络、凭据或 MinIO 任一边界不可用。
+    except Exception as exc:  # noqa: BLE001
         pytest.skip(f"sample_1000 real dataset unavailable: {exc}")
 
 

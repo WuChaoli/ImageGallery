@@ -8,10 +8,9 @@ from image_gallery.cleaning.recipe import CleanerRecipe
 
 
 def _write_recipe(data: dict[str, object], suffix: str = ".yaml") -> Path:
-    tmp = tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False, encoding="utf-8")
-    yaml.dump(data, tmp, allow_unicode=True)
-    tmp.close()
-    return Path(tmp.name)
+    with tempfile.NamedTemporaryFile(mode="w", suffix=suffix, delete=False, encoding="utf-8") as tmp:
+        yaml.dump(data, tmp, allow_unicode=True)
+        return Path(tmp.name)
 
 
 class TestFromYaml:
@@ -73,11 +72,11 @@ class TestFromYaml:
 
     def test_non_mapping_yaml_root_raises(self) -> None:
         # YAML 根节点为列表而非映射
-        tmp = tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8")
-        yaml.dump([1, 2, 3], tmp)
-        tmp.close()
-        with pytest.raises(ValueError, match="must be a mapping"):
-            CleanerRecipe.from_yaml(tmp.name)
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml", delete=False, encoding="utf-8") as tmp:
+            yaml.dump([1, 2, 3], tmp)
+            path = tmp.name
+        with pytest.raises(TypeError, match="must be a mapping"):
+            CleanerRecipe.from_yaml(path)
 
     def test_custom_registry(self) -> None:
         from image_gallery.operators.builtin import create_default_registry

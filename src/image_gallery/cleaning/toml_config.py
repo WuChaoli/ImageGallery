@@ -243,9 +243,9 @@ def _parse_checkpoint_policy(raw: object, scope: str) -> CheckpointPolicy:
     enabled = payload.get("enabled", True)
     strategy = payload.get("strategy", "auto")
     if not isinstance(enabled, bool):
-        raise ValueError(f"{scope}.enabled must be bool")
+        raise TypeError(f"{scope}.enabled must be bool")
     if not isinstance(strategy, str):
-        raise ValueError(f"{scope}.strategy must be string")
+        raise TypeError(f"{scope}.strategy must be string")
     return CheckpointPolicy(enabled=enabled, strategy=strategy)
 
 
@@ -256,7 +256,7 @@ def _parse_resource_policy(raw: object, scope: str) -> ResourcePolicy:
     if not isinstance(max_workers, int) or max_workers <= 0:
         raise ValueError(f"{scope}.max_workers must be positive integer")
     if not isinstance(device, str):
-        raise ValueError(f"{scope}.device must be string")
+        raise TypeError(f"{scope}.device must be string")
     return ResourcePolicy(max_workers=max_workers, device=device)
 
 
@@ -266,11 +266,11 @@ def _parse_cache_policy(raw: object, scope: str) -> CachePolicy:
     reuse = payload.get("reuse", "run")
     cleanup = payload.get("cleanup", "on_success")
     if not isinstance(scope_value, str):
-        raise ValueError(f"{scope}.scope must be string")
+        raise TypeError(f"{scope}.scope must be string")
     if not isinstance(reuse, str):
-        raise ValueError(f"{scope}.reuse must be string")
+        raise TypeError(f"{scope}.reuse must be string")
     if not isinstance(cleanup, str):
-        raise ValueError(f"{scope}.cleanup must be string")
+        raise TypeError(f"{scope}.cleanup must be string")
     return CachePolicy(scope=scope_value, reuse=reuse, cleanup=cleanup)
 
 
@@ -279,9 +279,9 @@ def _parse_artifact_policy(raw: object, scope: str) -> ArtifactPolicy:
     retain_intermediate = payload.get("retain_intermediate", False)
     write_debug_manifest = payload.get("write_debug_manifest", True)
     if not isinstance(retain_intermediate, bool):
-        raise ValueError(f"{scope}.retain_intermediate must be bool")
+        raise TypeError(f"{scope}.retain_intermediate must be bool")
     if not isinstance(write_debug_manifest, bool):
-        raise ValueError(f"{scope}.write_debug_manifest must be bool")
+        raise TypeError(f"{scope}.write_debug_manifest must be bool")
     return ArtifactPolicy(retain_intermediate=retain_intermediate, write_debug_manifest=write_debug_manifest)
 
 
@@ -291,11 +291,11 @@ def _parse_failure_policy(raw: object, scope: str) -> FailurePolicy:
     max_errors = payload.get("max_errors")
     bad_image_action = payload.get("bad_image_action", "mark_failed")
     if not isinstance(fail_fast, bool):
-        raise ValueError(f"{scope}.fail_fast must be bool")
+        raise TypeError(f"{scope}.fail_fast must be bool")
     if max_errors is not None and (not isinstance(max_errors, int) or max_errors < 0):
         raise ValueError(f"{scope}.max_errors must be non-negative int")
     if not isinstance(bad_image_action, str):
-        raise ValueError(f"{scope}.bad_image_action must be string")
+        raise TypeError(f"{scope}.bad_image_action must be string")
 
     retry = _parse_retry_policy(payload.get("retry"), f"{scope}.retry")
     return FailurePolicy(

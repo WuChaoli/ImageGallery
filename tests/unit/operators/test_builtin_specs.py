@@ -180,9 +180,10 @@ def test_light_quality_evaluators_return_expected_actions() -> None:
         "keep",
         "review",
     ]
-    assert registry.get_operator("border_padding").evaluate(frame, {})[
-        "border_padding_action"
-    ].tolist() == ["keep", "review"]
+    assert registry.get_operator("border_padding").evaluate(frame, {})["border_padding_action"].tolist() == [
+        "keep",
+        "review",
+    ]
     assert registry.get_operator("animated").evaluate(frame, {})["animated_action"].tolist() == [
         "keep",
         "review",
@@ -203,9 +204,7 @@ def test_exact_duplicate_evaluator_drops_non_first_group_members() -> None:
         }
     )
 
-    result = registry.get_operator("exact_duplicate").evaluate(
-        frame, {"keep": "first", "action": "drop"}
-    )
+    result = registry.get_operator("exact_duplicate").evaluate(frame, {"keep": "first", "action": "drop"})
 
     assert result["exact_duplicate_action"].tolist() == ["keep", "drop", "keep"]
 
@@ -285,12 +284,8 @@ def test_semantic_duplicate_evaluator_supports_drop_and_review() -> None:
         }
     )
 
-    drop_result = registry.get_operator("semantic_duplicate").evaluate(
-        frame, {"keep": "first", "action": "drop"}
-    )
-    review_result = registry.get_operator("semantic_duplicate").evaluate(
-        frame, {"keep": "first", "action": "review"}
-    )
+    drop_result = registry.get_operator("semantic_duplicate").evaluate(frame, {"keep": "first", "action": "drop"})
+    review_result = registry.get_operator("semantic_duplicate").evaluate(frame, {"keep": "first", "action": "review"})
 
     assert drop_result["semantic_duplicate_action"].tolist() == ["keep", "drop", "keep"]
     assert review_result["semantic_duplicate_action"].tolist() == ["keep", "review", "keep"]

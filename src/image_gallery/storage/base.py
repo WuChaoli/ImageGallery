@@ -112,7 +112,8 @@ class Storage(ABC):
         for object_path, data in items:
             try:
                 results.append(StorageBatchResult(object_path, True, self._write_bytes(object_path, data, overwrite)))
-            except Exception as exc:
+            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
+            except Exception as exc:  # noqa: BLE001
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results
 
@@ -126,7 +127,8 @@ class Storage(ABC):
         for object_path in object_paths:
             try:
                 results.append(StorageBatchResult(object_path, True, self._read_bytes(object_path)))
-            except Exception as exc:
+            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
+            except Exception as exc:  # noqa: BLE001
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results
 
@@ -144,7 +146,8 @@ class Storage(ABC):
         for object_path in object_paths:
             try:
                 results.append(StorageBatchResult(object_path, True, self.exists(object_path)))
-            except Exception as exc:
+            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
+            except Exception as exc:  # noqa: BLE001
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results
 
@@ -155,6 +158,7 @@ class Storage(ABC):
             try:
                 self.delete(object_path)
                 results.append(StorageBatchResult(object_path, True))
-            except Exception as exc:
+            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
+            except Exception as exc:  # noqa: BLE001
                 results.append(StorageBatchResult(object_path, False, error=str(exc)))
         return results

@@ -8,6 +8,8 @@ from image_gallery.cleaning.graph import CleaningStateGraph
 from image_gallery.cleaning.runtime import CleaningRuntime, RunOptions
 from image_gallery.dataset import Dataset
 
+pytestmark = pytest.mark.stability
+
 
 def _write_tiny_image(path: Path, color: tuple[int, int, int]) -> None:
     """写入最小 PNG 以便构造 dataset fixture。"""
@@ -69,7 +71,7 @@ def test_runtime_retries_stage_once_but_fails_when_no_retry_budget(tmp_path: Pat
 
 def test_runtime_run_graph_completes_via_fake_stage(tmp_path: Path, tiny_dataset: Dataset) -> None:
     runtime = CleaningRuntime(cache_root=tmp_path)
-    graph = CleaningStateGraph(nodes=tuple(), plan_hash="test-graph")
+    graph = CleaningStateGraph(nodes=(), plan_hash="test-graph")
 
     result = runtime.run_graph(
         graph=graph,

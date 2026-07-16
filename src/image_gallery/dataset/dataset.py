@@ -139,7 +139,8 @@ class Dataset:
             try:
                 data = self.read_image_bytes(image_uri)
                 results.append(DatasetImageBytesReadResult(image_uri=image_uri, ok=True, data=data))
-            except Exception as exc:
+            # 批量读取必须隔离单张图片的 Storage 或解码失败。
+            except Exception as exc:  # noqa: BLE001
                 results.append(DatasetImageBytesReadResult(image_uri=image_uri, ok=False, error=str(exc)))
         return results
 
@@ -150,7 +151,8 @@ class Dataset:
             try:
                 image = self.read_image(image_uri)
                 results.append(DatasetImageReadResult(image_uri=image_uri, ok=True, image=image))
-            except Exception as exc:
+            # 批量读取必须隔离单张图片的 Storage 或解码失败。
+            except Exception as exc:  # noqa: BLE001
                 results.append(DatasetImageReadResult(image_uri=image_uri, ok=False, error=str(exc)))
         return results
 

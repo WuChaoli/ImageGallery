@@ -385,7 +385,8 @@ class CleaningRuntime:
                 relation_paths=relation_paths,
                 started_at=start_at,
             )
-        except Exception:
+        # 运行边界必须在任意失败后持久化可恢复状态，再重新抛出原异常。
+        except Exception:  # noqa: BLE001
             if paths.run_dir.exists():
                 write_tables(tables=tables, paths=paths)
                 self._save_run_state(
@@ -524,7 +525,8 @@ class CleaningRuntime:
                 relation_paths=relation_paths,
                 started_at=persisted_state.started_at or start_at,
             )
-        except Exception:
+        # 恢复运行边界必须在任意失败后保存最新状态，再重新抛出原异常。
+        except Exception:  # noqa: BLE001
             write_tables(tables=tables, paths=paths)
             self._save_run_state(
                 run_id=run_id,
@@ -800,7 +802,7 @@ class CleaningRuntime:
 
         parameter_manifest = json.loads(paths.parameter_manifest_path.read_text(encoding="utf-8"))
         if not isinstance(parameter_manifest, dict):
-            raise ValueError("parameter manifest payload must be a JSON object")
+            raise TypeError("parameter manifest payload must be a JSON object")
         parameter_table_columns = set(pd.read_parquet(paths.parameter_table_path).columns)
         missing_parameter_columns = sorted(set(trusted_parameter_owners) - parameter_table_columns)
         if missing_parameter_columns:
@@ -836,7 +838,7 @@ class CleaningRuntime:
             )
         for parameter_name, manifest in parameter_manifest.items():
             if not isinstance(manifest, dict):
-                raise ValueError(f"parameter manifest entry must be a JSON object: {parameter_name}")
+                raise TypeError(f"parameter manifest entry must be a JSON object: {parameter_name}")
             owner = trusted_parameter_owners.get(parameter_name)
             expected_config_hash = _expected_owner_config_hash(
                 trusted_parameter_hashes,
@@ -902,7 +904,7 @@ class CleaningRuntime:
             raise ValueError(f"relation manifest config hash mismatch: {relation_name}")
         artifact_refs = payload.get("artifact_refs", [])
         if not isinstance(artifact_refs, list):
-            raise ValueError(f"relation manifest artifact refs must be a list: {relation_name}")
+            raise TypeError(f"relation manifest artifact refs must be a list: {relation_name}")
         for artifact_ref in artifact_refs:
             if not isinstance(artifact_ref, str) or not artifact_ref:
                 raise ValueError(f"relation manifest artifact ref must be non-empty: {relation_name}")

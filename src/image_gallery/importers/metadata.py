@@ -102,7 +102,8 @@ def _extract_exif_metadata(image: Image.Image) -> dict[str, object]:
     }
     try:
         exif = image.getexif()
-    except Exception:
+    # Pillow 插件可能抛出格式专用异常，元数据缺失不应中断导入。
+    except Exception:  # noqa: BLE001
         return metadata
     if not exif:
         return metadata
@@ -133,7 +134,8 @@ def _get_gps_info(exif: Image.Exif) -> dict[int, object]:
     gps_ifd: object
     try:
         gps_ifd = exif.get_ifd(EXIF_GPS_INFO_TAG)
-    except Exception:
+    # 不同 Pillow/EXIF 后端的异常类型不稳定，失败时回退到基础字段。
+    except Exception:  # noqa: BLE001
         gps_ifd = exif.get(EXIF_GPS_INFO_TAG)
     if not isinstance(gps_ifd, dict):
         return {}

@@ -90,6 +90,24 @@ def test_pascal_voc_xml_round_trips_objects(tmp_path: Path) -> None:
     ]
 
 
+def test_pascal_voc_xml_rejects_entity_expansion(tmp_path: Path) -> None:
+    """外部 LabelImg XML 不得展开自定义实体。"""
+    xml_path = tmp_path / "unsafe.xml"
+    xml_path.write_text(
+        """<?xml version="1.0"?>
+<!DOCTYPE annotation [<!ENTITY payload "expanded">]>
+<annotation>
+  <filename>&payload;</filename>
+  <size><width>1</width><height>1</height><depth>3</depth></size>
+</annotation>
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="unsafe annotation XML"):
+        read_pascal_voc_xml(xml_path)
+
+
 def test_invalid_relative_bbox_is_rejected() -> None:
     annotation = {
         "label": "person",
@@ -98,6 +116,19 @@ def test_invalid_relative_bbox_is_rejected() -> None:
     }
 
     with pytest.raises(ValueError, match="invalid bbox"):
+        relative_bbox_to_voc_bbox(annotation, width=100, height=80)
+
+
+def test_relative_bbox_rejects_non_mapping_and_non_numeric_coordinates() -> None:
+    """bbox 结构和坐标类型错误必须区别于取值范围错误。"""
+    with pytest.raises(TypeError, match="invalid bbox"):
+        relative_bbox_to_voc_bbox({"bbox": []}, width=100, height=80)
+
+    annotation = {
+        "bbox": {"x_min": "zero", "y_min": 0.1, "x_max": 0.2, "y_max": 0.3},
+        "format": "relative_xyxy",
+    }
+    with pytest.raises(TypeError, match="invalid bbox coordinate x_min"):
         relative_bbox_to_voc_bbox(annotation, width=100, height=80)
 
 

@@ -31,7 +31,8 @@ def select_operators(
             configured_specs[operator_name] = configured_spec
             continue
 
-        assert selector is not None
+        if selector is None:
+            raise RuntimeError("normalized operator selector is missing")
         expanded = _expand_selector(selector, registry)
         if inline_config is not None and len(expanded) != 1:
             raise ValueError("inline operator config can only target one operator")

@@ -155,7 +155,8 @@ def _runtime_policy_to_node_policy(runtime_policy: ComputerRuntimePolicy) -> Nod
     )
 
 
-def _collect_parameter_plan(
+# 依赖图 DFS 需要在同一闭包共享 visiting/visited 状态，拆分会破坏周期检测的一致性。
+def _collect_parameter_plan(  # noqa: C901
     configured_operators: list[ConfiguredOperatorSpec],
     registry: OperatorRegistry,
 ) -> tuple[
@@ -168,7 +169,7 @@ def _collect_parameter_plan(
         parameter for configured in configured_operators for parameter in configured.spec.required_parameters
     }
     if not target_parameters:
-        return tuple(), {}, {}
+        return (), {}, {}
 
     computer_by_name = {computer.name: computer for computer in registry.list_parameter_computers()}
     visited: set[str] = set()
@@ -288,9 +289,8 @@ def _checkpoint_strategy(
     if requested_strategy != "auto":
         return requested_strategy
 
-    if execution_mode == ExecutionMode.DATASET_AGGREGATE:
-        if "whole_node" in computer.capability.checkpoint_strategies:
-            return "whole_node"
+    if execution_mode == ExecutionMode.DATASET_AGGREGATE and "whole_node" in computer.capability.checkpoint_strategies:
+        return "whole_node"
     if "batch" in computer.capability.checkpoint_strategies:
         return "batch"
     if computer.capability.checkpoint_strategies:
@@ -468,11 +468,9 @@ def compile_state_graph(
         checkpoint_strategy="none",
     )
 
-    ordered_nodes = tuple(
-        [
-            *parameter_nodes,
-            *evaluation_nodes,
-            merge_node,
-        ]
+    ordered_nodes = (
+        *parameter_nodes,
+        *evaluation_nodes,
+        merge_node,
     )
     return CleaningStateGraph(nodes=ordered_nodes, plan_hash=_hash_graph_nodes(ordered_nodes))

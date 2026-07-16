@@ -97,7 +97,8 @@ class ParameterScheduler:
                     computer_name=step.computer_name,
                     config_hash=step.config_hash,
                 )
-            except Exception:
+            # 调度步骤失败必须统一标记所有关联节点后重新抛出。
+            except Exception:  # noqa: BLE001
                 if state_store is not None:
                     for node_id in node_ids:
                         state_store.record_node_failed(node_id)
@@ -130,7 +131,8 @@ class ParameterScheduler:
                     image = opened.copy()
                     image.format = opened.format
                 items.append(ImageBatchItem(image_id, image_uri, row, data, image, None))
-            except Exception as exc:
+            # 调度器隔离单张图片读取或解码失败并写入 ImageBatchItem。
+            except Exception as exc:  # noqa: BLE001
                 items.append(ImageBatchItem(image_id, image_uri, row, None, None, str(exc)))
         return ImageBatch(items=items)
 

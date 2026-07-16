@@ -233,7 +233,8 @@ def _render_card(*, row: dict[str, Any], dataset: Dataset, options: PreviewHtmlO
     try:
         data_uri = _thumbnail_data_uri(dataset=dataset, image_uri=image_uri, thumbnail_size=options.thumbnail_size)
         media_html = f'<img src="{escape(data_uri, quote=True)}" alt="{escape(image_uri, quote=True)}" />'
-    except Exception as exc:
+    # HTML 预览隔离单张图片读取失败，并在卡片内展示错误。
+    except Exception as exc:  # noqa: BLE001
         media_html = f'<div class="error">Image read failed<br />{escape(image_uri)}<br />{escape(str(exc))}</div>'
     return f"<figure>{media_html}<figcaption>{caption_html}</figcaption></figure>"
 

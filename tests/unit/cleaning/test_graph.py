@@ -82,9 +82,7 @@ def test_state_graph_orders_by_parameter_dependencies() -> None:
 
     node_ids = [node.node_id for node in graph.nodes]
     assert node_ids.index("parameter.image_hash_computer") < node_ids.index("parameter.duplicate_group_computer")
-    assert node_ids.index("parameter.duplicate_group_computer") < node_ids.index(
-        "evaluation.exact_duplicate"
-    )
+    assert node_ids.index("parameter.duplicate_group_computer") < node_ids.index("evaluation.exact_duplicate")
     assert node_ids[-1] == "merge.final_action"
 
 
