@@ -310,6 +310,20 @@ def test_package_validator_rejects_forbidden_sdist_content(tmp_path: Path) -> No
     assert any("forbidden path" in finding for finding in findings)
 
 
+def test_package_validator_rejects_sdist_links(tmp_path: Path) -> None:
+    """sdist 链接不得进入手工解包流程。"""
+    sdist = tmp_path / "image_gallery-0.1.0.tar.gz"
+    with tarfile.open(sdist, "w:gz") as archive:
+        member = tarfile.TarInfo("image_gallery-0.1.0/link")
+        member.type = tarfile.SYMTYPE
+        member.linkname = "../../outside"
+        archive.addfile(member)
+
+    findings = package_validate.validate_sdist(sdist)
+
+    assert any("unsupported member type" in finding for finding in findings)
+
+
 def test_lint_diff_passes_changed_python_paths_as_argv() -> None:
     """差异 lint 必须以 argv 传递 Git 返回的 Python 路径。"""
     runner = RecordingRunner()

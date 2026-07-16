@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import email
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -40,14 +41,44 @@ def validate_wheel(path: Path) -> list[str]:
 def validate_sdist(path: Path) -> list[str]:
     """检查 sdist 内容并拒绝路径穿越成员。"""
     with tarfile.open(path, "r:gz") as archive:
-        names = archive.getnames()
+        members = archive.getmembers()
+        names = [member.name for member in members]
     findings = [f"sdist contains forbidden path: {name}" for name in _forbidden_paths(names)]
     findings.extend(
         f"sdist contains unsafe path: {name}"
         for name in names
         if PurePosixPath(name).is_absolute() or ".." in PurePosixPath(name).parts
     )
+    findings.extend(
+        f"sdist contains unsupported member type: {member.name}"
+        for member in members
+        if not member.isfile() and not member.isdir()
+    )
     return findings
+
+
+def _extract_sdist(path: Path, root: Path) -> bool:
+    """把已校验 sdist 逐成员写入临时目录，不跟随归档链接。"""
+    with tarfile.open(path, "r:gz") as archive:
+        for member in archive.getmembers():
+            destination = (root / member.name).resolve()
+            if root not in destination.parents and destination != root:
+                print(f"unsafe sdist member: {member.name}", file=sys.stderr)
+                return False
+            if member.isdir():
+                destination.mkdir(parents=True, exist_ok=True)
+                continue
+            if not member.isfile():
+                print(f"unsupported sdist member type: {member.name}", file=sys.stderr)
+                return False
+            source = archive.extractfile(member)
+            if source is None:
+                print(f"cannot read sdist member: {member.name}", file=sys.stderr)
+                return False
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            with source, destination.open("wb") as output:
+                shutil.copyfileobj(source, output)
+    return True
 
 
 def rebuild_sdist(path: Path, output_dir: Path) -> int:
@@ -55,13 +86,8 @@ def rebuild_sdist(path: Path, output_dir: Path) -> int:
     output_dir.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="image-gallery-sdist-") as temporary:
         root = Path(temporary).resolve()
-        with tarfile.open(path, "r:gz") as archive:
-            for member in archive.getmembers():
-                destination = (root / member.name).resolve()
-                if root not in destination.parents and destination != root:
-                    print(f"unsafe sdist member: {member.name}", file=sys.stderr)
-                    return 1
-            archive.extractall(root)  # noqa: S202
+        if not _extract_sdist(path, root):
+            return 1
         projects = [item for item in root.iterdir() if item.is_dir()]
         if len(projects) != 1:
             print("sdist must contain exactly one project directory", file=sys.stderr)
