@@ -30,6 +30,6 @@
 
 ## 6. GitHub 验证与兼容期结论
 
-- [ ] 6.1 通过 Pull Request 验证 `lint`、`test`、`package`、`secrets`、`dependencies` 和 `workflows` required checks 均使用新入口并成功
+- [x] 6.1 通过 Pull Request 验证 `lint`、`test`、`package`、`secrets`、`dependencies` 和 `workflows` required checks 均使用新入口并成功
 - [ ] 6.2 记录 Windows 手动验证与 GitHub CI 结果，确认本轮继续保留 Makefile
 - [x] 6.3 仅在后续独立变更中评估删除 Makefile，不在本 change 中执行删除

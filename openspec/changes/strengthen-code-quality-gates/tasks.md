@@ -37,8 +37,8 @@
 
 - [x] 6.1 添加扫描 Python 与 GitHub Actions 的独立 CodeQL advanced workflow，覆盖 PR、master push 和定时执行
 - [x] 6.2 固定 CodeQL Actions 完整 SHA、最小化权限并通过 zizmor 与 workflow 契约测试
-- [ ] 6.3 运行首轮 CodeQL 基线并逐项审查发现，不建立宽泛路径忽略
-- [ ] 6.4 在 GitHub 配置新增 High/Critical code scanning merge protection，并验证 Medium 以下只报告
+- [x] 6.3 运行首轮 CodeQL 基线并逐项审查发现，不建立宽泛路径忽略
+- [x] 6.4 在 GitHub 配置新增 High/Critical code scanning merge protection，并验证 Medium 以下只报告
 
 ## 7. 文档与仓库治理
 
@@ -68,5 +68,5 @@
 - [ ] 10.1 在 Windows 通过 Python CI 入口运行格式、精选 lint、Pyright、默认测试、覆盖率、安全和包验证
 - [x] 10.2 运行 slow/real-data 显式验收及定时任务的可执行 smoke test，记录无法在本地复现的平台边界
 - [x] 10.3 运行 workflow、包、suppression 和 OpenSpec 契约测试及 `openspec validate --strict`
-- [ ] 10.4 通过真实 PR 验证 required checks、CodeQL High/Critical 保护、最低/最新 Python 与覆盖率行为
+- [x] 10.4 通过真实 PR 验证 required checks、CodeQL High/Critical 保护、最低/最新 Python 与覆盖率行为
 - [x] 10.5 同步 AGENTS.md 与 README，明确硬门禁、定时报告、豁免规则和许可证待用户选择边界
