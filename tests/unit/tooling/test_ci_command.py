@@ -52,6 +52,7 @@ def test_available_tasks_are_explicit_and_stable() -> None:
         "security-workflows",
         "test",
         "test-all",
+        "test-compat",
         "test-real",
     )
 
@@ -237,6 +238,28 @@ def test_coverage_enforces_repository_and_diff_thresholds() -> None:
             "--compare-branch=origin/master",
             "--fail-under=80",
         ),
+    ]
+
+
+def test_compatibility_runs_default_suite_without_xdist() -> None:
+    """最新 Python 必须运行完整默认快速测试，但规避原生扩展多进程不稳定。"""
+    runner = RecordingRunner()
+
+    assert ci.main(["test-compat"], runner=runner) == 0
+
+    assert runner.calls == [
+        (
+            "uv",
+            "run",
+            "pytest",
+            "-p",
+            "no:randomly",
+            "-n",
+            "0",
+            "--disable-socket",
+            "--allow-unix-socket",
+            "tests/",
+        )
     ]
 
 

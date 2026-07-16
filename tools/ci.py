@@ -62,6 +62,20 @@ _COMMANDS: dict[str, tuple[Command, ...]] = {
             "tests/",
         ),
     ),
+    "test-compat": (
+        (
+            "uv",
+            "run",
+            "pytest",
+            "-p",
+            "no:randomly",
+            "-n",
+            "0",
+            "--disable-socket",
+            "--allow-unix-socket",
+            "tests/",
+        ),
+    ),
     "test-real": (
         (
             "uv",
@@ -170,7 +184,7 @@ def _run_commands(task: str, runner: Runner) -> int:
 def _commands_for_task(task: str) -> tuple[Command, ...]:
     """返回任务命令，并安全应用历史测试参数覆盖。"""
     commands = _COMMANDS[task]
-    if task not in {"test", "test-real", "test-all"}:
+    if task not in {"test", "test-compat", "test-real", "test-all"}:
         return commands
     command = commands[0]
     test_file = os.environ.get("TEST_FILE", "tests/")

@@ -73,8 +73,8 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - run: uv sync --extra dev --frozen
-      - run: uv run python -m tools.ci test
+      - run: uv sync --all-extras --frozen
+      - run: uv run python -m tools.ci test-compat
       - run: uv run python -m tools.ci package
       - run: uv run python -m tools.ci package-validate
       - run: uv run python -m tools.ci package-smoke

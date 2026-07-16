@@ -155,6 +155,7 @@ def test_python_versions_are_explicit_and_do_not_use_runner_defaults() -> None:
     assert 'python-version: "3.10"' in text
     assert 'python-version: ["3.14"]' in text
     assert "python-version: ${{ matrix.python-version }}" in text
+    assert "uv run python -m tools.ci test-compat" in text
 
 
 def test_deep_quality_checks_are_scheduled_and_not_pr_required() -> None:
