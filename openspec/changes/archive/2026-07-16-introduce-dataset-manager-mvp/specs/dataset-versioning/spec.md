@@ -1,10 +1,4 @@
-# dataset-versioning Specification
-
-## Purpose
-
-定义新 DatasetManager 平台基于 Iceberg ref 的 Branch、Checkpoint、回退与状态 Clone 行为。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 数据集版本管理（PLANNED）
 系统 SHALL 在新 `image_gallery.dataset_manager` 平台中以每 Dataset 单 Iceberg Table 提供 Branch、Checkpoint、回退和状态 Clone；旧文件型 Dataset 的核心读写 API 不在本 change 中修改。

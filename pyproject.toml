@@ -12,15 +12,22 @@ authors = [
   { name = "ImageGallery Maintainers" }
 ]
 dependencies = [
+  "alembic>=1.16,<2",
   "defusedxml>=0.7",
+  "fsspec>=2025.3",
   "minio>=7.2",
   "numpy>=1.26",
   "pandas>=2.2,<2.3; python_version < '3.14'",
   "pandas>=2.3,<3; python_version >= '3.14'",
   "pyarrow>=15",
   "pillow>=10",
+  "pgvector>=0.4,<1",
+  "psycopg[binary]>=3.2,<4",
+  "pyiceberg[pyarrow,s3fs,sql-postgres,sql-sqlite]>=0.11.1,<0.12",
   "pyyaml>=6.0",
   "requests>=2.31",
+  "s3fs>=2025.3",
+  "sqlalchemy>=2.0,<3",
   "tomli>=2.0"
 ]
 
@@ -45,6 +52,7 @@ dev = [
   "pytest-randomly>=4",
   "pytest-repeat>=0.9",
   "mutmut>=3",
+  "testcontainers[postgres]>=4.10,<5",
 ]
 semantic = [
   "onnxruntime>=1.18,<1.24; python_version < '3.14'",
@@ -64,10 +72,11 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
-addopts = '-m "not slow"'
+addopts = '-m "not slow and not dataset_backend"'
 strict_markers = true
 strict_config = true
 markers = [
+  "dataset_backend: tests requiring PostgreSQL, Iceberg, or S3-compatible containers",
   "slow: tests requiring large datasets or long-running processing",
   "real_dataset: tests requiring sample_1000 and MinIO",
   "stability: tests covering concurrency, state, cache, or resource lifecycle risks",

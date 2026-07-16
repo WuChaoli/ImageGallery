@@ -4,6 +4,18 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 
 当前版本以 Python package API 和 Jupyter 验证为核心，不包含服务端 API 或 Web UI。
 
+## DatasetManager 新平台
+
+`image_gallery.dataset_manager` 提供与旧 `image_gallery.dataset` 独立并存的新数据集平台：一个 Backend 可创建多个硬隔离的 `DatasetRepo`，每个 Dataset 使用独立 Iceberg Table 管理 Branch、Checkpoint、回退与状态 Clone。`image_gallery.storage_manager` 独立负责 file/S3-compatible Prefix、SHA-256 内容身份和图片 bytes IO。
+
+新平台支持 Repo 级 Tag Definition、Dataset 行内版本化 Tag Assignment，以及由 pgvector 保存的 Repo 当前 VectorField 值。MVP 不提供 merge、跨 Repo clone、删除/GC、向量生成、ANN 或语义搜索。
+
+本地开发与单元测试可使用 `DatasetManager.local(...)`；PostgreSQL Backend 通过 `DatasetManager.postgres(...)` 连接 control database 和 PyIceberg SqlCatalog。完整签名和类型以包级导出与 docstring 为准。
+
+Storage Prefix 配置由部署层管理，不保存明文凭证。进程重启时必须先用原 `prefix_id`、root、endpoint 和 secret reference 重新注册 Prefix，再打开已有 Repo/Dataset；这样 Iceberg 行内位置可稳定解析。`DatasetManager` 与 `StorageManager` 均可作为 context manager 使用，也可显式调用 `close()` 释放数据库连接池和缓存的对象存储客户端。
+
+Alembic migration 需要建 schema、extension 和 role 的管理权限；迁移会创建 control、vectors、catalog 三个 runtime role，并把它们授予迁移执行用户。生产部署可再把这些 NOLOGIN role 授予实际登录主体。
+
 ## 清洗入口
 
 当前 `image_gallery.cleaning` 提供两类面向用户的清洗配置入口：
@@ -51,6 +63,12 @@ Makefile 当前作为兼容别名保留，已安装 GNU Make 时仍可运行 `ma
 
 ```bash
 uv run python -m tools.ci test-real
+```
+
+DatasetManager 的 PostgreSQL、pgvector、PyIceberg 和 S3-compatible 容器验收使用独立 `dataset_backend` marker，默认快测不会启动容器：
+
+```bash
+uv run pytest -m dataset_backend tests/integration/dataset_manager
 ```
 
 ## CI 安全门槛
