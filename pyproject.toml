@@ -45,7 +45,8 @@ dev = [
   "mutmut>=3",
 ]
 semantic = [
-  "onnxruntime>=1.18,<1.24",
+  "onnxruntime>=1.18,<1.24; python_version < '3.14'",
+  "onnxruntime>=1.24.2,<1.28; python_version >= '3.14'",
   "huggingface-hub>=0.24",
   "faiss-cpu>=1.8"
 ]
