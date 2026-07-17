@@ -9,6 +9,8 @@ __pycache__/
 .superpowers/
 .worktrees/
 .env
+examples/dataset_manager_demo/.env.demo
+examples/dataset_manager_demo/runtime/
 notebooks/.importers_test_library/
 datasets/
 .qoder/
