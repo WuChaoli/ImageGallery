@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import re
+import threading
 import uuid
 from collections.abc import Callable
+from contextlib import contextmanager
 from pathlib import Path
 from typing import cast
 
@@ -16,7 +18,7 @@ from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.table.refs import SnapshotRefType
 from pyiceberg.types import BooleanType, DoubleType, IntegerType, ListType, LongType, NestedField, StringType
-from sqlalchemy import create_engine, insert, select, update
+from sqlalchemy import create_engine, insert, select, text, update
 from sqlalchemy.engine import Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
 
@@ -71,6 +73,12 @@ _BUSINESS_FIELD_TYPES = {
     "string": StringType,
 }
 _EMBED_BATCH_SIZE = 64
+_SCHEMA_LOCK_NAMESPACE = "image-gallery-dataset-schema"
+
+
+def _schema_name_key(name: str) -> str:
+    """返回普通列与 VectorField 共享的名称冲突键。"""
+    return name.strip().casefold()
 
 
 class DatasetManager:
@@ -91,16 +99,19 @@ class DatasetManager:
         self._engine = control_engine
         self.catalog = catalog
         self.storage_manager = storage_manager
-        self.model_manager = model_manager or ModelManager()
-        self.model_manager.bind_engine(control_engine)
         self._operation_hook = operation_hook
         self._owns_engine = owns_engine
         self._owns_catalog = owns_catalog
+        self._owns_model_manager = model_manager is None
         self._closed = False
+        self._schema_locks_guard = threading.Lock()
+        self._schema_locks: dict[str, threading.RLock] = {}
         if self._engine.dialect.name == "postgresql":
             upgrade_control_database(self._engine)
         else:
             metadata.create_all(self._engine)
+        self.model_manager = model_manager or ModelManager()
+        self.model_manager.bind_engine(control_engine)
         self._restore_storage_prefixes()
 
     @classmethod
@@ -178,7 +189,8 @@ class DatasetManager:
             return
         self._closed = True
         try:
-            self.model_manager.close()
+            if self._owns_model_manager:
+                self.model_manager.close()
             if self._owns_engine:
                 self._engine.dispose()
         finally:
@@ -686,17 +698,38 @@ class DatasetManager:
         model_id: str,
         distance: str,
     ) -> VectorField:
+        with self._repo_schema_lock(repo_id=repo.repo_id):
+            return self._create_bound_vector_field_locked(
+                repo=repo,
+                name=name,
+                model_id=model_id,
+                distance=distance,
+            )
+
+    def _create_bound_vector_field_locked(
+        self,
+        *,
+        repo: DatasetRepo,
+        name: str,
+        model_id: str,
+        distance: str,
+    ) -> VectorField:
+        """在已持有 Repo Schema 锁时创建 VectorField。"""
+        normalized_name = name.strip()
+        name_key = _schema_name_key(name)
+        if not name_key:
+            raise ValidationError("VectorField name cannot be empty")
         if distance not in {"cosine", "dot", "l2"}:
             raise ValidationError("VectorField requires a supported distance")
         for dataset in self._list_datasets(repo=repo):
-            if name in self._list_columns(dataset=dataset):
-                raise ValidationError(f"VectorField conflicts with Physical Schema column: {name}")
+            if name_key in {_schema_name_key(column) for column in self._list_columns(dataset=dataset)}:
+                raise ValidationError(f"VectorField conflicts with Physical Schema column: {normalized_name}")
         definition = self.model_manager.get(model_id=model_id)
         if definition is None:
             raise ValidationError(f"Unknown model_id: {model_id}")
         existing = None
         try:
-            existing = self._open_vector_field(repo=repo, name=name)
+            existing = self._open_vector_field(repo=repo, name=normalized_name)
         except ObjectNotFoundError:
             pass
         if existing is not None:
@@ -706,7 +739,7 @@ class DatasetManager:
                 and existing.distance == distance
             ):
                 return existing
-            raise NameConflictError(name)
+            raise NameConflictError(normalized_name)
         vector_field_id = uuid.uuid4().hex
         try:
             with self._engine.begin() as connection:
@@ -714,8 +747,8 @@ class DatasetManager:
                     insert(vector_fields).values(
                         vector_field_id=vector_field_id,
                         repo_id=repo.repo_id,
-                        name=name,
-                        name_key=name.casefold(),
+                        name=normalized_name,
+                        name_key=name_key,
                         model_id=model_id,
                         model_fingerprint=definition.fingerprint,
                         dimension=definition.dimension,
@@ -724,11 +757,11 @@ class DatasetManager:
                     )
                 )
         except IntegrityError as exc:
-            raise NameConflictError(name) from exc
+            raise NameConflictError(normalized_name) from exc
         return VectorField(
             vector_field_id,
             repo.repo_id,
-            name,
+            normalized_name,
             model_id,
             definition.fingerprint,
             definition.dimension,
@@ -740,7 +773,7 @@ class DatasetManager:
     def _open_vector_field(self, *, repo: DatasetRepo, name: str) -> VectorField:
         statement = select(vector_fields).where(
             vector_fields.c.repo_id == repo.repo_id,
-            vector_fields.c.name_key == name.casefold(),
+            vector_fields.c.name_key == _schema_name_key(name),
         )
         with self._engine.connect() as connection:
             row = connection.execute(statement).mappings().one_or_none()
@@ -1224,6 +1257,25 @@ class DatasetManager:
         name: str,
         field_type: str,
     ) -> DatasetView:
+        with self._repo_schema_lock(repo_id=dataset.repo_id):
+            return self._add_column_locked(
+                dataset=dataset,
+                branch=branch,
+                base=base,
+                name=name,
+                field_type=field_type,
+            )
+
+    def _add_column_locked(
+        self,
+        *,
+        dataset: Dataset,
+        branch: str,
+        base: DatasetView,
+        name: str,
+        field_type: str,
+    ) -> DatasetView:
+        """在已持有 Repo Schema 锁时新增普通列。"""
         self._validate_view_dataset(view=base, dataset=dataset)
         if base.ref_type != "branch" or base.ref_name != branch:
             raise ValidationError("Schema baseline must be the target Branch View")
@@ -1234,7 +1286,9 @@ class DatasetManager:
         if not normalized_name or normalized_name in _SYSTEM_FIELDS:
             raise ValidationError("System fields cannot be changed")
         repo = self._repo_by_id(dataset.repo_id)
-        if normalized_name.casefold() in {field.name.casefold() for field in self._list_vector_fields(repo=repo)}:
+        if _schema_name_key(normalized_name) in {
+            _schema_name_key(field.name) for field in self._list_vector_fields(repo=repo)
+        }:
             raise ValidationError(f"Physical Schema column conflicts with VectorField: {normalized_name}")
         type_factory = _BUSINESS_FIELD_TYPES.get(field_type)
         if type_factory is None:
@@ -1244,6 +1298,28 @@ class DatasetManager:
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         return self._open_branch(dataset=dataset, name=branch)
+
+    @contextmanager
+    def _repo_schema_lock(self, *, repo_id: str):  # pyright: ignore[reportUnknownParameterType]
+        """在同一 Repo 的跨 facade Schema 修改期间持有互斥锁。"""
+        if self._engine.dialect.name != "postgresql":
+            with self._schema_locks_guard:
+                lock = self._schema_locks.setdefault(repo_id, threading.RLock())
+            with lock:
+                yield
+            return
+
+        digest = hashlib.sha256(f"{_SCHEMA_LOCK_NAMESPACE}:{repo_id}".encode()).digest()
+        lock_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
+        connection = self._engine.connect()
+        try:
+            connection.execute(text("SELECT pg_advisory_lock(:lock_key)"), {"lock_key": lock_key})
+            yield
+        finally:
+            try:
+                connection.execute(text("SELECT pg_advisory_unlock(:lock_key)"), {"lock_key": lock_key})
+            finally:
+                connection.close()
 
     def _list_columns(self, *, dataset: Dataset) -> list[str]:
         table = self.catalog.load_table(dataset.table_identifier)

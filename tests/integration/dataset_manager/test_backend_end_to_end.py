@@ -1,4 +1,5 @@
 import logging
+import threading
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -9,7 +10,7 @@ import pytest
 from PIL import Image
 from tests.helpers.dataset_manager_importer import DatasetManagerTestImporter
 
-from image_gallery.dataset_manager import ConflictError, DatasetManager
+from image_gallery.dataset_manager import ConflictError, DatasetManager, ValidationError
 from image_gallery.importers import LocalPathParser
 from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
@@ -53,6 +54,67 @@ def write_image(path: Path, *, color: tuple[int, int, int]) -> bytes:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (4, 4), color=color).save(path, format="PNG")
     return path.read_bytes()
+
+
+def test_real_backend_serializes_conflicting_schema_changes(
+    dataset_postgres_url: str,
+    dataset_catalog_url: str,
+    dataset_warehouse: str,
+) -> None:
+    """验证真实 PostgreSQL/Iceberg Backend 上同名 Schema 修改最多一个成功。"""
+    models = make_model_manager()
+    models.register(
+        ModelDefinition(
+            model_id="schema-model",
+            provider="test",
+            artifact_uri="memory://schema-model",
+            artifact_revision="v1",
+            artifact_checksum="sha256:" + "2" * 64,
+            dimension=2,
+            dtype="float32",
+            config={},
+        )
+    )
+    with StorageManager() as storage:
+        with DatasetManager.postgres(
+            control_url=dataset_postgres_url,
+            catalog_url=dataset_catalog_url,
+            warehouse=dataset_warehouse,
+            storage_manager=storage,
+            model_manager=models,
+        ) as manager:
+            repo = manager.create_repo(name="ConcurrentSchema")
+            dataset = repo.create_dataset(name="Raw")
+            base = dataset.open_branch()
+            barrier = threading.Barrier(2)
+            outcomes: list[str] = []
+
+            def add_column() -> None:
+                barrier.wait()
+                try:
+                    dataset.schema.add_column(branch="main", base=base, name="Embedding", field_type="string")
+                    outcomes.append("column")
+                except ValidationError:
+                    outcomes.append("column-rejected")
+
+            def add_vector() -> None:
+                barrier.wait()
+                try:
+                    repo.schema.add_vector(name=" embedding ", model_id="schema-model", distance="cosine")
+                    outcomes.append("vector")
+                except ValidationError:
+                    outcomes.append("vector-rejected")
+
+            threads = [threading.Thread(target=add_column), threading.Thread(target=add_vector)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+
+            assert all(not thread.is_alive() for thread in threads)
+            assert len(outcomes) == 2
+            assert sum(value in {"column", "vector"} for value in outcomes) == 1
+    models.close()
 
 
 def test_real_backend_complete_dataset_lifecycle(

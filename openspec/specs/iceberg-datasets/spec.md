@@ -14,7 +14,7 @@ DatasetRepo SHALL 在创建 Dataset 时创建且只创建一张 Iceberg Table，
 - **THEN** 普通 API 不返回半创建 Dataset，recovery 可根据 durable intent 幂等完成
 
 ### Requirement: 固定系统字段与开放物理 Schema
-每张 Dataset Table SHALL 包含 required `asset_id`、`storage_prefix_id`、`relative_path`，optional `source_uri` 和 required `tag_ids: list<string>`；Dataset SHALL 通过 `dataset.schema` facade 读取列定义并新增可选业务列，且普通列名不得与所属 Repo 的 VectorField 重名。
+每张 Dataset Table SHALL 包含 required `asset_id`、`storage_prefix_id`、`relative_path`，optional `source_uri` 和 required `tag_ids: list<string>`；Dataset SHALL 通过 `dataset.schema` facade 读取列定义并新增可选业务列。普通列与所属 Repo VectorField SHALL 共享去除首尾空白且大小写不敏感的名称空间，并 SHALL 在同一 Repo Schema 锁内重新检查后新增。
 
 #### Scenario: 通过 Schema facade 新增普通列
 - **WHEN** 调用方执行 `dataset.schema.add_column(...)` 且名称和类型有效
@@ -27,6 +27,14 @@ DatasetRepo SHALL 在创建 Dataset 时创建且只创建一张 Iceberg Table，
 #### Scenario: 拒绝破坏性 Schema 演进
 - **WHEN** 请求 drop、rename、change-type、修改系统字段或创建与 VectorField 同名的普通列
 - **THEN** 操作失败且 Branch Head 不变
+
+#### Scenario: 同 Repo Schema 修改互斥
+- **WHEN** 多个调用方并发修改同一 Repo 中不同 Dataset 的普通列或 VectorField
+- **THEN** 系统按 Repo 串行执行检查与修改，异常退出后锁可释放并允许后续修改
+
+#### Scenario: 不同 Repo Schema 修改独立
+- **WHEN** 两个调用方并发修改不同 Repo 的 Schema
+- **THEN** 两个 Repo 使用不同锁域且不因全局互斥而相互阻塞
 ### Requirement: 内容身份是行唯一键
 系统 SHALL 要求 `asset_id` 是实际图片 SHA-256，且同一 Dataset Snapshot 内一个 asset_id 最多存在一行。
 

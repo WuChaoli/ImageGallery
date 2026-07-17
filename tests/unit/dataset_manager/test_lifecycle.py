@@ -4,6 +4,7 @@ import pandas as pd
 import pytest
 
 from image_gallery.dataset_manager import ConflictError, DatasetManager, NameConflictError, ValidationError
+from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
 
 
@@ -26,6 +27,77 @@ def setup_dataset(tmp_path: Path):  # pyright: ignore[reportUnknownParameterType
         }
 
     return repo, dataset, row
+
+
+def test_dataset_manager_does_not_close_injected_model_manager(tmp_path: Path) -> None:
+    class Runtime:
+        def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
+            return [(1.0, 2.0) for _ in images]
+
+        def close(self) -> None:
+            pass
+
+    models = ModelManager(providers={"test": lambda _definition, _secrets: Runtime()})
+    models.register(
+        ModelDefinition(
+            model_id="shared",
+            provider="test",
+            artifact_uri="memory://model",
+            artifact_revision="v1",
+            artifact_checksum="sha256:" + "1" * 64,
+            dimension=2,
+            dtype="float32",
+            config={},
+        )
+    )
+    first = DatasetManager.local(
+        root=tmp_path / "backend",
+        storage_manager=StorageManager(),
+        model_manager=models,
+    )
+    second = DatasetManager.local(
+        root=tmp_path / "backend",
+        storage_manager=StorageManager(),
+        model_manager=models,
+    )
+
+    first.close()
+    assert models._closed is False  # pyright: ignore[reportPrivateUsage]
+    assert second.model_manager.embed(model_id="shared", images=[b"image"]) == [(1.0, 2.0)]
+    models.register(
+        ModelDefinition(
+            model_id="still-open",
+            provider="test",
+            artifact_uri="memory://model",
+            artifact_revision="v1",
+            artifact_checksum="sha256:" + "1" * 64,
+            dimension=2,
+            dtype="float32",
+            config={},
+        )
+    )
+
+    assert models.get(model_id="still-open") is not None
+    second.close()
+    models.close()
+
+
+def test_dataset_manager_closes_owned_model_manager_once(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    close_calls = 0
+    original_close = ModelManager.close
+
+    def record_close(self: ModelManager) -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close(self)
+
+    monkeypatch.setattr(ModelManager, "close", record_close)
+    manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=StorageManager())
+
+    manager.close()
+    manager.close()
+
+    assert close_calls == 1
 
 
 def test_branch_rolls_back_only_to_ancestor_checkpoint(tmp_path: Path) -> None:

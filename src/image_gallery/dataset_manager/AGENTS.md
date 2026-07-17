@@ -13,6 +13,7 @@
 - `DatasetView` 以 DataFrame/Series 返回物理列与显式选择的 Repo 当前向量；未选择时不隐式加载向量。
 - `Dataset.generate_embed()` 默认固定 main 当前 Head，也可固定指定 Branch 或当前 Dataset 的精确 View；不推进 Iceberg 历史。
 - VectorField 强绑定持久化模型定义，当前只接受 `float32`，距离度量限制为 `cosine`、`dot` 或 `l2`。
+- 普通列与 VectorField 使用 `strip().casefold()` 统一判重；同 Repo Schema 修改串行，不同 Repo 保持独立锁域。
 
 ## 公共入口
 
@@ -24,7 +25,8 @@
 - Iceberg 保存 Dataset Schema、行、Tag Assignment 和历史；PostgreSQL 保存控制面与 Repo 当前向量。
 - 图片读取必须委托 `image_gallery.storage_manager`，行内位置只由 `storage_prefix_id + relative_path` 构成；Prefix 冻结定义和模型定义持久化在 control schema，运行时资源不持久化。
 - 新平台不继承或隐式转换旧 `image_gallery.dataset` / `image_gallery.storage` 类型。
-- `DatasetManager.local()` / `postgres()` 拥有其创建的 Engine；使用 context manager 或 `close()` 释放连接池。
+- `DatasetManager.local()` / `postgres()` 拥有其创建的 Engine；DatasetManager 只关闭内部创建的 ModelManager，外部注入实例由调用方关闭。
+- 当前 PostgreSQL 初始化自动执行 migration，连接默认具备创建 schema、extension 和 role 的管理员权限。
 
 ## 开发与验证
 

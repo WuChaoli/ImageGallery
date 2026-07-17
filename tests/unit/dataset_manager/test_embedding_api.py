@@ -1,3 +1,4 @@
+import threading
 from pathlib import Path
 
 import pandas as pd
@@ -82,6 +83,85 @@ def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
         dataset.schema.add_column(branch="main", base=patched, name="embedding", field_type="string")
     with pytest.raises(ValidationError):
         repo.schema.add_vector(name="split", model_id="clip", distance="cosine")
+
+
+def test_schema_names_conflict_after_trimming_and_casefolding(tmp_path: Path) -> None:
+    _, repo, dataset, view, _ = setup_dataset(tmp_path)
+    dataset.schema.add_column(branch="main", base=view, name=" Embedding ", field_type="string")
+
+    with pytest.raises(ValidationError, match="conflicts"):
+        repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
+
+    other = repo.create_dataset(name="Other")
+    repo.schema.add_vector(name=" Features ", model_id="clip", distance="cosine")
+    with pytest.raises(ValidationError, match="conflicts"):
+        other.schema.add_column(
+            branch="main",
+            base=other.open_branch(),
+            name="features",
+            field_type="string",
+        )
+
+
+def test_same_repo_concurrent_column_and_vector_name_has_single_winner(tmp_path: Path) -> None:
+    _, repo, dataset, view, _ = setup_dataset(tmp_path)
+    barrier = threading.Barrier(2)
+    outcomes: list[str] = []
+
+    def add_column() -> None:
+        barrier.wait()
+        try:
+            dataset.schema.add_column(branch="main", base=view, name="Shared", field_type="string")
+            outcomes.append("column")
+        except ValidationError:
+            outcomes.append("column-rejected")
+
+    def add_vector() -> None:
+        barrier.wait()
+        try:
+            repo.schema.add_vector(name=" shared ", model_id="clip", distance="cosine")
+            outcomes.append("vector")
+        except ValidationError:
+            outcomes.append("vector-rejected")
+
+    threads = [threading.Thread(target=add_column), threading.Thread(target=add_vector)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+
+    assert all(not thread.is_alive() for thread in threads)
+    assert sum(item in {"column", "vector"} for item in outcomes) == 1
+    assert len(outcomes) == 2
+
+
+def test_local_schema_lock_is_repo_scoped_and_reusable_after_failure(tmp_path: Path) -> None:
+    manager, repo, _, _, _ = setup_dataset(tmp_path)
+    other = manager.create_repo(name="Other")
+    first_acquired = threading.Event()
+    release_first = threading.Event()
+    second_acquired = threading.Event()
+
+    def hold_first_repo() -> None:
+        with manager._repo_schema_lock(repo_id=repo.repo_id):  # pyright: ignore[reportPrivateUsage]
+            first_acquired.set()
+            release_first.wait(timeout=10)
+
+    thread = threading.Thread(target=hold_first_repo)
+    thread.start()
+    assert first_acquired.wait(timeout=10)
+    with manager._repo_schema_lock(repo_id=other.repo_id):  # pyright: ignore[reportPrivateUsage]
+        second_acquired.set()
+    assert second_acquired.is_set()
+    release_first.set()
+    thread.join(timeout=10)
+    assert not thread.is_alive()
+
+    with pytest.raises(RuntimeError, match="injected"):
+        with manager._repo_schema_lock(repo_id=repo.repo_id):  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError("injected")
+    with manager._repo_schema_lock(repo_id=repo.repo_id):  # pyright: ignore[reportPrivateUsage]
+        pass
 
 
 def test_generate_embed_defaults_to_main_and_combines_vector_fields(tmp_path: Path) -> None:

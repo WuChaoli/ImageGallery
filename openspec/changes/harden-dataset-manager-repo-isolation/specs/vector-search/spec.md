@@ -1,10 +1,4 @@
-# vector-search Specification
-
-## Purpose
-
-定义 DatasetRepo 级当前向量存储能力，以及与未来搜索和现有 semantic_duplicate 的边界。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: 向量索引能力（PLANNED）
 系统 SHALL 在新 DatasetManager 平台提供 DatasetRepo 级 VectorField 和 pgvector 当前值存储，并把 ANN、语义搜索和相似图片分析保留为后续能力。VectorField SHALL 只描述冻结向量空间，模型定义与推理由 ModelManager 管理，Dataset/View 范围的生成和发布由 `Dataset.generate_embed()` 管理。

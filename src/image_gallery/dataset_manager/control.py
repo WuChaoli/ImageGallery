@@ -6,6 +6,7 @@ from sqlalchemy import (
     Boolean,
     Column,
     ForeignKey,
+    ForeignKeyConstraint,
     Integer,
     MetaData,
     String,
@@ -113,21 +114,26 @@ vector_fields = Table(
     Column("numeric_type", String(32), nullable=False),
     Column("distance", String(32), nullable=False),
     UniqueConstraint("repo_id", "name_key", name="uq_vector_fields_repo_name_key"),
+    UniqueConstraint("repo_id", "vector_field_id", name="uq_vector_fields_repo_field"),
     schema="control",
 )
 
 asset_vectors = Table(
     "asset_vectors",
     metadata,
-    Column("repo_id", String(32), ForeignKey("control.repos.repo_id"), primary_key=True),
+    Column("repo_id", String(32), primary_key=True),
     Column(
         "vector_field_id",
         String(32),
-        ForeignKey("control.vector_fields.vector_field_id"),
         primary_key=True,
     ),
     Column("asset_id", String(71), primary_key=True),
     Column("value", Vector().with_variant(JSON(), "sqlite"), nullable=False),
+    ForeignKeyConstraint(
+        ["repo_id", "vector_field_id"],
+        ["control.vector_fields.repo_id", "control.vector_fields.vector_field_id"],
+        name="fk_asset_vectors_repo_field",
+    ),
     schema="vectors",
 )
 
@@ -140,14 +146,18 @@ pending_asset_vectors = Table(
         ForeignKey("control.operations.operation_id"),
         primary_key=True,
     ),
-    Column("repo_id", String(32), ForeignKey("control.repos.repo_id"), primary_key=True),
+    Column("repo_id", String(32), primary_key=True),
     Column(
         "vector_field_id",
         String(32),
-        ForeignKey("control.vector_fields.vector_field_id"),
         primary_key=True,
     ),
     Column("asset_id", String(71), primary_key=True),
     Column("value", Vector().with_variant(JSON(), "sqlite"), nullable=False),
+    ForeignKeyConstraint(
+        ["repo_id", "vector_field_id"],
+        ["control.vector_fields.repo_id", "control.vector_fields.vector_field_id"],
+        name="fk_pending_asset_vectors_repo_field",
+    ),
     schema="vectors",
 )
