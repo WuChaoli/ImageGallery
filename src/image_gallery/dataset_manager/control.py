@@ -5,10 +5,8 @@ from sqlalchemy import (
     JSON,
     Boolean,
     Column,
-    Float,
     ForeignKey,
     Integer,
-    LargeBinary,
     MetaData,
     String,
     Table,
@@ -75,6 +73,19 @@ repo_storage_bindings = Table(
     schema="control",
 )
 
+storage_prefixes = Table(
+    "storage_prefixes",
+    metadata,
+    Column("prefix_id", String(64), primary_key=True),
+    Column("name", String(255), nullable=False),
+    Column("backend", String(32), nullable=False),
+    Column("root", String(2048), nullable=False),
+    Column("credential_ref", String(1024), nullable=True),
+    Column("endpoint_url", String(2048), nullable=True),
+    Column("fingerprint", String(128), nullable=False),
+    schema="control",
+)
+
 tag_definitions = Table(
     "tag_definitions",
     metadata,
@@ -96,28 +107,12 @@ vector_fields = Table(
     Column("repo_id", String(32), ForeignKey("control.repos.repo_id"), nullable=False),
     Column("name", String(255), nullable=False),
     Column("name_key", String(255), nullable=False),
+    Column("model_id", String(128), nullable=True),
+    Column("model_fingerprint", String(128), nullable=True),
     Column("dimension", Integer, nullable=False),
     Column("numeric_type", String(32), nullable=False),
     Column("distance", String(32), nullable=False),
-    Column("tolerance", Float, nullable=False),
-    Column("validation_set", JSON, nullable=False),
     UniqueConstraint("repo_id", "name_key", name="uq_vector_fields_repo_name_key"),
-    schema="control",
-)
-
-vector_validation_items = Table(
-    "vector_validation_items",
-    metadata,
-    Column(
-        "vector_field_id",
-        String(32),
-        ForeignKey("control.vector_fields.vector_field_id"),
-        primary_key=True,
-    ),
-    Column("position", Integer, primary_key=True),
-    Column("probe", LargeBinary, nullable=False),
-    Column("probe_hash", String(71), nullable=False),
-    Column("expected", JSON, nullable=False),
     schema="control",
 )
 

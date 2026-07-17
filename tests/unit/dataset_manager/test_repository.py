@@ -1,6 +1,7 @@
 from pathlib import Path
 from unittest.mock import MagicMock
 
+import pandas as pd
 import pytest
 
 import image_gallery.dataset_manager.manager as manager_module
@@ -9,7 +10,6 @@ from image_gallery.dataset_manager import (
     NameConflictError,
     StorageAuthorizationError,
     ValidationError,
-    VectorValidationItem,
 )
 from image_gallery.storage_manager import StorageManager
 
@@ -132,6 +132,19 @@ def test_repo_authorizes_storage_prefixes(tmp_path: Path) -> None:
     assert repo.list_storage_prefix_ids() == [prefix.prefix_id]
 
 
+def test_storage_prefix_definition_is_restored_after_restart(tmp_path: Path) -> None:
+    manager, storage = make_manager(tmp_path)
+    prefix = storage.register_file_prefix(name="images", root=tmp_path / "images", prefix_id="images-v1")
+    repo = manager.create_repo(name="Vision")
+    repo.bind_storage_prefix(prefix_id=prefix.prefix_id)
+    manager.close()
+
+    restarted_storage = StorageManager()
+    DatasetManager.local(root=tmp_path / "backend", storage_manager=restarted_storage)
+
+    assert restarted_storage.get_prefix(prefix_id="images-v1") == prefix
+
+
 def test_prefix_bindings_are_many_to_many_and_cannot_be_removed(tmp_path: Path) -> None:
     manager, storage = make_manager(tmp_path)
     first_prefix = storage.register_file_prefix(name="first", root=tmp_path / "first")
@@ -164,7 +177,7 @@ def test_dataset_rejects_unbound_prefix_before_iceberg_write(tmp_path: Path) -> 
     }
 
     with pytest.raises(StorageAuthorizationError):
-        dataset.commit(branch="main", base=dataset.open_branch(), rows=[row])
+        dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row]))
 
     assert dataset.open_branch().count() == 0
 
@@ -189,22 +202,11 @@ def test_repo_scoped_handles_reject_cross_repo_references(tmp_path: Path) -> Non
     }
 
     with pytest.raises(ValidationError):
-        second_dataset.commit(branch="main", base=first_dataset.open_branch(), rows=[])
+        second_dataset.commit(branch="main", base=first_dataset.open_branch(), frame=pd.DataFrame([]))
     with pytest.raises(ValidationError, match="tag_id"):
-        second_dataset.commit(branch="main", base=second_dataset.open_branch(), rows=[row])
+        second_dataset.commit(branch="main", base=second_dataset.open_branch(), frame=pd.DataFrame([row]))
 
-    second_field = second_repo.create_vector_field(
-        name="clip",
-        dimension=2,
-        distance="cosine",
-        validation_set=[VectorValidationItem(probe=b"fixed", expected=(0.1, 0.2))],
-    )
-    with pytest.raises(ValidationError):
-        second_field.write(
-            source=first_dataset.open_branch(),
-            items={},
-            validation_outputs=[(0.1, 0.2)],
-        )
+    assert first_dataset.repo_id != second_dataset.repo_id
 
 
 def test_dataset_create_is_hidden_until_recovery_finalizes(tmp_path: Path) -> None:

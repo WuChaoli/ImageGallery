@@ -4,16 +4,34 @@ from contextlib import contextmanager
 from pathlib import Path
 from time import monotonic
 
+import pandas as pd
 import pytest
 from PIL import Image
 from tests.helpers.dataset_manager_importer import DatasetManagerTestImporter
 
-from image_gallery.dataset_manager import ConflictError, DatasetManager, VectorCommit, VectorValidationItem
+from image_gallery.dataset_manager import ConflictError, DatasetManager
 from image_gallery.importers import LocalPathParser
+from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
 
 pytestmark = pytest.mark.dataset_backend
 LOGGER = logging.getLogger(__name__)
+
+
+class E2ERuntime:
+    """返回确定性向量的 E2E 测试模型。"""
+
+    def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
+        """为每张图片返回固定二维向量。"""
+        return [(1.0, 2.0) for _ in images]
+
+    def close(self) -> None:
+        """关闭无状态测试运行时。"""
+
+
+def make_model_manager() -> ModelManager:
+    """创建可在数据库绑定前后复用的测试 ModelManager。"""
+    return ModelManager(providers={"test": lambda _definition, _secrets: E2ERuntime()})
 
 
 @contextmanager
@@ -61,6 +79,19 @@ def test_real_backend_complete_dataset_lifecycle(
 
     with e2e_stage("initial-client"):
         with StorageManager(credential_provider=lambda ref: secrets[ref]) as storage:
+            models = make_model_manager()
+            models.register(
+                ModelDefinition(
+                    model_id="clip-v1",
+                    provider="test",
+                    artifact_uri="memory://clip-v1",
+                    artifact_revision="v1",
+                    artifact_checksum="sha256:" + "1" * 64,
+                    dimension=2,
+                    dtype="float32",
+                    config={},
+                )
+            )
             file_prefix = storage.register_file_prefix(
                 name="file",
                 root=file_root,
@@ -78,6 +109,7 @@ def test_real_backend_complete_dataset_lifecycle(
                 catalog_url=dataset_catalog_url,
                 warehouse=dataset_warehouse,
                 storage_manager=storage,
+                model_manager=models,
             ) as manager:
                 with e2e_stage("v1-import"):
                     repo = manager.create_repo(name="Vision")
@@ -103,12 +135,7 @@ def test_real_backend_complete_dataset_lifecycle(
                     dataset.create_branch(name="experiment", source=checkpoint)
 
                 with e2e_stage("branch-and-version-evolution"):
-                    field = repo.create_vector_field(
-                        name="clip",
-                        dimension=2,
-                        distance="cosine",
-                        validation_set=[VectorValidationItem(probe=b"probe", expected=(0.1, 0.2))],
-                    )
+                    field = repo.schema.add_vector(name="clip", model_id="clip-v1", distance="cosine")
                     storage.write_bytes(
                         prefix_id=s3_prefix.prefix_id,
                         relative_path="external/main-v2.png",
@@ -126,17 +153,10 @@ def test_real_backend_complete_dataset_lifecycle(
                         "tag_ids": [tag.tag_id],
                     }
                     main_v2 = dataset.commit(
-                        branch="main",
-                        base=dataset.open_branch(),
-                        rows=[main_v2_row],
-                        vectors=[
-                            VectorCommit(
-                                field=field,
-                                items={main_v2_object.asset_id: (1.0, 2.0)},
-                                validation_outputs=[(0.1, 0.2)],
-                            )
-                        ],
+                        branch="main", base=dataset.open_branch(), frame=pd.DataFrame([main_v2_row])
                     ).view
+                    generated = dataset.generate_embed(field="clip", source=main_v2)
+                    assert generated.generated == 3
                     clone = repo.clone_dataset(source=main_v2, name="Clone")
 
                     experiment_object = storage.write_managed(
@@ -153,20 +173,20 @@ def test_real_backend_complete_dataset_lifecycle(
                     experiment_v2 = dataset.commit(
                         branch="experiment",
                         base=dataset.open_branch(name="experiment"),
-                        rows=[experiment_row],
+                        frame=pd.DataFrame([experiment_row]),
                     ).view
 
-                    assert imported.view.scan() == v1_rows
-                    assert dataset.open_checkpoint(name="v1").scan() == v1_rows
+                    assert imported.view.scan().equals(v1_rows)
+                    assert dataset.open_checkpoint(name="v1").scan().equals(v1_rows)
                     assert main_v2.count() == 3
                     assert experiment_v2.count() == 3
                     main_v2_rows = main_v2.scan()
                     experiment_v2_rows = experiment_v2.scan()
-                    assert main_v2.get_row(asset_id=main_v2_object.asset_id) == main_v2_row
-                    assert experiment_v2.get_row(asset_id=experiment_object.asset_id) == experiment_row
+                    assert main_v2.get_row(asset_id=main_v2_object.asset_id).to_dict() == main_v2_row
+                    assert experiment_v2.get_row(asset_id=experiment_object.asset_id).to_dict() == experiment_row
                     assert field.get(asset_id=main_v2_object.asset_id) == (1.0, 2.0)
                     with pytest.raises(ConflictError):
-                        dataset.commit(branch="main", base=imported.view, rows=[])
+                        dataset.commit(branch="main", base=imported.view, frame=pd.DataFrame([]))
 
                 with e2e_stage("rollback"):
                     rolled_back = dataset.rollback(
@@ -174,41 +194,30 @@ def test_real_backend_complete_dataset_lifecycle(
                         base=main_v2,
                         checkpoint=checkpoint,
                     )
-                    assert rolled_back.scan() == v1_rows
-                    assert dataset.open_branch(name="experiment").scan() == experiment_v2_rows
-                    assert clone.open_branch().scan() == main_v2_rows
+                    assert rolled_back.scan().equals(v1_rows)
+                    assert dataset.open_branch(name="experiment").scan().equals(experiment_v2_rows)
+                    assert clone.open_branch().scan().equals(main_v2_rows)
                     assert clone.list_checkpoints() == []
                     assert field.get(asset_id=main_v2_object.asset_id) == (1.0, 2.0)
 
     with e2e_stage("restart-and-reopen"):
         with StorageManager(credential_provider=lambda ref: secrets[ref]) as restarted_storage:
-            restarted_storage.register_file_prefix(
-                name="file",
-                root=file_root,
-                prefix_id=file_prefix_id,
-            )
-            restarted_storage.register_s3_prefix(
-                name="s3",
-                root=f"{dataset_minio_config['bucket']}/images",
-                endpoint_url=dataset_minio_config["endpoint_url"],
-                credential_ref="secret://minio/tests",
-                prefix_id=s3_prefix_id,
-            )
             with DatasetManager.postgres(
                 control_url=dataset_postgres_url,
                 catalog_url=dataset_catalog_url,
                 warehouse=dataset_warehouse,
                 storage_manager=restarted_storage,
+                model_manager=make_model_manager(),
             ) as restarted:
                 reopened_repo = restarted.open_repo(name="vision")
                 reopened_dataset = reopened_repo.open_dataset(name="raw")
                 reopened_clone = reopened_repo.open_dataset(name="clone")
                 reopened_field = reopened_repo.open_vector_field(name="clip")
 
-                assert reopened_dataset.open_branch().scan() == v1_rows
-                assert reopened_dataset.open_checkpoint(name="v1").scan() == v1_rows
-                assert reopened_dataset.open_branch(name="experiment").scan() == experiment_v2_rows
-                assert reopened_clone.open_branch().scan() == main_v2_rows
+                assert reopened_dataset.open_branch().scan().equals(v1_rows)
+                assert reopened_dataset.open_checkpoint(name="v1").scan().equals(v1_rows)
+                assert reopened_dataset.open_branch(name="experiment").scan().equals(experiment_v2_rows)
+                assert reopened_clone.open_branch().scan().equals(main_v2_rows)
                 assert reopened_clone.open_branch().read_image(asset_id=main_v2_object.asset_id) == storage_bytes(
                     restarted_storage,
                     prefix_id=s3_prefix_id,
@@ -217,7 +226,7 @@ def test_real_backend_complete_dataset_lifecycle(
                 assert reopened_field.get(asset_id=main_v2_object.asset_id) == (1.0, 2.0)
                 renamed = reopened_repo.rename_tag(tag_id=tag.tag_id, name="verified-import")
                 assert renamed.tag_id == tag.tag_id
-                for row in reopened_dataset.open_checkpoint(name="v1").scan():
+                for row in reopened_dataset.open_checkpoint(name="v1").scan().to_dict(orient="records"):
                     assert row["tag_ids"] == [tag.tag_id]
 
 

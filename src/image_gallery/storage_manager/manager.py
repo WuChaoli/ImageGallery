@@ -99,6 +99,16 @@ class StorageManager:
         self._prefixes[prefix.prefix_id] = prefix
         self._prefix_names[prefix.name.casefold()] = prefix.prefix_id
 
+    def restore_prefix(self, prefix: StoragePrefix) -> StoragePrefix:
+        """从可信控制数据库恢复冻结 Prefix 定义。"""
+        existing = self._prefixes.get(prefix.prefix_id)
+        if existing is not None:
+            if existing != prefix:
+                raise ValueError(f"Storage Prefix ID is bound to another definition: {prefix.prefix_id}")
+            return existing
+        self._register_prefix(prefix)
+        return prefix
+
     def close(self) -> None:
         """关闭缓存的 Backend 客户端并释放网络资源。"""
         for filesystem in self._filesystems.values():

@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 
+import pandas as pd
+
 from image_gallery.dataset_manager import Dataset, DatasetView
 from image_gallery.importers import SourceParser
 from image_gallery.storage_manager import StorageManager
@@ -71,7 +73,7 @@ class DatasetManagerTestImporter:
         result = self._dataset.commit(
             branch=self._base.ref_name,
             base=self._base,
-            rows=rows,
+            frame=pd.DataFrame(rows),
         )
         return DatasetManagerTestImportResult(
             view=result.view,

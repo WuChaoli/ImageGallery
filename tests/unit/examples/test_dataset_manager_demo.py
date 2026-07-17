@@ -165,7 +165,15 @@ def test_dataset_manager_demo_notebook_has_chinese_lifecycle_sections() -> None:
     notebook = json.loads(notebook_path.read_text(encoding="utf-8"))
     text = "\n".join("".join(cell["source"]) for cell in notebook["cells"])
 
-    for heading in ("环境探测", "导入与 V1", "分支与版本", "向量提交", "回退与 Clone", "关闭并重新连接", "清理"):
+    for heading in (
+        "环境探测",
+        "导入与 V1",
+        "分支与版本",
+        "模型托管的向量生成",
+        "回退与 Clone",
+        "关闭并重新连接",
+        "清理",
+    ):
         assert heading in text
     assert "DatasetManager.local" not in text
     assert "tests.helpers" not in text

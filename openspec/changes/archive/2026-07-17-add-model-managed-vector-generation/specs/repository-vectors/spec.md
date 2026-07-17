@@ -1,10 +1,4 @@
-# repository-vectors Specification
-
-## Purpose
-
-定义 DatasetRepo 级 VectorField 的冻结模型绑定、Dataset 范围生成、pgvector 当前值和可信图片边界。
-
-## Requirements
+## MODIFIED Requirements
 
 ### Requirement: VectorField 属于 DatasetRepo
 DatasetRepo SHALL 通过 `repo.schema` facade 管理 Repo 内命名唯一的 VectorField；每个字段 SHALL 锁定已注册 `model_id`、模型配置指纹、维度、数值类型和距离度量，且名称不得与 Repo 内任一 Dataset 普通列冲突。
@@ -72,6 +66,8 @@ VectorField 创建后 MUST 拒绝修改名称、`model_id`、模型配置指纹�
 - **WHEN** 两个 DatasetView 包含相同 asset_id
 - **THEN** 通过同一 VectorField 查询时返回同一个 Repo 当前值
 
+## ADDED Requirements
+
 ### Requirement: 生成前验证冻结模型绑定
 `generate_embed` SHALL 解析 VectorField 绑定的模型，并 MUST 在推理前确认当前注册定义的配置指纹、维度和 dtype 与字段冻结值完全一致。
 
@@ -92,3 +88,30 @@ VectorField 创建后 MUST 拒绝修改名称、`model_id`、模型配置指纹�
 #### Scenario: 调用方尝试直接写向量
 - **WHEN** 调用方在 Commit frame、fields 或旧 VectorField 写入入口提供 embedding
 - **THEN** 请求失败且提示使用绑定模型的 `generate_embed`
+
+## REMOVED Requirements
+
+### Requirement: 写入前验证完整验证集
+**Reason**: 冻结验证集和调用方 validation outputs 不能证明目标向量由绑定模型生成，且显著增加调用协议复杂度。
+
+**Migration**: 注册冻结模型，使用 `repo.schema.add_vector(..., model_id=...)` 绑定字段，再调用 `dataset.generate_embed(field=...)` 或显式传入 source View。
+
+### Requirement: Dataset 与 Vector 组合提交原子可见
+**Reason**: Dataset Commit 不再接受向量；数据 Snapshot 与 Repo 当前向量分别通过 Commit 和 generate_embed 发布。
+
+**Migration**: 先提交普通 Dataset DataFrame，再从提交后打开的精确 View 调用 generate_embed。
+
+### Requirement: DatasetManager 不负责向量生成
+**Reason**: DatasetManager 现在显式组合 ModelManager 和 StorageManager，以保证模型、成员、图片与发布边界不可绕过。
+
+**Migration**: 将外部 embedding 调用替换为 DatasetManager 下的 `dataset.generate_embed`。
+
+### Requirement: Vector 验证边界具有直接测试证据
+**Reason**: validation set 门禁已删除，测试边界改为模型绑定指纹和输出数量、维度、dtype、有限值校验。
+
+**Migration**: 删除 validation outputs 测试并覆盖 ModelManager 基础契约与 generate_embed 原子失败场景。
+
+### Requirement: 组合提交并发冲突具有直接测试证据
+**Reason**: Data+Vector 组合提交被删除，不再存在该并发协议。
+
+**Migration**: 分别测试 Dataset Commit 的 Branch 基线冲突和 generate_embed 的单事务发布。

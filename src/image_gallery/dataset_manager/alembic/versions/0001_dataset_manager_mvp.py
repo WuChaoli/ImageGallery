@@ -3,6 +3,7 @@
 from alembic import op
 
 from image_gallery.dataset_manager.control import metadata
+from image_gallery.model_manager.manager import metadata as model_metadata
 
 revision = "0001_dataset_manager_mvp"
 down_revision = None
@@ -34,6 +35,7 @@ def upgrade() -> None:
     op.execute("CREATE SCHEMA IF NOT EXISTS iceberg_catalog")
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
     metadata.create_all(bind=op.get_bind())
+    model_metadata.create_all(bind=op.get_bind())
     op.execute("GRANT USAGE ON SCHEMA control TO dataset_manager_control")
     op.execute("GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA control TO dataset_manager_control")
     op.execute("GRANT USAGE ON SCHEMA vectors TO dataset_manager_vectors")
@@ -46,3 +48,4 @@ def upgrade() -> None:
 def downgrade() -> None:
     """删除当前 revision 创建的业务关系。"""
     metadata.drop_all(bind=op.get_bind())
+    model_metadata.drop_all(bind=op.get_bind())

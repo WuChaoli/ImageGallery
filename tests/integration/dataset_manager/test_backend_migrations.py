@@ -16,13 +16,14 @@ def test_postgres_migration_creates_isolated_schemas_and_relations(dataset_postg
     assert set(inspector.get_table_names(schema="control")) == {
         "alembic_version",
         "datasets",
+        "model_definitions",
         "operation_phases",
         "operations",
         "repo_storage_bindings",
         "repos",
+        "storage_prefixes",
         "tag_definitions",
         "vector_fields",
-        "vector_validation_items",
     }
     assert set(inspector.get_table_names(schema="vectors")) == {
         "asset_vectors",

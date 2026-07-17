@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 from image_gallery.dataset_manager import ConflictError, DatasetManager, NameConflictError, ValidationError
@@ -29,21 +30,21 @@ def setup_dataset(tmp_path: Path):  # pyright: ignore[reportUnknownParameterType
 
 def test_branch_rolls_back_only_to_ancestor_checkpoint(tmp_path: Path) -> None:
     _, dataset, row = setup_dataset(tmp_path)
-    first = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")]).view
+    first = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")])).view
     raw = dataset.create_checkpoint(name="raw", source=first)
-    second = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"two")]).view
+    second = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"two")])).view
 
     rolled_back = dataset.rollback(branch="main", base=second, checkpoint=raw)
 
-    assert rolled_back.scan() == first.scan()
+    assert rolled_back.scan().equals(first.scan())
 
 
 def test_rollback_rejects_stale_base(tmp_path: Path) -> None:
     _, dataset, row = setup_dataset(tmp_path)
-    first = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")]).view
+    first = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")])).view
     raw = dataset.create_checkpoint(name="raw", source=first)
-    current = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"two")]).view
-    dataset.commit(branch="main", base=current, rows=[row(b"three")])
+    current = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"two")])).view
+    dataset.commit(branch="main", base=current, frame=pd.DataFrame([row(b"three")]))
 
     with pytest.raises(ConflictError):
         dataset.rollback(branch="main", base=current, checkpoint=raw)
@@ -54,7 +55,7 @@ def test_tag_definition_rename_and_archive_do_not_change_dataset_snapshot(tmp_pa
     tag = repo.create_tag(name="cat")
     tagged = row(b"one")
     tagged["tag_ids"] = [tag.tag_id]
-    view = dataset.commit(branch="main", base=dataset.open_branch(), rows=[tagged]).view
+    view = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([tagged])).view
 
     renamed = repo.rename_tag(tag_id=tag.tag_id, name="animal")
     archived = repo.archive_tag(tag_id=tag.tag_id)
@@ -62,11 +63,11 @@ def test_tag_definition_rename_and_archive_do_not_change_dataset_snapshot(tmp_pa
     assert renamed.name == "animal"
     assert archived.archived is True
     assert dataset.open_branch().snapshot_id == view.snapshot_id
-    assert dataset.open_branch().scan()[0]["tag_ids"] == [tag.tag_id]
+    assert dataset.open_branch().scan().iloc[0]["tag_ids"] == [tag.tag_id]
     new_row = row(b"two")
     new_row["tag_ids"] = [tag.tag_id]
     with pytest.raises(ValidationError):
-        dataset.commit(branch="main", base=dataset.open_branch(), rows=[new_row])
+        dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([new_row]))
 
 
 def test_tag_definition_identity_is_repo_scoped_and_name_is_unique(tmp_path: Path) -> None:
@@ -85,16 +86,16 @@ def test_tag_definition_identity_is_repo_scoped_and_name_is_unique(tmp_path: Pat
 
 def test_checkpoint_and_non_ancestor_rollback_enforce_lineage(tmp_path: Path) -> None:
     _, dataset, row = setup_dataset(tmp_path)
-    first = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")]).view
+    first = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")])).view
     raw = dataset.create_checkpoint(name="raw", source=first)
     dataset.create_branch(name="experiment", source=raw)
     experiment = dataset.commit(
         branch="experiment",
         base=dataset.open_branch(name="experiment"),
-        rows=[row(b"experiment")],
+        frame=pd.DataFrame([row(b"experiment")]),
     ).view
     experiment_checkpoint = dataset.create_checkpoint(name="experiment-state", source=experiment)
-    main = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"main")]).view
+    main = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"main")])).view
 
     with pytest.raises(ValidationError, match="ancestor"):
         dataset.rollback(branch="main", base=main, checkpoint=experiment_checkpoint)
@@ -102,8 +103,8 @@ def test_checkpoint_and_non_ancestor_rollback_enforce_lineage(tmp_path: Path) ->
 
 def test_checkpoint_rejects_stale_branch_view(tmp_path: Path) -> None:
     _, dataset, row = setup_dataset(tmp_path)
-    stale = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")]).view
-    dataset.commit(branch="main", base=stale, rows=[row(b"two")])
+    stale = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")])).view
+    dataset.commit(branch="main", base=stale, frame=pd.DataFrame([row(b"two")]))
 
     with pytest.raises(ConflictError):
         dataset.create_checkpoint(name="stale", source=stale)
@@ -127,7 +128,7 @@ def test_plain_commit_recovers_temporary_ref_before_branch_publish(tmp_path: Pat
             "tag_ids": [],
         }
 
-    dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")])
+    dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")]))
 
     def fail_after_candidate(_operation_id: str, phase: str) -> None:
         if phase == "candidate_written":
@@ -141,7 +142,7 @@ def test_plain_commit_recovers_temporary_ref_before_branch_publish(tmp_path: Pat
     interrupted_dataset = interrupted.open_repo(name="Vision").open_dataset(name="Raw")
     interrupted_base = interrupted_dataset.open_branch()
     with pytest.raises(RuntimeError, match="injected"):
-        interrupted_dataset.commit(branch="main", base=interrupted_base, rows=[row(b"two")])
+        interrupted_dataset.commit(branch="main", base=interrupted_base, frame=pd.DataFrame([row(b"two")]))
 
     recovered = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
     assert recovered.recover_operations() == 1
@@ -168,7 +169,7 @@ def test_checkpoint_and_rollback_recover_after_ref_publish(tmp_path: Path) -> No
             "tag_ids": [],
         }
 
-    first = dataset.commit(branch="main", base=dataset.open_branch(), rows=[row(b"one")]).view
+    first = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row(b"one")])).view
 
     def fail_checkpoint(_operation_id: str, phase: str) -> None:
         if phase == "checkpoint_created":
@@ -190,7 +191,7 @@ def test_checkpoint_and_rollback_recover_after_ref_publish(tmp_path: Path) -> No
     recovered_dataset.commit(
         branch="main",
         base=recovered_dataset.open_branch(),
-        rows=[row(b"two")],
+        frame=pd.DataFrame([row(b"two")]),
     )
 
     def fail_rollback(_operation_id: str, phase: str) -> None:
@@ -212,4 +213,4 @@ def test_checkpoint_and_rollback_recover_after_ref_publish(tmp_path: Path) -> No
 
     final = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
     assert final.recover_operations() == 1
-    assert final.open_repo(name="Vision").open_dataset(name="Raw").open_branch().scan() == first.scan()
+    assert final.open_repo(name="Vision").open_dataset(name="Raw").open_branch().scan().equals(first.scan())

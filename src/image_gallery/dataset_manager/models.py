@@ -6,6 +6,8 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+import pandas as pd
+
 if TYPE_CHECKING:
     from image_gallery.dataset_manager.manager import DatasetManager
 
@@ -21,17 +23,17 @@ class DatasetView:
     ref_type: str
     _manager: DatasetManager
 
-    def scan(self, *, columns: list[str] | None = None) -> list[dict[str, object]]:
-        """读取固定 Snapshot 的精确列投影。"""
-        return self._manager._scan_view(view=self, columns=columns)
+    def scan(self, *, fields: list[str] | None = None) -> pd.DataFrame:
+        """以 DataFrame 读取固定 Snapshot，可组合 Repo 当前向量。"""
+        return self._manager._scan_view_frame(view=self, fields=fields)
 
     def count(self) -> int:
         """返回固定 Snapshot 的行数。"""
-        return len(self.scan())
+        return len(self.scan().index)
 
-    def preview(self, *, limit: int = 10) -> list[dict[str, object]]:
+    def preview(self, *, limit: int = 10) -> pd.DataFrame:
         """返回固定 Snapshot 的前若干行。"""
-        return self.scan()[:limit]
+        return self.scan().head(limit)
 
     def read_image(self, *, asset_id: str) -> bytes:
         """通过行内位置委托 StorageManager 读取图片。"""
@@ -41,13 +43,26 @@ class DatasetView:
         """重新读取图片并显式验证行内内容身份。"""
         return self._manager._verify_view_image(view=self, asset_id=asset_id)
 
-    def get_row(self, *, asset_id: str) -> dict[str, object]:
+    def get_row(  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+        self, *, asset_id: str, fields: list[str] | None = None
+    ) -> pd.Series:
         """按 asset_id 返回固定 Snapshot 中的完整行。"""
-        return self._manager._get_view_row(view=self, asset_id=asset_id)
+        return self._manager._get_view_row_series(view=self, asset_id=asset_id, fields=fields)
+
+    def get_rows(self, *, asset_ids: list[str], fields: list[str] | None = None) -> pd.DataFrame:
+        """按 asset_id 批量返回 DataFrame。"""
+        selected = fields
+        if selected is not None and "asset_id" not in selected:
+            selected = ["asset_id", *selected]
+        frame = self.scan(fields=selected)
+        matched = frame[frame["asset_id"].isin(asset_ids)].reset_index(drop=True)
+        if fields is not None and "asset_id" not in fields:
+            matched = matched.loc[:, fields]
+        return matched
 
     def iter_images(self) -> Iterator[tuple[dict[str, object], bytes]]:
         """逐行返回位置元数据与 StorageManager 图片 bytes。"""
-        for row in self.scan():
+        for row in self._manager._scan_view(view=self, columns=None):
             yield row, self.read_image(asset_id=str(row["asset_id"]))
 
 
@@ -74,62 +89,18 @@ class TagDefinition:
 
 
 @dataclass(frozen=True, slots=True)
-class VectorValidationItem:
-    """描述固定验证输入及其预期向量。"""
-
-    probe: bytes
-    expected: tuple[float, ...]
-
-
-@dataclass(frozen=True, slots=True)
-class VectorWriteResult:
-    """描述一次 Repo 当前向量写入。"""
-
-    inserted: int
-    updated: int
-    skipped: int
-
-
-@dataclass(frozen=True, slots=True)
-class VectorCommit:
-    """描述随 Dataset Commit 原子发布的一组调用方向量。"""
-
-    field: VectorField
-    items: dict[str, tuple[float, ...]]
-    validation_outputs: list[tuple[float, ...]]
-    overwrite: bool = False
-
-
-@dataclass(frozen=True, slots=True)
 class VectorField:
     """表示锁定到一套向量空间和验证集的 Repo 字段。"""
 
     vector_field_id: str
     repo_id: str
     name: str
+    model_id: str
+    model_fingerprint: str
     dimension: int
     numeric_type: str
     distance: str
-    tolerance: float
-    validation_set: tuple[VectorValidationItem, ...]
     _manager: DatasetManager
-
-    def write(
-        self,
-        *,
-        source: DatasetView,
-        items: dict[str, tuple[float, ...]],
-        validation_outputs: list[tuple[float, ...]],
-        overwrite: bool = False,
-    ) -> VectorWriteResult:
-        """验证来源 View 和完整验证集后写入 Repo 当前向量。"""
-        return self._manager._write_vectors(
-            field=self,
-            source=source,
-            items=items,
-            validation_outputs=validation_outputs,
-            overwrite=overwrite,
-        )
 
     def get(self, *, asset_id: str) -> tuple[float, ...] | None:
         """按内容身份读取 Repo 当前向量。"""
@@ -155,33 +126,38 @@ class Dataset:
         *,
         branch: str,
         base: DatasetView,
-        rows: list[dict[str, object]],
-        vectors: list[VectorCommit] | None = None,
+        frame: pd.DataFrame,
+        fields: list[str] | None = None,
     ) -> CommitResult:
         """以完整行 upsert 推进目标 Branch。"""
         return self._manager._commit(
             dataset=self,
             branch=branch,
             base=base,
-            rows=rows,
-            vectors=vectors,
+            frame=frame,
+            fields=fields,
         )
 
-    def add_column(
+    @property
+    def schema(self) -> DatasetSchema:
+        """返回 Dataset 物理 Schema facade。"""
+        return DatasetSchema(self)
+
+    def generate_embed(
         self,
         *,
-        branch: str,
-        base: DatasetView,
-        name: str,
-        field_type: str,
-    ) -> DatasetView:
-        """以精确 Branch 基线新增可选业务列。"""
-        return self._manager._add_column(
+        field: str,
+        source: DatasetView | None = None,
+        branch: str = "main",
+        overwrite: bool = False,
+    ) -> EmbedResult:
+        """为默认 Branch Head 或精确 View 生成 Repo 当前向量。"""
+        return self._manager._generate_embed(
             dataset=self,
+            field_name=field,
+            source=source,
             branch=branch,
-            base=base,
-            name=name,
-            field_type=field_type,
+            overwrite=overwrite,
         )
 
     def create_checkpoint(self, *, name: str, source: DatasetView) -> DatasetView:
@@ -234,6 +210,11 @@ class DatasetRepo:
         """返回 Repo 已授权 Storage Prefix ID。"""
         return self._manager._list_storage_prefix_ids(repo=self)
 
+    @property
+    def schema(self) -> RepoSchema:
+        """返回 Repo Vector Schema facade。"""
+        return RepoSchema(self)
+
     def create_tag(
         self,
         *,
@@ -243,27 +224,6 @@ class DatasetRepo:
     ) -> TagDefinition:
         """创建 Repo 级 Tag Definition。"""
         return self._manager._create_tag(repo=self, name=name, color=color, description=description)
-
-    def create_vector_field(
-        self,
-        *,
-        name: str,
-        dimension: int,
-        numeric_type: str = "float32",
-        distance: str,
-        validation_set: list[VectorValidationItem],
-        tolerance: float = 1e-6,
-    ) -> VectorField:
-        """原子创建锁定的 Repo VectorField。"""
-        return self._manager._create_vector_field(
-            repo=self,
-            name=name,
-            dimension=dimension,
-            numeric_type=numeric_type,
-            distance=distance,
-            validation_set=validation_set,
-            tolerance=tolerance,
-        )
 
     def open_vector_field(self, *, name: str) -> VectorField:
         """按大小写不敏感名称打开 VectorField。"""
@@ -288,3 +248,57 @@ class DatasetRepo:
     def clone_dataset(self, *, source: DatasetView, name: str) -> Dataset:
         """从同 Repo 精确 View 克隆当前状态，不继承历史。"""
         return self._manager._clone_dataset(repo=self, source=source, name=name)
+
+
+@dataclass(frozen=True, slots=True)
+class EmbedResult:
+    """描述一次 Dataset 范围的向量生成结果。"""
+
+    source_snapshot_id: int | None
+    generated: int
+    updated: int
+    skipped: int
+
+
+@dataclass(frozen=True, slots=True)
+class DatasetSchema:
+    """提供 Dataset 物理列操作。"""
+
+    dataset: Dataset
+
+    def add_column(self, *, branch: str, base: DatasetView, name: str, field_type: str) -> DatasetView:
+        """向目标 Branch 新增可选普通列。"""
+        return self.dataset._manager._add_column(
+            dataset=self.dataset, branch=branch, base=base, name=name, field_type=field_type
+        )
+
+    def list_columns(self) -> list[str]:
+        """返回物理列名。"""
+        return self.dataset._manager._list_columns(dataset=self.dataset)
+
+    def get_column(self, *, name: str) -> str:
+        """返回存在的物理列名。"""
+        if name not in self.list_columns():
+            raise KeyError(name)
+        return name
+
+
+@dataclass(frozen=True, slots=True)
+class RepoSchema:
+    """提供 Repo VectorField 操作。"""
+
+    repo: DatasetRepo
+
+    def add_vector(self, *, name: str, model_id: str, distance: str) -> VectorField:
+        """创建强绑定冻结模型的 VectorField。"""
+        return self.repo._manager._create_bound_vector_field(
+            repo=self.repo, name=name, model_id=model_id, distance=distance
+        )
+
+    def get_vector(self, *, name: str) -> VectorField:
+        """按名称返回 VectorField。"""
+        return self.repo._manager._open_vector_field(repo=self.repo, name=name)
+
+    def list_vectors(self) -> list[VectorField]:
+        """返回 Repo 全部 VectorField。"""
+        return self.repo._manager._list_vector_fields(repo=self.repo)

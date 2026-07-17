@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+import pandas as pd
 import pytest
 from tests.helpers.dataset_manager_importer import DatasetManagerTestImporter, DatasetManagerTestImportResult
 
@@ -58,8 +59,8 @@ def test_test_importer_imports_local_parser_as_one_atomic_commit(tmp_path: Path)
     assert len(result.asset_ids) == 2
     assert result.view.count() == 2
     rows = result.view.scan()
-    assert {str(row["source_uri"]) for row in rows} == {str(first), str(second)}
-    assert all(row["tag_ids"] == [tag.tag_id] for row in rows)
+    assert {str(value) for value in rows["source_uri"]} == {str(first), str(second)}
+    assert all(value == [tag.tag_id] for value in rows["tag_ids"])
     assert {result.view.read_image(asset_id=asset_id) for asset_id in result.asset_ids} == {
         b"first-image",
         b"second-image",
@@ -107,15 +108,17 @@ def test_test_importer_rejects_stale_base_without_publishing_import(tmp_path: Pa
     dataset.commit(
         branch="main",
         base=stale,
-        rows=[
-            {
-                "asset_id": existing.asset_id,
-                "storage_prefix_id": prefix_id,
-                "relative_path": existing.relative_path,
-                "source_uri": None,
-                "tag_ids": [],
-            }
-        ],
+        frame=pd.DataFrame(
+            [
+                {
+                    "asset_id": existing.asset_id,
+                    "storage_prefix_id": prefix_id,
+                    "relative_path": existing.relative_path,
+                    "source_uri": None,
+                    "tag_ids": [],
+                }
+            ]
+        ),
     )
 
     with pytest.raises(ConflictError):
@@ -127,7 +130,9 @@ def test_test_importer_rejects_stale_base_without_publishing_import(tmp_path: Pa
             prefix_id=prefix_id,
         ).run()
 
-    assert dataset.open_branch().scan(columns=["asset_id"]) == [{"asset_id": existing.asset_id}]
+    assert dataset.open_branch().scan(fields=["asset_id"]).to_dict(orient="records") == [
+        {"asset_id": existing.asset_id}
+    ]
     manager.close()
     storage.close()
 

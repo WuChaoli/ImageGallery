@@ -8,9 +8,9 @@ def test_control_plane_declares_all_mvp_relations() -> None:
         "control.operations",
         "control.repo_storage_bindings",
         "control.repos",
+        "control.storage_prefixes",
         "control.tag_definitions",
         "control.vector_fields",
-        "control.vector_validation_items",
         "vectors.asset_vectors",
         "vectors.pending_asset_vectors",
     }

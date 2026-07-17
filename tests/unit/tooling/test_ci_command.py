@@ -57,6 +57,14 @@ def test_available_tasks_are_explicit_and_stable() -> None:
     )
 
 
+def test_test_all_allows_network_for_real_backend_tests() -> None:
+    """test-all 包含容器集成测试，因此不得启用 pytest-socket 全局禁网。"""
+    runner = RecordingRunner()
+
+    assert ci.main(["test-all"], runner=runner) == 0
+    assert "--disable-socket" not in runner.calls[0]
+
+
 def test_unknown_task_returns_usage_without_running_command(capsys: pytest.CaptureFixture[str]) -> None:
     """未知任务不得被当作任意外部命令执行。"""
     runner = RecordingRunner()

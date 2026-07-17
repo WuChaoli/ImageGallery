@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 import uuid
 from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
+import pandas as pd
 import pyarrow as pa
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.schema import Schema
@@ -29,9 +29,9 @@ from image_gallery.dataset_manager.control import (
     pending_asset_vectors,
     repo_storage_bindings,
     repos,
+    storage_prefixes,
     tag_definitions,
     vector_fields,
-    vector_validation_items,
 )
 from image_gallery.dataset_manager.errors import (
     ConflictError,
@@ -46,13 +46,12 @@ from image_gallery.dataset_manager.models import (
     Dataset,
     DatasetRepo,
     DatasetView,
+    EmbedResult,
     TagDefinition,
-    VectorCommit,
     VectorField,
-    VectorValidationItem,
-    VectorWriteResult,
 )
-from image_gallery.storage_manager import PrefixNotFoundError, StorageManager, StoredObject
+from image_gallery.model_manager import ModelManager
+from image_gallery.storage_manager import PrefixNotFoundError, StorageManager, StoragePrefix, StoredObject
 
 SYSTEM_SCHEMA = Schema(
     NestedField(1, "asset_id", StringType(), required=True),
@@ -71,6 +70,7 @@ _BUSINESS_FIELD_TYPES = {
     "long": LongType,
     "string": StringType,
 }
+_EMBED_BATCH_SIZE = 64
 
 
 class DatasetManager:
@@ -82,6 +82,7 @@ class DatasetManager:
         control_engine: Engine,  # pyright: ignore[reportUnknownParameterType]
         catalog: Catalog,  # pyright: ignore[reportUnknownParameterType]
         storage_manager: StorageManager,
+        model_manager: ModelManager | None = None,
         operation_hook: Callable[[str, str], None] | None = None,
         owns_engine: bool = False,
         owns_catalog: bool = False,
@@ -90,6 +91,8 @@ class DatasetManager:
         self._engine = control_engine
         self.catalog = catalog
         self.storage_manager = storage_manager
+        self.model_manager = model_manager or ModelManager()
+        self.model_manager.bind_engine(control_engine)
         self._operation_hook = operation_hook
         self._owns_engine = owns_engine
         self._owns_catalog = owns_catalog
@@ -98,6 +101,7 @@ class DatasetManager:
             upgrade_control_database(self._engine)
         else:
             metadata.create_all(self._engine)
+        self._restore_storage_prefixes()
 
     @classmethod
     def local(
@@ -105,6 +109,7 @@ class DatasetManager:
         *,
         root: str | Path,
         storage_manager: StorageManager,
+        model_manager: ModelManager | None = None,
         operation_hook: Callable[[str, str], None] | None = None,
     ) -> DatasetManager:
         """创建使用 SQLite Catalog 和本地 Warehouse 的测试 Backend。"""
@@ -126,6 +131,7 @@ class DatasetManager:
             control_engine=control_engine,
             catalog=catalog,
             storage_manager=storage_manager,
+            model_manager=model_manager,
             operation_hook=operation_hook,
             owns_engine=True,
             owns_catalog=True,
@@ -139,6 +145,7 @@ class DatasetManager:
         catalog_url: str,
         warehouse: str,
         storage_manager: StorageManager,
+        model_manager: ModelManager | None = None,
         catalog_properties: dict[str, str] | None = None,
         operation_hook: Callable[[str, str], None] | None = None,
     ) -> DatasetManager:
@@ -159,6 +166,7 @@ class DatasetManager:
             control_engine=control_engine,
             catalog=catalog,
             storage_manager=storage_manager,
+            model_manager=model_manager,
             operation_hook=operation_hook,
             owns_engine=True,
             owns_catalog=True,
@@ -170,6 +178,7 @@ class DatasetManager:
             return
         self._closed = True
         try:
+            self.model_manager.close()
             if self._owns_engine:
                 self._engine.dispose()
         finally:
@@ -552,10 +561,29 @@ class DatasetManager:
 
     def _bind_storage_prefix(self, *, repo: DatasetRepo, prefix_id: str) -> None:
         try:
-            self.storage_manager.get_prefix(prefix_id=prefix_id)
+            prefix = self.storage_manager.get_prefix(prefix_id=prefix_id)
         except PrefixNotFoundError:
             raise
+        payload = {
+            "name": prefix.name,
+            "backend": prefix.backend,
+            "root": prefix.root,
+            "credential_ref": prefix.credential_ref,
+            "endpoint_url": prefix.endpoint_url,
+        }
+        fingerprint = "sha256:" + hashlib.sha256(repr(sorted(payload.items())).encode("utf-8")).hexdigest()
         with self._engine.begin() as connection:
+            existing_prefix = (
+                connection.execute(select(storage_prefixes).where(storage_prefixes.c.prefix_id == prefix_id))
+                .mappings()
+                .one_or_none()
+            )
+            if existing_prefix is None:
+                connection.execute(
+                    insert(storage_prefixes).values(prefix_id=prefix_id, fingerprint=fingerprint, **payload)
+                )
+            elif str(existing_prefix["fingerprint"]) != fingerprint:
+                raise ValidationError(f"Storage Prefix ID is bound to another definition: {prefix_id}")
             existing = connection.execute(
                 select(repo_storage_bindings).where(
                     repo_storage_bindings.c.repo_id == repo.repo_id,
@@ -564,6 +592,21 @@ class DatasetManager:
             ).first()
             if existing is None:
                 connection.execute(insert(repo_storage_bindings).values(repo_id=repo.repo_id, prefix_id=prefix_id))
+
+    def _restore_storage_prefixes(self) -> None:
+        with self._engine.connect() as connection:
+            rows = connection.execute(select(storage_prefixes)).mappings().all()
+        for row in rows:
+            self.storage_manager.restore_prefix(
+                StoragePrefix(
+                    prefix_id=str(row["prefix_id"]),
+                    name=str(row["name"]),
+                    backend="file" if str(row["backend"]) == "file" else "s3",
+                    root=str(row["root"]),
+                    credential_ref=cast(str | None, row["credential_ref"]),
+                    endpoint_url=cast(str | None, row["endpoint_url"]),
+                )
+            )
 
     def _list_storage_prefix_ids(self, *, repo: DatasetRepo) -> list[str]:
         statement = (
@@ -635,25 +678,36 @@ class DatasetManager:
             )
         return TagDefinition(tag_id, repo.repo_id, str(row["name"]), row["color"], row["description"], True)
 
-    def _create_vector_field(
+    def _create_bound_vector_field(
         self,
         *,
         repo: DatasetRepo,
         name: str,
-        dimension: int,
-        numeric_type: str,
+        model_id: str,
         distance: str,
-        validation_set: list[VectorValidationItem],
-        tolerance: float,
     ) -> VectorField:
-        if dimension <= 0 or tolerance < 0 or not validation_set:
-            raise ValidationError("VectorField requires a positive dimension and non-empty validation set")
-        if numeric_type != "float32" or distance not in {"cosine", "dot", "l2"}:
-            raise ValidationError("VectorField requires numeric_type=float32 and a supported distance")
-        for item in validation_set:
-            self._validate_vector(value=item.expected, dimension=dimension)
+        if distance not in {"cosine", "dot", "l2"}:
+            raise ValidationError("VectorField requires a supported distance")
+        for dataset in self._list_datasets(repo=repo):
+            if name in self._list_columns(dataset=dataset):
+                raise ValidationError(f"VectorField conflicts with Physical Schema column: {name}")
+        definition = self.model_manager.get(model_id=model_id)
+        if definition is None:
+            raise ValidationError(f"Unknown model_id: {model_id}")
+        existing = None
+        try:
+            existing = self._open_vector_field(repo=repo, name=name)
+        except ObjectNotFoundError:
+            pass
+        if existing is not None:
+            if (
+                existing.model_id == model_id
+                and existing.model_fingerprint == definition.fingerprint
+                and existing.distance == distance
+            ):
+                return existing
+            raise NameConflictError(name)
         vector_field_id = uuid.uuid4().hex
-        serialized = [{"probe_hex": item.probe.hex(), "expected": list(item.expected)} for item in validation_set]
         try:
             with self._engine.begin() as connection:
                 connection.execute(
@@ -662,25 +716,12 @@ class DatasetManager:
                         repo_id=repo.repo_id,
                         name=name,
                         name_key=name.casefold(),
-                        dimension=dimension,
-                        numeric_type=numeric_type,
+                        model_id=model_id,
+                        model_fingerprint=definition.fingerprint,
+                        dimension=definition.dimension,
+                        numeric_type=definition.dtype,
                         distance=distance,
-                        tolerance=tolerance,
-                        validation_set=serialized,
                     )
-                )
-                connection.execute(
-                    insert(vector_validation_items),
-                    [
-                        {
-                            "vector_field_id": vector_field_id,
-                            "position": position,
-                            "probe": item.probe,
-                            "probe_hash": f"sha256:{hashlib.sha256(item.probe).hexdigest()}",
-                            "expected": list(item.expected),
-                        }
-                        for position, item in enumerate(validation_set)
-                    ],
                 )
         except IntegrityError as exc:
             raise NameConflictError(name) from exc
@@ -688,11 +729,11 @@ class DatasetManager:
             vector_field_id,
             repo.repo_id,
             name,
-            dimension,
-            numeric_type,
+            model_id,
+            definition.fingerprint,
+            definition.dimension,
+            definition.dtype,
             distance,
-            tolerance,
-            tuple(validation_set),
             self,
         )
 
@@ -795,63 +836,6 @@ class DatasetManager:
             update_schema.add_column(field.name, field.field_type, doc=field.doc, required=False)
         update_schema.commit()
 
-    def _write_vectors(
-        self,
-        *,
-        field: VectorField,
-        source: DatasetView,
-        items: dict[str, tuple[float, ...]],
-        validation_outputs: list[tuple[float, ...]],
-        overwrite: bool,
-    ) -> VectorWriteResult:
-        if source.repo_id != field.repo_id or source._manager is not self:
-            raise ValidationError("Source DatasetView belongs to another Repo")
-        active_statement = (
-            select(pending_asset_vectors.c.operation_id)
-            .join(operations, operations.c.operation_id == pending_asset_vectors.c.operation_id)
-            .where(
-                pending_asset_vectors.c.repo_id == field.repo_id,
-                pending_asset_vectors.c.vector_field_id == field.vector_field_id,
-                operations.c.status == "active",
-            )
-        )
-        with self._engine.connect() as connection:
-            if connection.execute(active_statement).first() is not None:
-                raise ConflictError(f"VectorField {field.vector_field_id} has an active combined commit")
-        self._validate_vector_outputs(field=field, outputs=validation_outputs)
-        source_ids = {str(row["asset_id"]) for row in self._scan_view(view=source, columns=["asset_id"])}
-        if not set(items).issubset(source_ids):
-            raise ValidationError("Every vector asset_id must be a member of the source DatasetView")
-        for value in items.values():
-            self._validate_vector(value=value, dimension=field.dimension)
-        inserted_count = 0
-        updated_count = 0
-        skipped_count = 0
-        with self._engine.begin() as connection:
-            for asset_id, value in items.items():
-                key = (
-                    asset_vectors.c.repo_id == field.repo_id,
-                    asset_vectors.c.vector_field_id == field.vector_field_id,
-                    asset_vectors.c.asset_id == asset_id,
-                )
-                exists = connection.execute(select(asset_vectors.c.asset_id).where(*key)).first() is not None
-                if exists and not overwrite:
-                    skipped_count += 1
-                elif exists:
-                    connection.execute(update(asset_vectors).where(*key).values(value=list(value)))
-                    updated_count += 1
-                else:
-                    connection.execute(
-                        insert(asset_vectors).values(
-                            repo_id=field.repo_id,
-                            vector_field_id=field.vector_field_id,
-                            asset_id=asset_id,
-                            value=list(value),
-                        )
-                    )
-                    inserted_count += 1
-        return VectorWriteResult(inserted_count, updated_count, skipped_count)
-
     def _get_vector(self, *, field: VectorField, asset_id: str) -> tuple[float, ...] | None:
         statement = select(asset_vectors.c.value).where(
             asset_vectors.c.repo_id == field.repo_id,
@@ -864,35 +848,16 @@ class DatasetManager:
             return None
         return tuple(float(component) for component in value)
 
-    def _validate_vector_outputs(self, *, field: VectorField, outputs: list[tuple[float, ...]]) -> None:
-        if len(outputs) != len(field.validation_set):
-            raise ValidationError("Complete ordered validation outputs are required")
-        for output, item in zip(outputs, field.validation_set, strict=True):
-            self._validate_vector(value=output, dimension=field.dimension)
-            comparisons = zip(output, item.expected, strict=True)
-            if any(abs(actual - expected) > field.tolerance for actual, expected in comparisons):
-                raise ValidationError("Vector validation output does not match the locked validation set")
-
-    @staticmethod
-    def _validate_vector(*, value: tuple[float, ...], dimension: int) -> None:
-        if len(value) != dimension or not all(math.isfinite(component) for component in value):
-            raise ValidationError("Vector has invalid dimension or non-finite values")
-
     def _vector_field_from_row(self, row: RowMapping) -> VectorField:  # pyright: ignore[reportUnknownParameterType]
-        serialized = row["validation_set"]
-        validation_set = tuple(
-            VectorValidationItem(bytes.fromhex(str(item["probe_hex"])), tuple(float(v) for v in item["expected"]))
-            for item in serialized
-        )
         return VectorField(
             str(row["vector_field_id"]),
             str(row["repo_id"]),
             str(row["name"]),
+            str(row["model_id"] or "legacy"),
+            str(row["model_fingerprint"] or "legacy"),
             int(row["dimension"]),
             str(row["numeric_type"]),
             str(row["distance"]),
-            float(row["tolerance"]),
-            validation_set,
             self,
         )
 
@@ -1020,8 +985,37 @@ class DatasetManager:
         dataset: Dataset,
         branch: str,
         base: DatasetView,
+        frame: pd.DataFrame,
+        fields: list[str] | None,
+    ) -> CommitResult:
+        vector_names = {item.name for item in self._list_vector_fields(repo=self._repo_by_id(dataset.repo_id))}
+        requested = set(fields or []) | {str(column) for column in frame.columns}
+        if requested & vector_names:
+            raise ValidationError("Vector fields cannot be committed directly; use dataset.generate_embed()")
+        records = cast(list[dict[str, object]], frame.to_dict(orient="records"))
+        if fields is not None:
+            if "asset_id" not in frame.columns or "asset_id" in fields:
+                raise ValidationError("Patch commit requires asset_id outside fields")
+            current = {str(row["asset_id"]): row for row in self._scan_view(view=base, columns=None)}
+            rows: list[dict[str, object]] = []
+            for patch in records:
+                asset_id = str(patch["asset_id"])
+                if asset_id not in current:
+                    raise ValidationError("Patch commit only supports existing asset_id")
+                if not set(fields).issubset(patch):
+                    raise ValidationError("Patch frame must contain every requested field")
+                rows.append({**current[asset_id], **{name: patch[name] for name in fields}})
+        else:
+            rows = records
+        return self._commit_rows(dataset=dataset, branch=branch, base=base, rows=rows)
+
+    def _commit_rows(
+        self,
+        *,
+        dataset: Dataset,
+        branch: str,
+        base: DatasetView,
         rows: list[dict[str, object]],
-        vectors: list[VectorCommit] | None = None,
     ) -> CommitResult:
         self._validate_view_dataset(view=base, dataset=dataset)
         if base.ref_type != "branch" or base.ref_name != branch:
@@ -1044,11 +1038,7 @@ class DatasetManager:
         for row in normalized_rows:
             by_id[str(row["asset_id"])] = row
         merged_rows = sorted(by_id.values(), key=lambda item: str(item["asset_id"]))
-        pending_vectors = self._preflight_combined_vectors(
-            dataset=dataset,
-            candidate_asset_ids=set(by_id),
-            vectors=vectors or [],
-        )
+        pending_vectors: list[dict[str, object]] = []
         data_changed = merged_rows != sorted(current_rows, key=lambda item: str(item["asset_id"]))
         if not data_changed and not pending_vectors:
             return CommitResult(base, inserted=0, updated=0, changed=False)
@@ -1123,46 +1113,6 @@ class DatasetManager:
         self._emit_operation_event(operation_id=operation_id, phase="vectors_published")
         view = DatasetView(dataset.repo_id, dataset.dataset_id, candidate_snapshot_id, branch, "branch", self)
         return CommitResult(view, inserted=inserted, updated=updated, changed=data_changed)
-
-    def _preflight_combined_vectors(
-        self,
-        *,
-        dataset: Dataset,
-        candidate_asset_ids: set[str],
-        vectors: list[VectorCommit],
-    ) -> list[dict[str, object]]:
-        field_ids = [change.field.vector_field_id for change in vectors]
-        if len(field_ids) != len(set(field_ids)):
-            raise ValidationError("Each VectorField may appear once in a combined commit")
-        pending: list[dict[str, object]] = []
-        with self._engine.connect() as connection:
-            for change in vectors:
-                field = change.field
-                if field.repo_id != dataset.repo_id or field._manager is not self:
-                    raise ValidationError("VectorField belongs to another Repo")
-                self._validate_vector_outputs(field=field, outputs=change.validation_outputs)
-                if not set(change.items).issubset(candidate_asset_ids):
-                    raise ValidationError("Combined vectors must belong to candidate Dataset rows")
-                for asset_id, value in change.items.items():
-                    self._validate_vector(value=value, dimension=field.dimension)
-                    exists = connection.execute(
-                        select(asset_vectors.c.asset_id).where(
-                            asset_vectors.c.repo_id == dataset.repo_id,
-                            asset_vectors.c.vector_field_id == field.vector_field_id,
-                            asset_vectors.c.asset_id == asset_id,
-                        )
-                    ).first()
-                    if exists is not None and not change.overwrite:
-                        continue
-                    pending.append(
-                        {
-                            "repo_id": dataset.repo_id,
-                            "vector_field_id": field.vector_field_id,
-                            "asset_id": asset_id,
-                            "value": list(value),
-                        }
-                    )
-        return pending
 
     def _insert_pending_vectors(self, *, operation_id: str, pending: list[dict[str, object]]) -> None:
         if not pending:
@@ -1283,6 +1233,9 @@ class DatasetManager:
         normalized_name = name.strip()
         if not normalized_name or normalized_name in _SYSTEM_FIELDS:
             raise ValidationError("System fields cannot be changed")
+        repo = self._repo_by_id(dataset.repo_id)
+        if normalized_name.casefold() in {field.name.casefold() for field in self._list_vector_fields(repo=repo)}:
+            raise ValidationError(f"Physical Schema column conflicts with VectorField: {normalized_name}")
         type_factory = _BUSINESS_FIELD_TYPES.get(field_type)
         if type_factory is None:
             raise ValidationError(f"Unsupported Physical Schema type: {field_type}")
@@ -1291,6 +1244,137 @@ class DatasetManager:
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         return self._open_branch(dataset=dataset, name=branch)
+
+    def _list_columns(self, *, dataset: Dataset) -> list[str]:
+        table = self.catalog.load_table(dataset.table_identifier)
+        return [field.name for field in table.schema().fields]
+
+    def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
+        dataset = self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
+        physical = self._list_columns(dataset=dataset)
+        repo = self._repo_by_id(view.repo_id)
+        vectors = {field.name: field for field in self._list_vector_fields(repo=repo)}
+        selected = fields or physical
+        unknown = set(selected) - set(physical) - set(vectors)
+        if unknown:
+            raise ValidationError(f"Unknown fields: {sorted(unknown)}")
+        physical_selected = [name for name in selected if name in physical]
+        query_columns = list(dict.fromkeys(["asset_id", *physical_selected]))
+        rows = self._scan_view(view=view, columns=query_columns)
+        frame = pd.DataFrame(rows, columns=query_columns)
+        vector_selected = [name for name in selected if name in vectors]
+        for name in vector_selected:
+            frame[name] = None
+        if vector_selected and not frame.empty:
+            asset_ids = frame["asset_id"].astype(str).tolist()
+            with self._engine.connect() as connection:
+                for name in vector_selected:
+                    field = vectors[name]
+                    values = connection.execute(
+                        select(asset_vectors.c.asset_id, asset_vectors.c.value).where(
+                            asset_vectors.c.repo_id == view.repo_id,
+                            asset_vectors.c.vector_field_id == field.vector_field_id,
+                            asset_vectors.c.asset_id.in_(asset_ids),
+                        )
+                    ).all()
+                    mapping = {str(asset_id): tuple(float(value) for value in vector) for asset_id, vector in values}
+                    frame[name] = frame["asset_id"].map(mapping).astype(object)
+                    frame[name] = frame[name].where(frame[name].notna(), None)
+        return frame.loc[:, selected].reset_index(drop=True)
+
+    def _get_view_row_series(  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
+        self,
+        *,
+        view: DatasetView,
+        asset_id: str,
+        fields: list[str] | None,
+    ) -> pd.Series:
+        selected = fields
+        if selected is not None and "asset_id" not in selected:
+            selected = ["asset_id", *selected]
+        frame = self._scan_view_frame(view=view, fields=selected)
+        matched = frame[frame["asset_id"] == asset_id]
+        if matched.empty:
+            raise ObjectNotFoundError(asset_id)
+        row = matched.iloc[0]
+        if fields is not None and "asset_id" not in fields:
+            row = row.loc[fields]
+        return row
+
+    def _generate_embed(
+        self,
+        *,
+        dataset: Dataset,
+        field_name: str,
+        source: DatasetView | None,
+        branch: str,
+        overwrite: bool,
+    ) -> EmbedResult:
+        if source is not None and branch != "main":
+            raise ValidationError("source and non-default branch are mutually exclusive")
+        view = source or self._open_branch(dataset=dataset, name=branch)
+        self._validate_view_dataset(view=view, dataset=dataset)
+        repo = self._repo_by_id(dataset.repo_id)
+        field = self._open_vector_field(repo=repo, name=field_name)
+        definition = self.model_manager.get(model_id=field.model_id)
+        if definition is None:
+            raise ValidationError(f"Unknown model_id: {field.model_id}")
+        if definition.fingerprint != field.model_fingerprint:
+            raise ValidationError("VectorField model fingerprint does not match registered model")
+        rows = self._scan_view(view=view, columns=["asset_id", "storage_prefix_id", "relative_path"])
+        existing: set[str] = set()
+        if rows:
+            with self._engine.connect() as connection:
+                existing = {
+                    str(value)
+                    for value in connection.execute(
+                        select(asset_vectors.c.asset_id).where(
+                            asset_vectors.c.repo_id == dataset.repo_id,
+                            asset_vectors.c.vector_field_id == field.vector_field_id,
+                            asset_vectors.c.asset_id.in_([str(row["asset_id"]) for row in rows]),
+                        )
+                    ).scalars()
+                }
+        targets = rows if overwrite else [row for row in rows if str(row["asset_id"]) not in existing]
+        images: list[bytes] = []
+        for row in targets:
+            stored = StoredObject(str(row["asset_id"]), str(row["storage_prefix_id"]), str(row["relative_path"]))
+            self.storage_manager.verify(stored)
+            images.append(
+                self.storage_manager.read_bytes(prefix_id=stored.storage_prefix_id, relative_path=stored.relative_path)
+            )
+        outputs: list[tuple[float, ...]] = []
+        for offset in range(0, len(images), _EMBED_BATCH_SIZE):
+            outputs.extend(
+                self.model_manager.embed(
+                    model_id=field.model_id,
+                    images=images[offset : offset + _EMBED_BATCH_SIZE],
+                )
+            )
+        generated = 0
+        updated_count = 0
+        with self._engine.begin() as connection:
+            for row, value in zip(targets, outputs, strict=True):
+                asset_id = str(row["asset_id"])
+                key = (
+                    asset_vectors.c.repo_id == dataset.repo_id,
+                    asset_vectors.c.vector_field_id == field.vector_field_id,
+                    asset_vectors.c.asset_id == asset_id,
+                )
+                if asset_id in existing:
+                    connection.execute(update(asset_vectors).where(*key).values(value=list(value)))
+                    updated_count += 1
+                else:
+                    connection.execute(
+                        insert(asset_vectors).values(
+                            repo_id=dataset.repo_id,
+                            vector_field_id=field.vector_field_id,
+                            asset_id=asset_id,
+                            value=list(value),
+                        )
+                    )
+                    generated += 1
+        return EmbedResult(view.snapshot_id, generated, updated_count, len(rows) - len(targets))
 
     def _scan_view(self, *, view: DatasetView, columns: list[str] | None) -> list[dict[str, object]]:
         dataset = self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
@@ -1374,6 +1458,13 @@ class DatasetManager:
         if row is None:
             raise ObjectNotFoundError(dataset_id)
         return self._dataset_from_row(row)
+
+    def _repo_by_id(self, repo_id: str) -> DatasetRepo:
+        with self._engine.connect() as connection:
+            row = connection.execute(select(repos).where(repos.c.repo_id == repo_id)).mappings().one_or_none()
+        if row is None:
+            raise ObjectNotFoundError(repo_id)
+        return self._repo_from_row(row)
 
     def _repo_from_row(self, row: RowMapping) -> DatasetRepo:  # pyright: ignore[reportUnknownParameterType]
         return DatasetRepo(

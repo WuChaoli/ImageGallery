@@ -11,11 +11,13 @@ from typing import Literal, cast
 
 from dotenv import dotenv_values
 from PIL import Image
+import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
 from image_gallery.dataset_manager import Dataset, DatasetManager, DatasetView
 from image_gallery.importers import SourceParser
+from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
 
 REQUIRED_ENV_FIELDS = (
@@ -28,6 +30,17 @@ REQUIRED_ENV_FIELDS = (
     "IMAGE_GALLERY_DEMO_MINIO_BUCKET",
 )
 DEMO_RESOURCE_LABEL = "com.image-gallery.dataset-manager-demo"
+
+
+class DemoEmbeddingRuntime:
+    """为离线 Notebook 提供确定性二维 embedding。"""
+
+    def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
+        """基于图片长度返回确定性向量。"""
+        return [(float(len(value)), 1.0) for value in images]
+
+    def close(self) -> None:
+        """关闭无状态演示运行时。"""
 
 
 @dataclass(frozen=True)
@@ -120,7 +133,7 @@ class DemoDatasetImporter:
                     "tag_ids": self.tag_ids,
                 }
             )
-        result = self.dataset.commit(branch=self.base.ref_name, base=self.base, rows=rows)
+        result = self.dataset.commit(branch=self.base.ref_name, base=self.base, frame=pd.DataFrame(rows))
         return DemoImportResult(result.view, len(rows), tuple(asset_ids))
 
 
@@ -312,6 +325,19 @@ def open_demo_clients(config: dict[str, str]) -> tuple[StorageManager, DatasetMa
         "secret": config["IMAGE_GALLERY_DEMO_MINIO_SECRET_KEY"],
     }
     storage = StorageManager(credential_provider=lambda _ref: credentials)
+    models = ModelManager(providers={"demo": lambda _definition, _secrets: DemoEmbeddingRuntime()})
+    models.register(
+        ModelDefinition(
+            model_id="demo-image-length-v1",
+            provider="demo",
+            artifact_uri="builtin://demo-image-length",
+            artifact_revision="v1",
+            artifact_checksum="sha256:" + "1" * 64,
+            dimension=2,
+            dtype="float32",
+            config={},
+        )
+    )
     bucket = config["IMAGE_GALLERY_DEMO_MINIO_BUCKET"]
     prefix = storage.register_s3_prefix(
         name="demo-images",
@@ -325,5 +351,6 @@ def open_demo_clients(config: dict[str, str]) -> tuple[StorageManager, DatasetMa
         catalog_url=config["IMAGE_GALLERY_DEMO_CATALOG_URL"],
         warehouse=config["IMAGE_GALLERY_DEMO_WAREHOUSE"],
         storage_manager=storage,
+        model_manager=models,
     )
     return storage, manager, prefix.prefix_id

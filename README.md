@@ -8,11 +8,13 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 
 `image_gallery.dataset_manager` 提供与旧 `image_gallery.dataset` 独立并存的新数据集平台：一个 Backend 可创建多个硬隔离的 `DatasetRepo`，每个 Dataset 使用独立 Iceberg Table 管理 Branch、Checkpoint、回退与状态 Clone。`image_gallery.storage_manager` 独立负责 file/S3-compatible Prefix、SHA-256 内容身份和图片 bytes IO。
 
-新平台支持 Repo 级 Tag Definition、Dataset 行内版本化 Tag Assignment，以及由 pgvector 保存的 Repo 当前 VectorField 值。MVP 不提供 merge、跨 Repo clone、删除/GC、向量生成、ANN 或语义搜索。
+新平台支持 Repo 级 Tag Definition、Dataset 行内版本化 Tag Assignment，以及由冻结模型生成、pgvector 保存的 Repo 当前 VectorField 值。MVP 不提供 merge、跨 Repo clone、删除/GC、全 Repo embedding 调度、ANN 或语义搜索。
 
 本地开发与单元测试可使用 `DatasetManager.local(...)`；PostgreSQL Backend 通过 `DatasetManager.postgres(...)` 连接 control database 和 PyIceberg SqlCatalog。完整签名和类型以包级导出与 docstring 为准。
 
-Storage Prefix 配置由部署层管理，不保存明文凭证。进程重启时必须先用原 `prefix_id`、root、endpoint 和 secret reference 重新注册 Prefix，再打开已有 Repo/Dataset；这样 Iceberg 行内位置可稳定解析。`DatasetManager` 与 `StorageManager` 均可作为 context manager 使用，也可显式调用 `close()` 释放数据库连接池和缓存的对象存储客户端。
+Model 与 Storage Prefix 的非敏感冻结定义保存在 PostgreSQL control schema，明文凭证只由部署层的 CredentialProvider 解析。进程重启后相同 `model_id` 和 `prefix_id` 会自动恢复原 provider/backend、artifact/root、endpoint 与 secret reference；模型文件或 Backend 离线不可达时会明确失败，不会静默改绑。`DatasetManager`、`ModelManager` 与 `StorageManager` 均会关闭其缓存运行时资源。
+
+Dataset 数据使用 pandas DataFrame 提交和读取。`dataset.commit(..., fields=[...])` 表示普通列 patch，省略 `fields` 表示完整 upsert；向量字段不能直接 Commit。先通过 `repo.schema.add_vector(..., model_id=...)` 冻结模型绑定，再调用 `dataset.generate_embed(field=...)` 为 main 当前 Head 的全部行生成，也可指定 Branch 或精确 View。物理列固定在 Iceberg Snapshot，显式扫描的向量列始终读取 Repo 当前值。
 
 Alembic migration 需要建 schema、extension 和 role 的管理权限；迁移会创建 control、vectors、catalog 三个 runtime role，并把它们授予迁移执行用户。生产部署可再把这些 NOLOGIN role 授予实际登录主体。
 
