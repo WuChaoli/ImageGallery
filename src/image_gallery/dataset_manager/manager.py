@@ -93,6 +93,7 @@ class DatasetManager:
         self._operation_hook = operation_hook
         self._owns_engine = owns_engine
         self._owns_catalog = owns_catalog
+        self._closed = False
         if self._engine.dialect.name == "postgresql":
             upgrade_control_database(self._engine)
         else:
@@ -165,6 +166,9 @@ class DatasetManager:
 
     def close(self) -> None:
         """释放由 DatasetManager factory 创建的数据库连接池。"""
+        if self._closed:
+            return
+        self._closed = True
         try:
             if self._owns_engine:
                 self._engine.dispose()

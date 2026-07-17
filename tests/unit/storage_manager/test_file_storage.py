@@ -78,6 +78,20 @@ def test_storage_manager_closes_s3fs_session_without_close_method() -> None:
     close_session.assert_called_once_with(None, session)
 
 
+def test_storage_manager_does_not_double_close_finalizer_owned_s3fs_session() -> None:
+    filesystem = MagicMock(spec=["close_session", "s3", "loop", "_s3creator"])
+    filesystem.s3 = object()
+    filesystem.loop = None
+    filesystem._s3creator = object()
+    manager = StorageManager()
+    manager._filesystems["s3"] = filesystem
+
+    manager.close()
+
+    filesystem.close_session.assert_not_called()
+    assert manager._filesystems == {}
+
+
 def test_s3_compatible_prefix_uses_secret_reference_without_exposing_secret() -> None:
     filesystem = MemoryFileSystem(skip_instance_cache=True)
     resolved_refs: list[str] = []

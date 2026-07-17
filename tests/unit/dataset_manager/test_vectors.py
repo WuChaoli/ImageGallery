@@ -1,7 +1,9 @@
 from pathlib import Path
 
 import pytest
+from sqlalchemy import func, select
 
+import image_gallery.dataset_manager.manager as manager_module
 from image_gallery.dataset_manager import (
     ConflictError,
     DatasetManager,
@@ -117,6 +119,83 @@ def test_vector_write_requires_complete_validation_outputs(tmp_path: Path) -> No
             items={asset_id: (1.0, 2.0)},
             validation_outputs=[(float("nan"), 0.2)],
         )
+    assert field.get(asset_id=asset_id) is None
+
+
+def test_vector_write_rejects_validation_outputs_in_wrong_probe_order(tmp_path: Path) -> None:
+    repo, _, view, asset_id = make_view(tmp_path)
+    field = repo.create_vector_field(
+        name="clip",
+        dimension=2,
+        distance="cosine",
+        validation_set=[
+            VectorValidationItem(probe=b"first", expected=(0.1, 0.2)),
+            VectorValidationItem(probe=b"second", expected=(0.3, 0.4)),
+        ],
+    )
+
+    with pytest.raises(ValidationError, match="locked validation set"):
+        field.write(
+            source=view,
+            items={asset_id: (1.0, 2.0)},
+            validation_outputs=[(0.3, 0.4), (0.1, 0.2)],
+        )
+
+    assert field.get(asset_id=asset_id) is None
+
+
+def test_vector_validation_enforces_tolerance_boundary(tmp_path: Path) -> None:
+    repo, _, view, asset_id = make_view(tmp_path)
+    field = repo.create_vector_field(
+        name="clip",
+        dimension=2,
+        distance="cosine",
+        tolerance=0.01,
+        validation_set=[VectorValidationItem(probe=b"fixed", expected=(0.1, 0.2))],
+    )
+
+    field.write(
+        source=view,
+        items={asset_id: (1.0, 2.0)},
+        validation_outputs=[(0.109, 0.191)],
+    )
+    with pytest.raises(ValidationError, match="locked validation set"):
+        field.write(
+            source=view,
+            items={asset_id: (3.0, 4.0)},
+            validation_outputs=[(0.111, 0.2)],
+            overwrite=True,
+        )
+
+    assert field.get(asset_id=asset_id) == (1.0, 2.0)
+
+
+@pytest.mark.parametrize("non_finite", [float("nan"), float("inf"), float("-inf")])
+def test_vector_write_rejects_non_finite_validation_and_target_values(
+    tmp_path: Path,
+    non_finite: float,
+) -> None:
+    repo, _, view, asset_id = make_view(tmp_path)
+    field = repo.create_vector_field(
+        name="clip",
+        dimension=2,
+        distance="cosine",
+        validation_set=[VectorValidationItem(probe=b"fixed", expected=(0.1, 0.2))],
+    )
+
+    with pytest.raises(ValidationError, match="non-finite"):
+        field.write(
+            source=view,
+            items={asset_id: (1.0, 2.0)},
+            validation_outputs=[(non_finite, 0.2)],
+        )
+    with pytest.raises(ValidationError, match="non-finite"):
+        field.write(
+            source=view,
+            items={asset_id: (non_finite, 2.0)},
+            validation_outputs=[(0.1, 0.2)],
+        )
+
     assert field.get(asset_id=asset_id) is None
 
 
@@ -284,6 +363,48 @@ def test_combined_commit_validation_failure_publishes_neither_side(tmp_path: Pat
 
     assert dataset.open_branch().snapshot_id == view.snapshot_id
     assert field.get(asset_id=asset_id) is None
+
+
+def test_combined_commit_stale_base_publishes_neither_data_nor_vectors(tmp_path: Path) -> None:
+    repo, dataset, stale, asset_id = make_view(tmp_path)
+    field = repo.create_vector_field(
+        name="clip",
+        dimension=2,
+        distance="cosine",
+        validation_set=[VectorValidationItem(probe=b"fixed", expected=(0.1, 0.2))],
+    )
+    current = dataset.commit(branch="main", base=stale, rows=[]).view
+    storage = repo._manager.storage_manager
+    prefix_id = str(current.get_row(asset_id=asset_id)["storage_prefix_id"])
+    stored = storage.write_managed(prefix_id=prefix_id, data=b"new-row")
+    new_row = {
+        "asset_id": stored.asset_id,
+        "storage_prefix_id": stored.storage_prefix_id,
+        "relative_path": stored.relative_path,
+        "source_uri": None,
+        "tag_ids": [],
+    }
+    advanced = dataset.commit(branch="main", base=current, rows=[new_row]).view
+
+    with pytest.raises(ConflictError):
+        dataset.commit(
+            branch="main",
+            base=stale,
+            rows=[],
+            vectors=[
+                VectorCommit(
+                    field=field,
+                    items={asset_id: (1.0, 2.0)},
+                    validation_outputs=[(0.1, 0.2)],
+                )
+            ],
+        )
+
+    assert dataset.open_branch().snapshot_id == advanced.snapshot_id
+    assert field.get(asset_id=asset_id) is None
+    with repo._manager._engine.connect() as connection:
+        pending_count = connection.scalar(select(func.count()).select_from(manager_module.pending_asset_vectors))
+    assert pending_count == 0
 
 
 def test_combined_commit_recovers_after_candidate_publish_interruption(tmp_path: Path) -> None:

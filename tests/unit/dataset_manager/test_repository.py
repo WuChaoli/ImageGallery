@@ -55,6 +55,27 @@ def test_postgres_backend_migrates_before_loading_catalog(monkeypatch: pytest.Mo
     catalog.close.assert_called_once_with()
 
 
+def test_dataset_manager_context_closes_owned_resources_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    engine = MagicMock()
+    engine.dialect.name = "sqlite"
+    catalog = MagicMock()
+    monkeypatch.setattr(manager_module.metadata, "create_all", lambda _engine: None)
+
+    manager = DatasetManager(
+        control_engine=engine,
+        catalog=catalog,
+        storage_manager=StorageManager(),
+        owns_engine=True,
+        owns_catalog=True,
+    )
+    with manager as entered:
+        assert entered is manager
+    manager.close()
+
+    engine.dispose.assert_called_once_with()
+    catalog.close.assert_called_once_with()
+
+
 def test_manager_creates_and_reopens_isolated_repositories(tmp_path: Path) -> None:
     manager, _ = make_manager(tmp_path)
 

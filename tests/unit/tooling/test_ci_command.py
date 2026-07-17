@@ -320,6 +320,22 @@ def test_package_validator_accepts_expected_wheel_metadata(tmp_path: Path) -> No
     assert package_validate.validate_wheel(wheel) == []
 
 
+def test_package_validator_rejects_dataset_manager_test_importer_in_wheel(tmp_path: Path) -> None:
+    """DatasetManager 测试 Importer 不得进入生产 wheel。"""
+    wheel = tmp_path / "image_gallery-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("image_gallery/__init__.py", "")
+        archive.writestr("tests/helpers/dataset_manager_importer.py", "")
+        archive.writestr(
+            "image_gallery-0.1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: image-gallery\nVersion: 0.1.0\nRequires-Python: >=3.10\n",
+        )
+
+    findings = package_validate.validate_wheel(wheel)
+
+    assert findings == ["wheel contains forbidden path: tests/helpers/dataset_manager_importer.py"]
+
+
 def test_package_validator_rejects_forbidden_sdist_content(tmp_path: Path) -> None:
     """sdist 不得包含测试、Notebook 或内部 CI 脚本。"""
     source = tmp_path / "tool.py"

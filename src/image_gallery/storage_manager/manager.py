@@ -107,6 +107,9 @@ class StorageManager:
                 close()
                 continue
             close_session = getattr(filesystem, "close_session", None)
+            # s3fs 已为 _s3creator 注册同步 weakref finalizer；手动关闭 client 会导致 finalizer 二次退出 session。
+            if getattr(filesystem, "_s3creator", None) is not None:
+                continue
             session = getattr(filesystem, "s3", None)
             if callable(close_session) and session is not None:
                 close_session(getattr(filesystem, "loop", None), session)
