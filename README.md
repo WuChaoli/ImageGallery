@@ -4,6 +4,20 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 
 当前版本以 Python package API 和 Jupyter 验证为核心，不包含服务端 API 或 Web UI。
 
+## DatasetManager 新平台
+
+`image_gallery.dataset_manager` 提供与旧 `image_gallery.dataset` 独立并存的新数据集平台：一个 Backend 可创建多个硬隔离的 `DatasetRepo`，每个 Dataset 使用独立 Iceberg Table 管理 Branch、Checkpoint、回退与状态 Clone。`image_gallery.storage_manager` 独立负责 file/S3-compatible Prefix、SHA-256 内容身份和图片 bytes IO。
+
+新平台支持 Repo 级 Tag Definition、Dataset 行内版本化 Tag Assignment，以及由冻结模型生成、pgvector 保存的 Repo 当前 VectorField 值。MVP 不提供 merge、跨 Repo clone、删除/GC、全 Repo embedding 调度、ANN 或语义搜索。
+
+本地开发与单元测试可使用 `DatasetManager.local(...)`；PostgreSQL Backend 通过 `DatasetManager.postgres(...)` 连接 control database 和 PyIceberg SqlCatalog。完整签名和类型以包级导出与 docstring 为准。
+
+Model 与 Storage Prefix 的非敏感冻结定义保存在 PostgreSQL control schema，明文凭证只由部署层的 CredentialProvider 解析。进程重启后相同 `model_id` 和 `prefix_id` 会自动恢复原 provider/backend、artifact/root、endpoint 与 secret reference；模型文件或 Backend 离线不可达时会明确失败，不会静默改绑。`DatasetManager` 会关闭自己创建的 `ModelManager`，但不会关闭调用方注入、可能被共享的实例；外部实例由调用方负责关闭。
+
+Dataset 数据使用 pandas DataFrame 提交和读取。`dataset.commit(..., fields=[...])` 表示普通列 patch，省略 `fields` 表示完整 upsert；向量字段不能直接 Commit。先通过 `repo.schema.add_vector(..., model_id=...)` 冻结模型绑定，再调用 `dataset.generate_embed(field=...)` 为 main 当前 Head 的全部行生成，也可指定 Branch 或精确 View。普通列与 VectorField 名称均去除首尾空白后按大小写不敏感规则判重；物理列固定在 Iceberg Snapshot，显式扫描的向量列始终读取 Repo 当前值。
+
+Alembic migration 需要建 schema、extension 和 role 的管理员权限；当前 `DatasetManager` 初始化会自动执行 migration，因此 PostgreSQL 连接默认也需要这些权限。迁移会创建 control、vectors、catalog 三个 runtime role，并把它们授予迁移执行用户。
+
 ## 清洗入口
 
 当前 `image_gallery.cleaning` 提供两类面向用户的清洗配置入口：
@@ -51,6 +65,12 @@ Makefile 当前作为兼容别名保留，已安装 GNU Make 时仍可运行 `ma
 
 ```bash
 uv run python -m tools.ci test-real
+```
+
+DatasetManager 的 PostgreSQL、pgvector、PyIceberg 和 S3-compatible 容器验收使用独立 `dataset_backend` marker，默认快测不会启动容器：
+
+```bash
+uv run pytest -m dataset_backend tests/integration/dataset_manager
 ```
 
 ## CI 安全门槛

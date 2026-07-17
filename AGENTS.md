@@ -10,6 +10,8 @@ Python 包结构为 `src/image_gallery/`，按领域拆分如下：
 src/image_gallery/
 ├── storage/          # 图片存储抽象层（本地文件系统 + MinIO）
 ├── dataset/          # 数据集管理（Parquet 读写、Schema 契约、标签校验）
+├── storage_manager/  # 新平台独立图片位置、内容身份与 file/S3 bytes IO
+├── dataset_manager/  # Repo 隔离、Iceberg 数据集版本、Tag 与 pgvector 当前值
 ├── schemas/          # 数据契约与类型定义
 ├── state/            # 运行时状态持久化（SQLite）
 ├── importers/        # 多源导入（本地目录、URL 列表、MinIO）
@@ -20,7 +22,7 @@ src/image_gallery/
 └── utils/            # 通用工具函数
 ```
 
-**存储职责边界**：Parquet 存数据集，SQLite 存运行状态，Storage 存图片。测试应放在 `tests/unit/` 与 `tests/integration/`；示例和 Notebook 验证入口应放在 `examples/` 与 `notebooks/`。
+**存储职责边界**：旧平台由 Parquet 存数据集、SQLite 存运行状态、Storage 存图片；新 DatasetManager 平台由 Iceberg 存 Dataset 历史、PostgreSQL 存控制面和 Repo 当前向量、StorageManager 存图片 bytes。两套公开 API 独立并存，不做隐式类型转换。测试应放在 `tests/unit/` 与 `tests/integration/`；示例和 Notebook 验证入口应放在 `examples/` 与 `notebooks/`。
 
 ## 文档体系与权威性
 
@@ -72,6 +74,9 @@ uv run python -m tools.ci test
 
 # 运行依赖 sample_1000 和 MinIO 的真实数据验收
 uv run python -m tools.ci test-real
+
+# 运行 DatasetManager 的 PostgreSQL、pgvector 与 S3-compatible 容器验收
+uv run pytest -m dataset_backend tests/integration/dataset_manager
 
 # 运行包含 slow 的完整测试
 uv run python -m tools.ci test-all

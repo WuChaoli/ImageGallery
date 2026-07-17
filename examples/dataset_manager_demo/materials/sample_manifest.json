@@ -1,0 +1,127 @@
+{
+  "seed": 20260717,
+  "source_row_count": 1000,
+  "sample_size": 20,
+  "items": [
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/0ee664f5-ed0e-4792-8ccc-4f0dbcbb3670.png",
+      "local_path": "raw_images/sample-00-83e5e7d99378.png",
+      "sha256": "83e5e7d99378f7a90bb12b5e931fb7bc6ac6b6b2417c62e0e05f705e5539c1cb",
+      "size_bytes": 943720
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/192d6e3d-63d4-4b65-8969-9cd46087e929.png",
+      "local_path": "raw_images/sample-01-1244455cadc6.png",
+      "sha256": "1244455cadc639529c54729cc986a59bc8167a6b90052e94919513b795106901",
+      "size_bytes": 954923
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/697225d9-c6fc-4941-a956-3f640622ed47.png",
+      "local_path": "raw_images/sample-02-56afd1a26280.png",
+      "sha256": "56afd1a26280363b3eb4a5daca327ffc921967447877d9616fb140a9415203c9",
+      "size_bytes": 681769
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/7c0cc414-2f05-4863-8b95-caff8616fe10.png",
+      "local_path": "raw_images/sample-03-41076657f936.png",
+      "sha256": "41076657f9366cd40f754319ced3168be64affd8cb21d7faa68ec7956bdec44e",
+      "size_bytes": 488097
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/1f2be50f-a5e5-4b35-853b-6066bb3c6e4b.png",
+      "local_path": "raw_images/sample-04-a98b211aabf5.png",
+      "sha256": "a98b211aabf598569bbedced23baeb166b2e1f473a4d8ceb65f4cf4b10de4ca8",
+      "size_bytes": 431386
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/2d1c2418-a925-48ef-9bc6-8bf36aacf32d.png",
+      "local_path": "raw_images/sample-05-bcafb9b67e82.png",
+      "sha256": "bcafb9b67e828b175a2c181813eec344d0086784bc832ffe3f0ae793b3c66aa7",
+      "size_bytes": 726090
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/d6b73d56-be06-4c29-baad-a9244413fab0.png",
+      "local_path": "raw_images/sample-06-821a2a774e8d.png",
+      "sha256": "821a2a774e8d29bafb29b30361d7ddfeb8c9dc3dc43da2a8cac5397d845f4ad0",
+      "size_bytes": 800164
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/f347260f-30ce-4001-90d4-5e149212c5d0.png",
+      "local_path": "raw_images/sample-07-66836bb709e0.png",
+      "sha256": "66836bb709e0b524a403ec0718ebfdcd228cccfc735ef7f448500a1bb298a0e0",
+      "size_bytes": 1068273
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/9ea3f09b-24a2-4c4f-8c58-99be089bce27.png",
+      "local_path": "raw_images/sample-08-7501b93ca144.png",
+      "sha256": "7501b93ca144ac497a902aa850d7e11a1781ccecffdff8a6438a02c6ab5eaee0",
+      "size_bytes": 791578
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/8c6536f6-6a53-46a4-809a-2212d2cef833.png",
+      "local_path": "raw_images/sample-09-80151ee16f47.png",
+      "sha256": "80151ee16f470b11d870116037f0a9c8d01bcce8a338697e8b91f29c82f5c805",
+      "size_bytes": 449330
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/24fbee36-9d08-4d2d-b85b-0b5711154873.png",
+      "local_path": "raw_images/sample-10-735bdfc6567e.png",
+      "sha256": "735bdfc6567ec5716b793f7ad7198466c44cd7b11226d21b220f12490db339f8",
+      "size_bytes": 906574
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/4d4be199-239e-4bba-ab04-ce680cd2ec9b.png",
+      "local_path": "raw_images/sample-11-4aa602827d28.png",
+      "sha256": "4aa602827d282424b6f64c25dfbf739a2dd547ee6e23d6465e921a07a50cd03d",
+      "size_bytes": 934236
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/bbfd717c-5a52-41e1-8078-7be2e5e7e3de.png",
+      "local_path": "raw_images/sample-12-5dd312472f60.png",
+      "sha256": "5dd312472f60904906869f6bad97a3166b48817f439b4c52625f2311d85ab579",
+      "size_bytes": 616935
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/f976c1c2-9234-409a-a412-bf70dc10817a.png",
+      "local_path": "raw_images/sample-13-20d71e3f2c07.png",
+      "sha256": "20d71e3f2c07731fd1d2f5cfeabd9f3dd8e1963a01ff5f4d862e37fdeeecc74a",
+      "size_bytes": 610785
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/b8b71e3c-aed7-478e-914c-bc2ad928cc08.png",
+      "local_path": "raw_images/sample-14-490264255860.png",
+      "sha256": "490264255860fd2fd0fc277088b0044635a4e4247c3bcb6839c09f1e7d459070",
+      "size_bytes": 902737
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/247f3dfb-2141-403b-a22c-50a733f1b518.png",
+      "local_path": "raw_images/sample-15-98a1ad3dcdaa.png",
+      "sha256": "98a1ad3dcdaa6c7ab6eeb3418a8755ac3b2d5a9b2cd97d414109dd34dd00c10f",
+      "size_bytes": 844446
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/ec70cfcc-3b68-43b0-b0cd-9f6400bb4985.png",
+      "local_path": "raw_images/sample-16-39ce040d048a.png",
+      "sha256": "39ce040d048a778b47d91a83b5f7311d063f81ae9778350d2bd8eac7b9c5579a",
+      "size_bytes": 954003
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/e826c782-d9d4-48b5-9f57-98dee74e1efa.png",
+      "local_path": "raw_images/sample-17-8d3b664cc5f9.png",
+      "sha256": "8d3b664cc5f97687d5c8457ad542680388f362bbf651975c27afb40014ecc537",
+      "size_bytes": 450427
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_002/cb054931-192e-4695-b39c-ba91e7ced0e0.png",
+      "local_path": "raw_images/sample-18-3863849011df.png",
+      "sha256": "3863849011df81401b9e2ac60f54434c239e81cada4d30cc16fbd6dd91a11419",
+      "size_bytes": 771350
+    },
+    {
+      "source_image_uri": "s3://test/images/raw/2026-07-06/shard_001/a569d7d9-da30-42d8-b272-941c2d9939e3.png",
+      "local_path": "raw_images/sample-19-bfa2869a5ce8.png",
+      "sha256": "bfa2869a5ce871bb760dcad1918476ff2490ef03be44d4e0090b3232b64c44cc",
+      "size_bytes": 852661
+    }
+  ]
+}

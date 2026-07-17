@@ -57,6 +57,14 @@ def test_available_tasks_are_explicit_and_stable() -> None:
     )
 
 
+def test_test_all_allows_network_for_real_backend_tests() -> None:
+    """test-all 包含容器集成测试，因此不得启用 pytest-socket 全局禁网。"""
+    runner = RecordingRunner()
+
+    assert ci.main(["test-all"], runner=runner) == 0
+    assert "--disable-socket" not in runner.calls[0]
+
+
 def test_unknown_task_returns_usage_without_running_command(capsys: pytest.CaptureFixture[str]) -> None:
     """未知任务不得被当作任意外部命令执行。"""
     runner = RecordingRunner()
@@ -318,6 +326,22 @@ def test_package_validator_accepts_expected_wheel_metadata(tmp_path: Path) -> No
         )
 
     assert package_validate.validate_wheel(wheel) == []
+
+
+def test_package_validator_rejects_dataset_manager_test_importer_in_wheel(tmp_path: Path) -> None:
+    """DatasetManager 测试 Importer 不得进入生产 wheel。"""
+    wheel = tmp_path / "image_gallery-0.1.0-py3-none-any.whl"
+    with zipfile.ZipFile(wheel, "w") as archive:
+        archive.writestr("image_gallery/__init__.py", "")
+        archive.writestr("tests/helpers/dataset_manager_importer.py", "")
+        archive.writestr(
+            "image_gallery-0.1.0.dist-info/METADATA",
+            "Metadata-Version: 2.1\nName: image-gallery\nVersion: 0.1.0\nRequires-Python: >=3.10\n",
+        )
+
+    findings = package_validate.validate_wheel(wheel)
+
+    assert findings == ["wheel contains forbidden path: tests/helpers/dataset_manager_importer.py"]
 
 
 def test_package_validator_rejects_forbidden_sdist_content(tmp_path: Path) -> None:

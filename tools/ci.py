@@ -102,8 +102,6 @@ _COMMANDS: dict[str, tuple[Command, ...]] = {
             "no:randomly",
             "-n",
             "auto",
-            "--disable-socket",
-            "--allow-unix-socket",
             "-o",
             "addopts=",
             "tests/",

@@ -12,7 +12,8 @@ def test_pytest_registers_and_excludes_slow_tests_by_default() -> None:
     config = tomllib.loads((REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     pytest_config = config["tool"]["pytest"]["ini_options"]
 
-    assert pytest_config["addopts"] == '-m "not slow"'
+    assert pytest_config["addopts"] == '-m "not slow and not dataset_backend"'
+    assert any(marker.startswith("dataset_backend:") for marker in pytest_config["markers"])
     assert any(marker.startswith("slow:") for marker in pytest_config["markers"])
     assert any(marker.startswith("real_dataset:") for marker in pytest_config["markers"])
 
