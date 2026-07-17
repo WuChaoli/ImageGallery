@@ -28,5 +28,5 @@
 
 - [x] 5.1 运行聚焦单元测试、真实 PostgreSQL 约束/并发测试、DatasetManager E2E 和演示 Notebook E2E
 - [x] 5.2 按顺序运行 format-check、lint、docs、test、coverage、security、package、package-validate、package-smoke 与 test-all
-- [ ] 5.3 同步主 specs、运行 sync-docs、归档 change 并创建中文提交推送到 PR #10
-- [ ] 5.4 请求独立代码复审，修复全部 Critical/Important，等待 GitHub 检查全绿后合并 PR #10
+- [x] 5.3 同步主 specs、运行 sync-docs、归档 change 并创建中文提交推送到 PR #10
+- [x] 5.4 请求独立代码复审，修复全部 Critical/Important，等待 GitHub 检查全绿后合并 PR #10
