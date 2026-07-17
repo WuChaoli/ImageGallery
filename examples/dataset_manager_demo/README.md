@@ -1,6 +1,8 @@
 # DatasetManager 中文演示
 
-[`dataset_manager_demo.ipynb`](dataset_manager_demo.ipynb) 使用真实 PostgreSQL/pgvector、PyIceberg SqlCatalog 和 MinIO，连续演示图片导入、存储、读取、Tag、Vector、commit、Branch、Checkpoint、回退、Clone 和重连。
+[`dataset_manager_demo.ipynb`](dataset_manager_demo.ipynb) 使用真实 PostgreSQL/pgvector、PyIceberg SqlCatalog 和 MinIO，连续演示图片导入、存储、读取、Tag、commit、Branch、Checkpoint、模型托管向量生成、回退、Clone 和重连。
+
+向量章节展示冻结模型定义与 VectorField 强绑定、默认 main Head 生成、普通列和向量列的统一 DataFrame 读取、增量跳过、覆盖生成、指定 View 范围，以及关闭重连后的恢复。向量是按 `asset_id` 复用的 Repo 当前值；生成向量不会创建或移动 Dataset 的 Iceberg Snapshot。
 
 ## 准备环境
 

@@ -1,7 +1,7 @@
 # dataset-manager-demo Specification
 
 ## Purpose
-TBD - created by archiving change add-dataset-manager-demo-notebook. Update Purpose after archive.
+定义使用固定本地图片和真实 Backend 演示 DatasetManager 完整生命周期的可执行中文 Notebook 契约。
 ## Requirements
 ### Requirement: 演示材料固定且可追溯
 系统 SHALL 在 `examples/dataset_manager_demo/materials/` 提供从现有 MinIO `sample_1000` 以固定随机种子无放回抽取的 20 张本地原始图片和 manifest。
@@ -47,13 +47,18 @@ Notebook SHALL 自动读取候选 `.env`，对 PostgreSQL/pgvector、PyIceberg C
 - **WHEN** 用户从头执行 Notebook 的业务章节
 - **THEN** 系统创建 Repo、Dataset、Tag，托管导入 20 张图片并提交 V1，读取行和图片，再创建 Checkpoint 与 experiment Branch 并分别推进 main 和 experiment
 
-#### Scenario: 向量、回退与 Clone
+#### Scenario: 模型托管的向量生成
+- **WHEN** 用户执行向量生命周期章节
+- **THEN** Notebook 展示冻结 Model 定义和强绑定 VectorField，默认对 main Head 生成向量，以 DataFrame 同时读取普通列与向量列，并演示重复调用跳过、覆盖生成和指定 View 范围
+- **AND** Notebook 验证向量生成不会创建或移动 Iceberg Snapshot，并解释 Repo 当前向量按 asset_id 复用的语义
+
+#### Scenario: 回退与 Clone
 - **WHEN** 用户继续执行高级生命周期章节
-- **THEN** 系统演示调用方确定性向量、Data+Vector commit、固定 View、Branch 回退和从固定 View Clone，且输出清楚说明 Repo 当前向量语义
+- **THEN** 系统演示固定 View、Branch 回退和从固定 View Clone
 
 #### Scenario: 关闭并重新连接
 - **WHEN** Notebook 关闭第一组 Manager 和 Storage 客户端后以同一配置重建客户端
-- **THEN** Repo、Dataset、Refs、Clone、图片、Tag 和 Vector 均可重新打开并保持持久状态
+- **THEN** Repo、Dataset、Refs、Clone、图片、Tag、冻结模型定义、VectorField 和已生成向量均可重新打开并保持持久状态
 
 ### Requirement: 演示导入适配不改变生产 API
 在正式 Importer 接入 DatasetManager 之前，系统 SHALL 将临时演示 adapter 限制在 examples 范围，并保持 Notebook 主生命周期与具体 importer 实现解耦。
@@ -67,8 +72,8 @@ Notebook MUST 不依赖隐藏的 kernel 状态，并 SHALL 提供自动化验证
 
 #### Scenario: 从干净 kernel 执行 managed 路径
 - **WHEN** 自动化测试在隔离目录以 managed demo Backend 从第一单元执行到最后一单元
-- **THEN** 所有单元成功、关键生命周期断言通过、输出不包含凭证且测试结束无遗留 demo 容器或客户端进程
+- **THEN** 所有单元成功，模型注册、向量生成、跳过、覆盖、指定 View、Snapshot 不变和重连恢复断言通过，输出不包含凭证且测试结束无遗留 demo 容器或客户端进程
 
 #### Scenario: 检查中文教学内容
 - **WHEN** 检查 Notebook 和 README 的用户说明
-- **THEN** 环境配置、每个生命周期阶段、错误恢复和清理步骤均有中文解释，代码实体名称保持英文
+- **THEN** 环境配置、每个生命周期阶段、模型托管向量语义、错误恢复和清理步骤均有中文解释，代码实体名称保持英文

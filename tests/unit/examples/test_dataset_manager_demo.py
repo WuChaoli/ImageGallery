@@ -177,6 +177,18 @@ def test_dataset_manager_demo_notebook_has_chinese_lifecycle_sections() -> None:
         assert heading in text
     assert "DatasetManager.local" not in text
     assert "tests.helpers" not in text
+    for snippet in (
+        "manager.model_manager.get",
+        "field.model_fingerprint",
+        "vector_frame = main_v2.scan",
+        "skipped_result = dataset.generate_embed",
+        "overwrite=True",
+        "source=experiment_v2",
+        "assert dataset.open_branch().snapshot_id == snapshot_before_embed",
+        "reopened_model = manager.model_manager.get",
+        "reopened_vector_frame = reopened_dataset.open_branch().scan",
+    ):
+        assert snippet in text
     assert all(not cell.get("outputs") for cell in notebook["cells"] if cell["cell_type"] == "code")
 
 
