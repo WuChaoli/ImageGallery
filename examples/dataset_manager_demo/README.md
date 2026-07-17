@@ -12,7 +12,7 @@ Notebook 会自动查找 `.env`。复制 [`.env.example`](.env.example) 并填�
 demo_backend = start_demo_backend(demo_root=DEMO_ROOT / "runtime", recreate=True)
 ```
 
-临时连接信息写入被 Git 忽略的 `runtime/.env.demo`。结束时显式运行 `stop_demo_backend(...)`；该函数拒绝操作 existing session。
+临时连接信息只保存在 `DemoBackendSession.config` 内存中，不会把数据库或 MinIO 凭证写入磁盘。结束时显式运行 `stop_demo_backend(...)`；该函数拒绝操作 existing session。
 
 ## 演示材料
 

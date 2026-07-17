@@ -197,3 +197,11 @@ def test_start_demo_backend_reports_docker_failure(monkeypatch: pytest.MonkeyPat
 
     with pytest.raises(RuntimeError, match="无法启动 demo Backend"):
         start_demo_backend(demo_root=tmp_path, recreate=True)
+
+
+def test_managed_demo_backend_does_not_persist_credentials() -> None:
+    """托管演示 Backend 不得把临时数据库或 MinIO 凭证写入磁盘。"""
+    from examples.dataset_manager_demo import helpers
+
+    source = Path(helpers.__file__).read_text(encoding="utf-8")
+    assert ".env.demo" not in source

@@ -308,9 +308,6 @@ def start_demo_backend(*, demo_root: str | Path, recreate: bool = False) -> Demo
             "IMAGE_GALLERY_DEMO_MINIO_SECRET_KEY": str(minio_config["secret_key"]),
             "IMAGE_GALLERY_DEMO_MINIO_BUCKET": bucket,
         }
-        (root / ".env.demo").write_text(
-            "\n".join(f"{key}={value}" for key, value in values.items()) + "\n", encoding="utf-8"
-        )
         return DemoBackendSession("managed", values, resources)
     except Exception as exc:
         for resource in reversed(resources):
