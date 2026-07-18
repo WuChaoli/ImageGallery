@@ -1,7 +1,8 @@
 import hashlib
 import inspect
 import json
-from dataclasses import asdict
+from copy import deepcopy
+from dataclasses import asdict, fields, is_dataclass
 from typing import cast
 
 import pandas as pd
@@ -47,6 +48,39 @@ def _computer_contract() -> list[dict[str, object]]:
     ]
 
 
+def _mutable_object_ids(value: object) -> set[int]:
+    if isinstance(value, dict):
+        nested_ids = {id(value)}
+        for nested_value in value.values():
+            nested_ids.update(_mutable_object_ids(nested_value))
+        return nested_ids
+    if isinstance(value, list):
+        nested_ids = {id(value)}
+        for nested_value in value:
+            nested_ids.update(_mutable_object_ids(nested_value))
+        return nested_ids
+    if is_dataclass(value) and not isinstance(value, type):
+        nested_ids: set[int] = set()
+        for data_field in fields(value):
+            nested_ids.update(_mutable_object_ids(getattr(value, data_field.name)))
+        return nested_ids
+    return set()
+
+
+def _mutate_nested_objects(value: object) -> None:
+    if isinstance(value, dict):
+        for nested_value in list(value.values()):
+            _mutate_nested_objects(nested_value)
+        value["__mutation_probe__"] = True
+    elif isinstance(value, list):
+        for nested_value in list(value):
+            _mutate_nested_objects(nested_value)
+        value.append("__mutation_probe__")
+    elif is_dataclass(value) and not isinstance(value, type):
+        for data_field in fields(value):
+            _mutate_nested_objects(getattr(value, data_field.name))
+
+
 def test_default_catalog_matches_characterized_operator_contract() -> None:
     assert _digest(_operator_contract()) == "6b69110c6ceb602ed2968dda80bb73aa2623cbfa274391b69b670112bf729e1a"
 
@@ -90,13 +124,28 @@ def test_builtin_module_keeps_evaluator_compatibility_imports() -> None:
 def test_default_factories_return_independent_mutable_objects() -> None:
     first_registry = create_default_registry()
     second_registry = create_default_registry()
-    first_blur = first_registry.get_operator("blur")
-    second_blur = second_registry.get_operator("blur")
+    first_specs = {spec.name: spec for spec in first_registry.list_operator_specs()}
+    second_specs = {spec.name: spec for spec in second_registry.list_operator_specs()}
 
-    assert first_blur is not second_blur
-    assert first_blur.default_config is not second_blur.default_config
-    assert first_blur.preview_policy is not second_blur.preview_policy
-    assert first_blur.preview_policy.default_actions is not second_blur.preview_policy.default_actions
+    assert len(first_specs) == len(second_specs) == 17
+    assert first_specs.keys() == second_specs.keys()
+    for operator_name, first_spec in first_specs.items():
+        second_spec = second_specs[operator_name]
+        second_snapshot = deepcopy(asdict(second_spec))
+
+        assert first_spec is not second_spec
+        assert first_spec.default_config is not second_spec.default_config
+        assert first_spec.preview_policy is not second_spec.preview_policy
+        assert _mutable_object_ids(first_spec.default_config).isdisjoint(
+            _mutable_object_ids(second_spec.default_config)
+        ), f"{operator_name} default_config shares nested mutable objects"
+        assert _mutable_object_ids(first_spec.preview_policy).isdisjoint(
+            _mutable_object_ids(second_spec.preview_policy)
+        ), f"{operator_name} preview_policy shares nested mutable objects"
+
+        _mutate_nested_objects(first_spec.default_config)
+        _mutate_nested_objects(first_spec.preview_policy)
+        assert asdict(second_spec) == second_snapshot
 
     first_metrics = create_default_metric_specs()
     second_metrics = create_default_metric_specs()

@@ -16,3 +16,10 @@
 - [x] 3.2 Run the related Cleaning planner and graph tests with zero failures.
 - [x] 3.3 Run format, changed-scope lint and type checks, OpenSpec validation, repository coverage (at least 90%), and changed-line coverage (at least 80%).
 - [x] 3.4 Review the final diff for public API compatibility and scope, then prepare the local Chinese commit without archiving or publishing.
+
+## 4. Review Follow-up
+
+- [x] 4.1 Expand factory independence characterization to cover all 17 OperatorSpec objects and nested mutable values.
+- [x] 4.2 Prove the strengthened test fails under a temporary shared-object regression, then restore production code and confirm it passes.
+- [x] 4.3 Re-run Operators, related Cleaning, format, lint, coverage, diff coverage, and strict OpenSpec validation.
+- [x] 4.4 Review and create a separate local Chinese follow-up commit without archiving or publishing.
