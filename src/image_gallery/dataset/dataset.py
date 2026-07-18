@@ -8,6 +8,15 @@ from urllib.parse import unquote, urlparse
 import pandas as pd
 from PIL import Image
 
+from image_gallery.dataset._tabular_io import (
+    format_from_path as _format_from_path,
+)
+from image_gallery.dataset._tabular_io import (
+    read_frame as _read_frame,
+)
+from image_gallery.dataset._tabular_io import (
+    write_frame as _write_frame,
+)
 from image_gallery.dataset.fingerprint import dataframe_fingerprint
 from image_gallery.dataset.io import DatasetExporter, DatasetExportResult, DatasetLoader
 from image_gallery.storage.base import Storage
@@ -90,14 +99,7 @@ class Dataset:
         resolved_output_path.parent.mkdir(parents=True, exist_ok=True)
         # file_format 决定本次写出使用 Parquet、CSV 还是 JSONL。
         file_format = _format_from_path(output_path)
-        if file_format == "parquet":
-            data.to_parquet(resolved_output_path, index=False)
-        elif file_format == "csv":
-            data.to_csv(resolved_output_path, index=False)
-        elif file_format == "jsonl":
-            data.to_json(resolved_output_path, orient="records", lines=True, force_ascii=False)
-        else:
-            raise ValueError(f"unsupported dataset format: {file_format}")
+        _write_frame(data, resolved_output_path, file_format)
         return cls(dataset_path=output_path, format=file_format, storage=storage)
 
     def to_frame(self, columns: list[str] | None = None) -> pd.DataFrame:
@@ -234,30 +236,6 @@ class Dataset:
         if not isinstance(exporter, DatasetExporter):
             raise TypeError("exporter must implement DatasetExporter")
         return exporter.export(self)
-
-
-def _format_from_path(dataset_path: str) -> str:
-    """根据数据集路径后缀推导文件格式。"""
-    # suffix 统一转小写，避免 .CSV、.Parquet 这类大小写差异影响判断。
-    suffix = Path(dataset_path).suffix.lower()
-    if suffix == ".parquet":
-        return "parquet"
-    if suffix == ".csv":
-        return "csv"
-    if suffix in {".jsonl", ".json"}:
-        return "jsonl"
-    raise ValueError(f"unsupported dataset extension: {suffix}")
-
-
-def _read_frame(dataset_path: str, file_format: str) -> pd.DataFrame:
-    """按指定格式读取数据集文件为 DataFrame。"""
-    if file_format == "parquet":
-        return pd.read_parquet(dataset_path)
-    if file_format == "csv":
-        return pd.read_csv(dataset_path)
-    if file_format == "jsonl":
-        return pd.read_json(dataset_path, lines=True)
-    raise ValueError(f"unsupported dataset format: {file_format}")
 
 
 def _parse_image_uri(image_uri: str) -> ParsedImageUri:

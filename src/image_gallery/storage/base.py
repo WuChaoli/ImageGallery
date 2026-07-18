@@ -1,7 +1,9 @@
 from abc import ABC, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
-from typing import overload
+from typing import TypeVar, overload
+
+_BatchItem = TypeVar("_BatchItem")
 
 
 @dataclass(frozen=True)
@@ -12,6 +14,24 @@ class StorageBatchResult:
     ok: bool
     value: object | None = None
     error: str | None = None
+
+
+def _collect_batch_results(
+    items: Iterable[_BatchItem],
+    *,
+    object_path: Callable[[_BatchItem], str],
+    operation: Callable[[_BatchItem], object],
+) -> list[StorageBatchResult]:
+    """按输入顺序执行批量操作，并隔离单项异常。"""
+    results: list[StorageBatchResult] = []
+    for item in items:
+        path = object_path(item)
+        try:
+            results.append(StorageBatchResult(path, True, operation(item)))
+        # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
+        except Exception as exc:  # noqa: BLE001
+            results.append(StorageBatchResult(path, False, error=str(exc)))
+    return results
 
 
 class Storage(ABC):
@@ -108,14 +128,11 @@ class Storage(ABC):
         self, items: Iterable[tuple[str, bytes]], overwrite: bool = False
     ) -> list[StorageBatchResult]:
         """逐项写入对象，并把单项异常转换为批量结果。"""
-        results: list[StorageBatchResult] = []
-        for object_path, data in items:
-            try:
-                results.append(StorageBatchResult(object_path, True, self._write_bytes(object_path, data, overwrite)))
-            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
-            except Exception as exc:  # noqa: BLE001
-                results.append(StorageBatchResult(object_path, False, error=str(exc)))
-        return results
+        return _collect_batch_results(
+            items,
+            object_path=lambda item: item[0],
+            operation=lambda item: self._write_bytes(item[0], item[1], overwrite),
+        )
 
     def batch_read_bytes(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
         """批量读取 bytes，单个对象失败不影响其他对象。"""
@@ -123,14 +140,11 @@ class Storage(ABC):
 
     def _batch_read_bytes(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
         """逐项读取对象，并把单项异常转换为批量结果。"""
-        results: list[StorageBatchResult] = []
-        for object_path in object_paths:
-            try:
-                results.append(StorageBatchResult(object_path, True, self._read_bytes(object_path)))
-            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
-            except Exception as exc:  # noqa: BLE001
-                results.append(StorageBatchResult(object_path, False, error=str(exc)))
-        return results
+        return _collect_batch_results(
+            object_paths,
+            object_path=lambda path: path,
+            operation=self._read_bytes,
+        )
 
     def write_many(self, items: Iterable[tuple[str, bytes]], overwrite: bool = False) -> list[StorageBatchResult]:
         """兼容旧命名；新代码优先使用 batch_write_bytes。"""
@@ -142,23 +156,16 @@ class Storage(ABC):
 
     def exists_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
         """批量检查对象是否存在，单项异常不影响整批检查。"""
-        results: list[StorageBatchResult] = []
-        for object_path in object_paths:
-            try:
-                results.append(StorageBatchResult(object_path, True, self.exists(object_path)))
-            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
-            except Exception as exc:  # noqa: BLE001
-                results.append(StorageBatchResult(object_path, False, error=str(exc)))
-        return results
+        return _collect_batch_results(
+            object_paths,
+            object_path=lambda path: path,
+            operation=self.exists,
+        )
 
     def delete_many(self, object_paths: Iterable[str]) -> list[StorageBatchResult]:
         """批量删除对象，逐项记录删除结果。"""
-        results: list[StorageBatchResult] = []
-        for object_path in object_paths:
-            try:
-                self.delete(object_path)
-                results.append(StorageBatchResult(object_path, True))
-            # 批量 Storage API 必须隔离单个对象失败并返回结构化结果。
-            except Exception as exc:  # noqa: BLE001
-                results.append(StorageBatchResult(object_path, False, error=str(exc)))
-        return results
+        return _collect_batch_results(
+            object_paths,
+            object_path=lambda path: path,
+            operation=self.delete,
+        )
