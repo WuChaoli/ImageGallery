@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -92,34 +93,46 @@ def test_security_exceptions_document_required_governance_fields() -> None:
     assert required == {"id", "tool", "scope", "reason", "owner", "expires"}
 
 
-def test_makefile_exposes_reproducible_security_and_package_targets() -> None:
-    """Makefile 只保留 Python CI 入口的兼容别名。"""
-    text = (ROOT / "Makefile").read_text(encoding="utf-8")
-    for target in (
-        "security_secrets:",
-        "security_dependencies:",
-        "security_workflows:",
-        "security_exceptions:",
-        "package:",
-        "package_smoke:",
-    ):
-        assert target in text
-    assert "format_check:" in text
-    command_lines = [
-        line.strip()
-        for line in text.splitlines()
-        if line.startswith("\t") and line.strip() and not line.strip().startswith("$(info")
+def test_python_ci_is_the_only_current_command_entrypoint() -> None:
+    """当前权威内容不得重新引入 Makefile 开发入口。"""
+    assert not (ROOT / "Makefile").exists()
+    authoritative_paths = [ROOT / "AGENTS.md", ROOT / "README.md"]
+    authoritative_paths.extend((ROOT / "openspec" / "specs").glob("*/spec.md"))
+    for path in authoritative_paths:
+        text = path.read_text(encoding="utf-8")
+        assert re.search(r"\bmake[ \t]+[a-zA-Z0-9_-]+", text) is None, path
+
+
+def test_agents_documents_split_pre_pr_checks() -> None:
+    """PR 前策略必须逐项列出全部硬门禁与失败处理。"""
+    text = (ROOT / "AGENTS.md").read_text(encoding="utf-8")
+    pre_pr_section = text.split("### PR 提交前手动验证", maxsplit=1)[1]
+    commands = [
+        f"uv run python -m tools.ci {task}"
+        for task in (
+            "format-check",
+            "lint",
+            "docs",
+            "test",
+            "coverage",
+            "security",
+            "package",
+            "package-validate",
+            "package-smoke",
+        )
     ]
-    assert command_lines
-    assert all(line.startswith("uv run python -m tools.ci ") for line in command_lines)
-    assert "ruff check" not in text
-    assert "pyright" not in text
-    assert "pytest" not in text
-    assert "ls -t" not in text
+    positions = [pre_pr_section.index(command) for command in commands]
+    assert positions == sorted(positions)
+    assert "任一命令失败时立即停止" in text
+    assert "不能替代完整的 PR 前手动验证" in text
+    assert "MinIO、sample_1000 或真实数据" in text
+    assert "slow、并发、缓存、状态恢复或资源生命周期" in text
+    assert "uv run python -m tools.ci test-real" in pre_pr_section
+    assert "uv run python -m tools.ci test-all" in pre_pr_section
 
 
 def test_scheduled_and_release_workflows_use_python_ci_entrypoint() -> None:
-    """定时安全和发布工作流不得依赖 Make。"""
+    """定时安全和发布工作流必须使用 Python CI 入口。"""
     scheduled = (WORKFLOWS / "scheduled-security.yml").read_text(encoding="utf-8")
     release = (WORKFLOWS / "release.yml").read_text(encoding="utf-8")
     assert "uv run python -m tools.ci security-exceptions" in scheduled

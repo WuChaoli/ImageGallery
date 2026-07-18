@@ -53,7 +53,7 @@ src/image_gallery/
 
 ## 构建、测试与开发命令
 
-使用 `uv` 管理环境和依赖。跨平台 Python CI 入口是开发者与 GitHub Actions 的权威命令；Makefile 当前仅保留为兼容别名：
+使用 `uv` 管理环境和依赖。跨平台 Python CI 入口是开发者与 GitHub Actions 的唯一权威命令：
 
 ```bash
 # 安装开发环境
@@ -76,7 +76,7 @@ uv run python -m tools.ci test
 uv run python -m tools.ci test-real
 
 # 运行 DatasetManager 的 PostgreSQL、pgvector 与 S3-compatible 容器验收
-uv run pytest -m dataset_backend tests/integration/dataset_manager
+uv run python -m tools.ci dataset-backend
 
 # 运行包含 slow 的完整测试
 uv run python -m tools.ci test-all
@@ -88,7 +88,27 @@ uv run python -m tools.ci check
 uv run pytest tests/unit/cleaning/test_specific.py
 ```
 
-**注意**：`make lint`、`make test` 等目标只转发到对应 Python CI 任务，不再维护独立参数。`pyright` 类型检查中 warning 不阻断，error 阻断。
+`pyright` 类型检查中 warning 不阻断，error 阻断。
+
+### PR 提交前手动验证
+
+创建或更新 Pull Request 前，必须确保 `gitleaks` 可从 `PATH` 调用，并按以下顺序逐项执行检查，不得使用聚合命令掩盖具体失败阶段：
+
+```bash
+uv run python -m tools.ci format-check
+uv run python -m tools.ci lint
+uv run python -m tools.ci docs
+uv run python -m tools.ci test
+uv run python -m tools.ci coverage
+uv run python -m tools.ci security
+uv run python -m tools.ci package
+uv run python -m tools.ci package-validate
+uv run python -m tools.ci package-smoke
+```
+
+任一命令失败时立即停止，修复后从失败项重新验证；所有必跑命令退出码均为 0 后，才能创建或更新 PR。`uv run python -m tools.ci check` 只用于日常快速反馈，不能替代完整的 PR 前手动验证。
+
+涉及 MinIO、sample_1000 或真实数据时，额外运行 `uv run python -m tools.ci test-real`。涉及 slow、并发、缓存、状态恢复或资源生命周期时，额外运行 `uv run python -m tools.ci test-all`。涉及 DatasetManager 的 PostgreSQL、pgvector、PyIceberg 或 S3-compatible Backend 时，额外运行 `uv run python -m tools.ci dataset-backend`。
 
 创建 git worktree 时，继续复用原仓库的 `.venv` 作为开发与验证环境，不要在 worktree 内重新创建独立虚拟环境。
 

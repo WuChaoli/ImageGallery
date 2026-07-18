@@ -59,8 +59,6 @@ operators:
 uv run python -m tools.ci test
 ```
 
-Makefile 当前作为兼容别名保留，已安装 GNU Make 时仍可运行 `make test`。
-
 依赖 `sample_1000` 和 MinIO 的真实数据验收已隔离到 `real_dataset` 层，需要显式运行：
 
 ```bash
@@ -70,7 +68,7 @@ uv run python -m tools.ci test-real
 DatasetManager 的 PostgreSQL、pgvector、PyIceberg 和 S3-compatible 容器验收使用独立 `dataset_backend` marker，默认快测不会启动容器：
 
 ```bash
-uv run pytest -m dataset_backend tests/integration/dataset_manager
+uv run python -m tools.ci dataset-backend
 ```
 
 ## CI 安全门槛
@@ -97,7 +95,7 @@ uv run python -m tools.ci package-smoke
 uv run python -m tools.ci sbom
 ```
 
-这些命令在 Windows、Linux 和 GitHub Actions 中使用相同参数。Makefile 当前仅提供兼容别名，权威实现位于 `tools.ci`。
+这些命令在 Windows、Linux 和 GitHub Actions 中使用相同参数，`tools.ci` 是唯一权威命令入口。
 
 任何已知依赖漏洞都会阻断合并。安全告警不得通过禁用整个扫描器或跳过源码目录来处理。`noqa`、`type: ignore` 与 `pyright: ignore` 必须限定具体规则；批处理、插件、IO adapter 和调度隔离边界的 `BLE001` 还必须逐行写明理由。确属误报或暂不可修复时，在 `.security-exceptions.yml` 中登记具体发现；每条例外必须包含 `id`、`tool`、`scope`、`reason`、`owner` 和 `expires`，过期例外会让 CI 失败。真实密钥一旦进入 Git 历史，必须立即吊销和轮换，仅删除文件或添加豁免不能消除泄露。
 
