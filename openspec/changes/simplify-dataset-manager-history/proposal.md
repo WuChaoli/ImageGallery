@@ -4,8 +4,9 @@
 
 ## What Changes
 
-- 用特征测试固定 commit、clone、checkpoint、branch、rollback、候选发布、pending vector 和恢复的现有语义。
-- 将 Dataset 历史操作、Iceberg ref 发布和 durable recovery 从 `DatasetManager` 拆入私有协作模块。
+- 用特征测试固定 commit、clone、checkpoint、branch、rollback、候选发布及当前公开可达恢复路径的现有语义。
+- 将 Dataset 历史操作、Iceberg ref 发布和当前公开可达的 durable recovery 从 `DatasetManager` 拆入私有协作模块。
+- 保留既有 pending vector 内部 helper 的机械迁移，但不把当前不可达的非空分支扩张为本轮产品能力或恢复承诺。
 - 保持公开导出、方法签名、异常类型、operation hook 时序、控制面事务以及 Iceberg ref 行为不变。
 - 不修改 Tag、VectorField、embed 或 DatasetView IO 职责。
 
@@ -17,7 +18,7 @@
 
 ### Modified Capabilities
 
-- `dataset-versioning`: 增加内部历史职责拆分后必须保持全部公开、持久化、异常和恢复语义不变的约束。
+- `dataset-versioning`: 增加内部历史职责拆分后必须保持当前公开可达的持久化、异常和 commit operation/ref 恢复语义不变的约束。
 
 ## Impact
 

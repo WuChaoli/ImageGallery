@@ -6,7 +6,7 @@
 ## 2. 历史职责拆分
 
 - [x] 2.1 新增私有 DatasetHistory 协作者并迁移历史读取、commit、clone、checkpoint、branch 与 rollback
-- [x] 2.2 迁移候选 Snapshot、pending vector 发布与 durable recovery，保持 intent、Hook、事务和 Iceberg ref 顺序
+- [x] 2.2 迁移候选 Snapshot 与当前公开可达的 durable recovery，保持 intent、Hook、事务和 Iceberg ref 顺序；pending vector helper 仅作机械迁移
 - [x] 2.3 将 DatasetManager 收敛为薄委托并确认 Tag、VectorField、embed 与 View IO 边界未改变
 
 ## 3. 验证与收敛
