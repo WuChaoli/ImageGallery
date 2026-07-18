@@ -41,7 +41,7 @@ StorageManager 和 ModelManager 是新 DatasetManager 平台的独立基础设�
 
 ### 4. Characterization-first 验证私有拆分
 
-先补充会因私有协作者缺失而失败的结构/委托测试，同时固定关键外部行为：S3 managed recovery、Prefix 恢复冲突、Engine 绑定迁移、凭证只解析一次、非法输出不返回部分结果、重复关闭只释放一次。每组测试先观察 RED，再实现最小私有拆分并保持全量回归为 GREEN。
+先补充只观察公开行为的 characterization tests，固定 S3 managed recovery、Prefix 恢复冲突、Engine 绑定迁移、凭证只解析一次、非法输出不返回部分结果、重复关闭只释放一次。通过临时 mutation 破坏 recovery 与 runtime cache，确认测试会因语义断裂而失败，再恢复实现并保持全量回归为 GREEN；测试不锁定私有模块名或协作者字段。
 
 ## Risks / Trade-offs
 
@@ -52,7 +52,7 @@ StorageManager 和 ModelManager 是新 DatasetManager 平台的独立基础设�
 
 ## Migration Plan
 
-1. 添加 characterization tests 并验证因预期私有边界尚不存在而失败。
+1. 添加 characterization tests，并用临时 mutation 验证关键语义断裂会被测试捕获。
 2. 提取 StorageManager 私有路径和 BackendStore，运行 storage_manager 与相关 DatasetManager 测试。
 3. 提取 ModelManager 私有定义和 RuntimePool，运行 model_manager 与 lifecycle/embedding 测试。
 4. 运行公开接口契约、默认测试、coverage、lint、docs 和 `test-all`。
