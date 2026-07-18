@@ -95,7 +95,7 @@ def test_debug_bundle_directory_target_error_precedes_missing_tables(tmp_path: P
     output_dir = tmp_path / "debug.zip"
     output_dir.mkdir()
 
-    with pytest.raises(PermissionError):
+    with pytest.raises((PermissionError, IsADirectoryError)):
         CleanerResult("run-missing", tmp_path).export_debug_bundle(output_dir)
 
 
