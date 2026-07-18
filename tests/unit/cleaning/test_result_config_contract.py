@@ -75,6 +75,30 @@ def test_result_rejects_non_string_persisted_operator_output_columns(tmp_path: P
         CleanerResult("run-1", tmp_path).result("demo")
 
 
+def test_debug_bundle_missing_table_leaves_empty_zip(tmp_path: Path) -> None:
+    run_dir = tmp_path / "run-1"
+    tables_dir = run_dir / "tables"
+    tables_dir.mkdir(parents=True)
+    pd.DataFrame({"image_id": ["img-1"], "image_uri": ["one.png"]}).to_parquet(
+        tables_dir / "parameter_table.parquet",
+        index=False,
+    )
+    output = tmp_path / "debug.zip"
+
+    with pytest.raises(FileNotFoundError, match="evaluation_table.parquet"):
+        CleanerResult("run-1", tmp_path).export_debug_bundle(output)
+
+    assert output.read_bytes() == b"PK\x05\x06" + bytes(18)
+
+
+def test_debug_bundle_directory_target_error_precedes_missing_tables(tmp_path: Path) -> None:
+    output_dir = tmp_path / "debug.zip"
+    output_dir.mkdir()
+
+    with pytest.raises(PermissionError):
+        CleanerResult("run-missing", tmp_path).export_debug_bundle(output_dir)
+
+
 def test_result_operator_preview_preserves_action_filter_sort_and_limit(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     _write_result_tables(run_dir)

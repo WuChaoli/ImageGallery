@@ -25,3 +25,9 @@
 - [x] 4.2 运行 format-check、lint、docs、默认 test 和 OpenSpec strict validate
 - [x] 4.3 验证 source coverage 不低于 90%，diff coverage 不低于 80%
 - [x] 4.4 审查公开导出、公开签名、返回值、异常文本和持久化格式均未改变
+
+## 5. Review Follow-up
+
+- [x] 5.1 补充 debug bundle 缺表后空 ZIP 落盘与目录目标异常优先级测试
+- [x] 5.2 将 `run_paths()` 求值恢复到 ZipFile 上下文内部并验证 characterization RED/GREEN
+- [x] 5.3 重新运行目标测试、默认 test、coverage、lint 与 OpenSpec strict validate

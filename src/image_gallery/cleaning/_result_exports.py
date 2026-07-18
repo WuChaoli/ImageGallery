@@ -56,8 +56,8 @@ def export_debug_bundle(artifacts: ResultArtifacts, path: Path | str) -> Path:
     destination = Path(path)
     destination.parent.mkdir(parents=True, exist_ok=True)
     run_dir = artifacts.run_dir()
-    run_paths = artifacts.run_paths()
     with zipfile.ZipFile(destination, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        run_paths = artifacts.run_paths()
         for archive_name, source in (
             ("tables/parameter_table.parquet", artifacts.table_file("parameter_table.parquet")),
             ("tables/evaluation_table.parquet", artifacts.table_file("evaluation_table.parquet")),
