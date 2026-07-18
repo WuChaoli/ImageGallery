@@ -3,6 +3,7 @@ from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+from sqlalchemy import create_engine, select
 
 import image_gallery.dataset_manager.manager as manager_module
 from image_gallery.dataset_manager import (
@@ -11,6 +12,7 @@ from image_gallery.dataset_manager import (
     StorageAuthorizationError,
     ValidationError,
 )
+from image_gallery.dataset_manager.control import operation_phases, operations
 from image_gallery.storage_manager import StorageManager
 
 
@@ -227,7 +229,20 @@ def test_dataset_create_is_hidden_until_recovery_finalizes(tmp_path: Path) -> No
         repo.create_dataset(name="Raw")
 
     assert repo.list_datasets() == []
+    control_engine = create_engine(f"sqlite:///{(tmp_path / 'backend' / 'control.db').as_posix()}").execution_options(
+        schema_translate_map={"control": None, "vectors": None}
+    )
+    with control_engine.connect() as connection:
+        operation = connection.execute(select(operations)).mappings().one()
+        phases = connection.execute(select(operation_phases.c.phase)).scalars().all()
+    assert operation["status"] == "active"
+    assert operation["intent"]["name"] == "Raw"
+    assert phases == ["table_created"]
+
     recovered = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
     assert recovered.recover_operations() == 1
     assert recovered.open_repo(name="Vision").open_dataset(name="Raw").open_branch().count() == 0
     assert recovered.recover_operations() == 0
+    with control_engine.connect() as connection:
+        assert connection.execute(select(operations.c.status)).scalar_one() == "finalized"
+    control_engine.dispose()

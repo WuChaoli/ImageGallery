@@ -22,16 +22,14 @@ from sqlalchemy import create_engine, insert, select, text, update
 from sqlalchemy.engine import Engine, RowMapping
 from sqlalchemy.exc import IntegrityError
 
+from image_gallery.dataset_manager._operation_journal import OperationJournal
+from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryRecord, RepositoryStore
 from image_gallery.dataset_manager.control import (
     asset_vectors,
     datasets,
     metadata,
-    operation_phases,
     operations,
     pending_asset_vectors,
-    repo_storage_bindings,
-    repos,
-    storage_prefixes,
     tag_definitions,
     vector_fields,
 )
@@ -53,7 +51,7 @@ from image_gallery.dataset_manager.models import (
     VectorField,
 )
 from image_gallery.model_manager import ModelManager
-from image_gallery.storage_manager import PrefixNotFoundError, StorageManager, StoragePrefix, StoredObject
+from image_gallery.storage_manager import StorageManager, StoredObject
 
 SYSTEM_SCHEMA = Schema(
     NestedField(1, "asset_id", StringType(), required=True),
@@ -99,7 +97,6 @@ class DatasetManager:
         self._engine = control_engine
         self.catalog = catalog
         self.storage_manager = storage_manager
-        self._operation_hook = operation_hook
         self._owns_engine = owns_engine
         self._owns_catalog = owns_catalog
         self._owns_model_manager = model_manager is None
@@ -112,7 +109,9 @@ class DatasetManager:
             metadata.create_all(self._engine)
         self.model_manager = model_manager or ModelManager()
         self.model_manager.bind_engine(control_engine)
-        self._restore_storage_prefixes()
+        self._operations = OperationJournal(control_engine, operation_hook=operation_hook)
+        self._repositories = RepositoryStore(control_engine, storage_manager=storage_manager)
+        self._repositories.restore_storage_prefixes()
 
     @classmethod
     def local(
@@ -212,10 +211,7 @@ class DatasetManager:
         namespace = f"r_{repo_id[:12]}"
         self.catalog.create_namespace(namespace)
         try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(repos).values(repo_id=repo_id, name=name, name_key=name.casefold(), namespace=namespace)
-                )
+            self._repositories.add_repo(record=RepositoryRecord(repo_id=repo_id, name=name, namespace=namespace))
         except IntegrityError as exc:
             self.catalog.drop_namespace(namespace)
             raise NameConflictError(name) from exc
@@ -223,23 +219,16 @@ class DatasetManager:
 
     def open_repo(self, *, name: str) -> DatasetRepo:
         """按大小写不敏感名称打开 DatasetRepo。"""
-        statement = select(repos).where(repos.c.name_key == name.casefold())
-        with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(name)
-        return self._repo_from_row(row)
+        return self._repo_from_record(self._repositories.get_repo_by_name(name=name))
 
     def list_repos(self) -> list[DatasetRepo]:
         """按名称返回全部 DatasetRepo。"""
-        with self._engine.connect() as connection:
-            rows = connection.execute(select(repos).order_by(repos.c.name_key)).mappings().all()
-        return [self._repo_from_row(row) for row in rows]
+        return [self._repo_from_record(record) for record in self._repositories.list_repos()]
 
     def _create_dataset(self, *, repo: DatasetRepo, name: str) -> Dataset:
         dataset_id = uuid.uuid4().hex
         table_identifier = f"{repo.namespace}.d_{dataset_id[:12]}"
-        operation_id = self._start_operation(
+        operation_id = self._operations.start(
             kind="create_dataset",
             repo_id=repo.repo_id,
             dataset_id=dataset_id,
@@ -253,26 +242,19 @@ class DatasetManager:
         )
         try:
             self.catalog.create_table(table_identifier, schema=SYSTEM_SCHEMA)
-            self._record_phase(operation_id=operation_id, phase="table_created")
-            self._emit_operation_event(operation_id=operation_id, phase="table_created")
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(datasets).values(
-                        dataset_id=dataset_id,
-                        repo_id=repo.repo_id,
-                        name=name,
-                        name_key=name.casefold(),
-                        table_identifier=table_identifier,
-                    )
-                )
-                connection.execute(
-                    update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
-                )
+            self._operations.record_phase(operation_id=operation_id, phase="table_created")
+            self._repositories.register_dataset(
+                operation_id=operation_id,
+                record=DatasetRecord(
+                    repo_id=repo.repo_id,
+                    dataset_id=dataset_id,
+                    name=name,
+                    table_identifier=table_identifier,
+                ),
+                name_key=name.casefold(),
+            )
         except IntegrityError as exc:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    update(operations).where(operations.c.operation_id == operation_id).values(status="failed")
-                )
+            self._operations.fail(operation_id=operation_id)
             raise NameConflictError(name) from exc
         return Dataset(
             repo_id=repo.repo_id,
@@ -284,25 +266,22 @@ class DatasetManager:
 
     def recover_operations(self) -> int:
         """探测实际 Backend 状态并幂等推进全部未完成操作。"""
-        statement = select(operations).where(operations.c.status == "active").order_by(operations.c.operation_id)
-        with self._engine.connect() as connection:
-            pending = connection.execute(statement).mappings().all()
         recovered = 0
-        for row in pending:
-            if row["kind"] == "create_dataset":
-                self._recover_create_dataset(operation_id=str(row["operation_id"]), intent=dict(row["intent"]))
+        for operation in self._operations.pending():
+            if operation.kind == "create_dataset":
+                self._recover_create_dataset(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
-            elif row["kind"] == "commit":
-                self._recover_commit(operation_id=str(row["operation_id"]), intent=dict(row["intent"]))
+            elif operation.kind == "commit":
+                self._recover_commit(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
-            elif row["kind"] == "clone":
-                self._recover_clone(operation_id=str(row["operation_id"]), intent=dict(row["intent"]))
+            elif operation.kind == "clone":
+                self._recover_clone(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
-            elif row["kind"] == "checkpoint":
-                self._recover_checkpoint(operation_id=str(row["operation_id"]), intent=dict(row["intent"]))
+            elif operation.kind == "checkpoint":
+                self._recover_checkpoint(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
-            elif row["kind"] == "rollback":
-                self._recover_rollback(operation_id=str(row["operation_id"]), intent=dict(row["intent"]))
+            elif operation.kind == "rollback":
+                self._recover_rollback(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
         return recovered
 
@@ -340,7 +319,7 @@ class DatasetManager:
             table.manage_snapshots().create_tag(snapshot_id, name).commit()
         elif ref.snapshot_ref_type != SnapshotRefType.TAG or ref.snapshot_id != snapshot_id:
             raise ConflictError(name)
-        self._finalize_operation(operation_id=operation_id)
+        self._operations.finalize(operation_id=operation_id)
 
     def _recover_rollback(self, *, operation_id: str, intent: dict[str, object]) -> None:
         table = self.catalog.load_table(str(intent["table_identifier"]))
@@ -356,48 +335,20 @@ class DatasetManager:
                 snapshots.create_branch(target, branch).commit()
         elif actual != target:
             raise ConflictError(branch)
-        self._finalize_operation(operation_id=operation_id)
+        self._operations.finalize(operation_id=operation_id)
 
     def _register_dataset_from_intent(self, *, operation_id: str, intent: dict[str, object]) -> None:
-        with self._engine.begin() as connection:
-            existing = connection.execute(
-                select(datasets.c.dataset_id).where(datasets.c.dataset_id == str(intent["dataset_id"]))
-            ).first()
-            if existing is None:
-                connection.execute(
-                    insert(datasets).values(
-                        dataset_id=str(intent["dataset_id"]),
-                        repo_id=str(intent["repo_id"]),
-                        name=str(intent["name"]),
-                        name_key=str(intent["name_key"]),
-                        table_identifier=str(intent["table_identifier"]),
-                    )
-                )
-            connection.execute(
-                update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
-            )
-
-    def _start_operation(
-        self,
-        *,
-        kind: str,
-        repo_id: str,
-        dataset_id: str | None,
-        intent: dict[str, object],
-    ) -> str:
-        operation_id = uuid.uuid4().hex
-        with self._engine.begin() as connection:
-            connection.execute(
-                insert(operations).values(
-                    operation_id=operation_id,
-                    repo_id=repo_id,
-                    dataset_id=dataset_id,
-                    kind=kind,
-                    status="active",
-                    intent=intent,
-                )
-            )
-        return operation_id
+        self._repositories.register_dataset(
+            operation_id=operation_id,
+            record=DatasetRecord(
+                dataset_id=str(intent["dataset_id"]),
+                repo_id=str(intent["repo_id"]),
+                name=str(intent["name"]),
+                table_identifier=str(intent["table_identifier"]),
+            ),
+            name_key=str(intent["name_key"]),
+            only_if_missing=True,
+        )
 
     @staticmethod
     def _required_int(value: object) -> int:
@@ -440,7 +391,7 @@ class DatasetManager:
                     candidate = self._branch_snapshot_id(table=table, branch=branch)
             else:
                 candidate = base
-            self._update_operation_intent(
+            self._operations.update_intent(
                 operation_id=operation_id,
                 values={
                     "candidate_snapshot_id": candidate,
@@ -513,121 +464,20 @@ class DatasetManager:
             )
 
     def _assert_dataset_visible(self, *, dataset_id: str) -> None:
-        statement = select(operations.c.operation_id).where(
-            operations.c.dataset_id == dataset_id,
-            operations.c.status == "active",
-        )
-        with self._engine.connect() as connection:
-            if connection.execute(statement).first() is not None:
-                raise ConflictError(f"Dataset {dataset_id} is reconciling")
-
-    def _update_operation_intent(self, *, operation_id: str, values: dict[str, object]) -> None:
-        with self._engine.begin() as connection:
-            intent = dict(
-                connection.execute(
-                    select(operations.c.intent).where(operations.c.operation_id == operation_id)
-                ).scalar_one()
-            )
-            intent.update(values)
-            connection.execute(
-                update(operations).where(operations.c.operation_id == operation_id).values(intent=intent)
-            )
-
-    def _finalize_operation(self, *, operation_id: str) -> None:
-        with self._engine.begin() as connection:
-            connection.execute(
-                update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
-            )
-
-    def _record_phase(self, *, operation_id: str, phase: str, details: dict[str, object] | None = None) -> None:
-        with self._engine.begin() as connection:
-            connection.execute(
-                insert(operation_phases).values(
-                    operation_id=operation_id,
-                    phase=phase,
-                    status="complete",
-                    details=details,
-                )
-            )
-
-    def _emit_operation_event(self, *, operation_id: str, phase: str) -> None:
-        if self._operation_hook is not None:
-            self._operation_hook(operation_id, phase)
+        if self._operations.has_active_dataset_operation(dataset_id=dataset_id):
+            raise ConflictError(f"Dataset {dataset_id} is reconciling")
 
     def _open_dataset(self, *, repo: DatasetRepo, name: str) -> Dataset:
-        statement = select(datasets).where(
-            datasets.c.repo_id == repo.repo_id,
-            datasets.c.name_key == name.casefold(),
-        )
-        with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(name)
-        return self._dataset_from_row(row)
+        return self._dataset_from_record(self._repositories.get_dataset_by_name(repo_id=repo.repo_id, name=name))
 
     def _list_datasets(self, *, repo: DatasetRepo) -> list[Dataset]:
-        statement = select(datasets).where(datasets.c.repo_id == repo.repo_id).order_by(datasets.c.name_key)
-        with self._engine.connect() as connection:
-            rows = connection.execute(statement).mappings().all()
-        return [self._dataset_from_row(row) for row in rows]
+        return [self._dataset_from_record(record) for record in self._repositories.list_datasets(repo_id=repo.repo_id)]
 
     def _bind_storage_prefix(self, *, repo: DatasetRepo, prefix_id: str) -> None:
-        try:
-            prefix = self.storage_manager.get_prefix(prefix_id=prefix_id)
-        except PrefixNotFoundError:
-            raise
-        payload = {
-            "name": prefix.name,
-            "backend": prefix.backend,
-            "root": prefix.root,
-            "credential_ref": prefix.credential_ref,
-            "endpoint_url": prefix.endpoint_url,
-        }
-        fingerprint = "sha256:" + hashlib.sha256(repr(sorted(payload.items())).encode("utf-8")).hexdigest()
-        with self._engine.begin() as connection:
-            existing_prefix = (
-                connection.execute(select(storage_prefixes).where(storage_prefixes.c.prefix_id == prefix_id))
-                .mappings()
-                .one_or_none()
-            )
-            if existing_prefix is None:
-                connection.execute(
-                    insert(storage_prefixes).values(prefix_id=prefix_id, fingerprint=fingerprint, **payload)
-                )
-            elif str(existing_prefix["fingerprint"]) != fingerprint:
-                raise ValidationError(f"Storage Prefix ID is bound to another definition: {prefix_id}")
-            existing = connection.execute(
-                select(repo_storage_bindings).where(
-                    repo_storage_bindings.c.repo_id == repo.repo_id,
-                    repo_storage_bindings.c.prefix_id == prefix_id,
-                )
-            ).first()
-            if existing is None:
-                connection.execute(insert(repo_storage_bindings).values(repo_id=repo.repo_id, prefix_id=prefix_id))
-
-    def _restore_storage_prefixes(self) -> None:
-        with self._engine.connect() as connection:
-            rows = connection.execute(select(storage_prefixes)).mappings().all()
-        for row in rows:
-            self.storage_manager.restore_prefix(
-                StoragePrefix(
-                    prefix_id=str(row["prefix_id"]),
-                    name=str(row["name"]),
-                    backend="file" if str(row["backend"]) == "file" else "s3",
-                    root=str(row["root"]),
-                    credential_ref=cast(str | None, row["credential_ref"]),
-                    endpoint_url=cast(str | None, row["endpoint_url"]),
-                )
-            )
+        self._repositories.bind_storage_prefix(repo_id=repo.repo_id, prefix_id=prefix_id)
 
     def _list_storage_prefix_ids(self, *, repo: DatasetRepo) -> list[str]:
-        statement = (
-            select(repo_storage_bindings.c.prefix_id)
-            .where(repo_storage_bindings.c.repo_id == repo.repo_id)
-            .order_by(repo_storage_bindings.c.prefix_id)
-        )
-        with self._engine.connect() as connection:
-            return list(connection.execute(statement).scalars())
+        return self._repositories.list_storage_prefix_ids(repo_id=repo.repo_id)
 
     def _create_tag(
         self,
@@ -821,7 +671,7 @@ class DatasetManager:
         source_dataset = self._dataset_by_id(repo_id=source.repo_id, dataset_id=source.dataset_id)
         source_table = self.catalog.load_table(source_dataset.table_identifier)
         rows = self._scan_view(view=source, columns=None)
-        operation_id = self._start_operation(
+        operation_id = self._operations.start(
             kind="clone",
             repo_id=repo.repo_id,
             dataset_id=dataset_id,
@@ -840,8 +690,7 @@ class DatasetManager:
         self._copy_business_schema(source_table=source_table, target_table=cloned_table)
         cloned_table = self.catalog.load_table(table_identifier)
         cloned_table.append(pa.Table.from_pylist(rows, schema=cloned_table.schema().as_arrow()), branch="main")
-        self._record_phase(operation_id=operation_id, phase="clone_candidate_written")
-        self._emit_operation_event(operation_id=operation_id, phase="clone_candidate_written")
+        self._operations.record_phase(operation_id=operation_id, phase="clone_candidate_written")
         self._register_dataset_from_intent(
             operation_id=operation_id,
             intent={
@@ -931,7 +780,7 @@ class DatasetManager:
             and self._branch_snapshot_id(table=table, branch=source.ref_name) != source.snapshot_id
         ):
             raise ConflictError(source.ref_name)
-        operation_id = self._start_operation(
+        operation_id = self._operations.start(
             kind="checkpoint",
             repo_id=dataset.repo_id,
             dataset_id=dataset.dataset_id,
@@ -942,9 +791,8 @@ class DatasetManager:
             },
         )
         table.manage_snapshots().create_tag(source.snapshot_id, name).commit()
-        self._record_phase(operation_id=operation_id, phase="checkpoint_created")
-        self._emit_operation_event(operation_id=operation_id, phase="checkpoint_created")
-        self._finalize_operation(operation_id=operation_id)
+        self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
+        self._operations.finalize(operation_id=operation_id)
         return DatasetView(dataset.repo_id, dataset.dataset_id, source.snapshot_id, name, "checkpoint", self)
 
     def _create_branch(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
@@ -974,7 +822,7 @@ class DatasetManager:
             raise ConflictError(branch)
         if not self._is_ancestor(table=table, ancestor=checkpoint.snapshot_id, descendant=base.snapshot_id):
             raise ValidationError("Checkpoint is not an ancestor of the target Branch")
-        operation_id = self._start_operation(
+        operation_id = self._operations.start(
             kind="rollback",
             repo_id=dataset.repo_id,
             dataset_id=dataset.dataset_id,
@@ -990,9 +838,8 @@ class DatasetManager:
             snapshots.set_current_snapshot(snapshot_id=checkpoint.snapshot_id).commit()
         else:
             snapshots.create_branch(checkpoint.snapshot_id, branch).commit()
-        self._record_phase(operation_id=operation_id, phase="rollback_published")
-        self._emit_operation_event(operation_id=operation_id, phase="rollback_published")
-        self._finalize_operation(operation_id=operation_id)
+        self._operations.record_phase(operation_id=operation_id, phase="rollback_published")
+        self._operations.finalize(operation_id=operation_id)
         return DatasetView(dataset.repo_id, dataset.dataset_id, checkpoint.snapshot_id, branch, "branch", self)
 
     @staticmethod
@@ -1075,7 +922,7 @@ class DatasetManager:
         data_changed = merged_rows != sorted(current_rows, key=lambda item: str(item["asset_id"]))
         if not data_changed and not pending_vectors:
             return CommitResult(base, inserted=0, updated=0, changed=False)
-        operation_id = self._start_operation(
+        operation_id = self._operations.start(
             kind="commit",
             repo_id=dataset.repo_id,
             dataset_id=dataset.dataset_id,
@@ -1092,8 +939,7 @@ class DatasetManager:
             },
         )
         self._insert_pending_vectors(operation_id=operation_id, pending=pending_vectors)
-        self._record_phase(operation_id=operation_id, phase="pending_vectors_written")
-        self._emit_operation_event(operation_id=operation_id, phase="pending_vectors_written")
+        self._operations.record_phase(operation_id=operation_id, phase="pending_vectors_written")
         candidate_snapshot_id = base.snapshot_id
         if data_changed:
             arrow_table = pa.Table.from_pylist(merged_rows, schema=table.schema().as_arrow())
@@ -1110,19 +956,18 @@ class DatasetManager:
                 candidate_snapshot_id = self._branch_snapshot_id(table=table, branch=temporary_ref)
                 if candidate_snapshot_id is None:
                     raise ConflictError("Temporary ref has no candidate Snapshot")
-                self._update_operation_intent(
+                self._operations.update_intent(
                     operation_id=operation_id,
                     values={
                         "candidate_snapshot_id": candidate_snapshot_id,
                         "temporary_ref": temporary_ref,
                     },
                 )
-                self._record_phase(
+                self._operations.record_phase(
                     operation_id=operation_id,
                     phase="candidate_written",
                     details={"snapshot_id": candidate_snapshot_id},
                 )
-                self._emit_operation_event(operation_id=operation_id, phase="candidate_written")
                 self._publish_candidate(
                     table_identifier=dataset.table_identifier,
                     branch=branch,
@@ -1130,20 +975,18 @@ class DatasetManager:
                     candidate_snapshot_id=candidate_snapshot_id,
                     temporary_ref=temporary_ref,
                 )
-        self._update_operation_intent(
+        self._operations.update_intent(
             operation_id=operation_id,
             values={"candidate_snapshot_id": candidate_snapshot_id},
         )
         if base.snapshot_id is None or not data_changed:
-            self._record_phase(
+            self._operations.record_phase(
                 operation_id=operation_id,
                 phase="candidate_written",
                 details={"snapshot_id": candidate_snapshot_id},
             )
-            self._emit_operation_event(operation_id=operation_id, phase="candidate_written")
         self._publish_pending_vectors_and_finalize(operation_id=operation_id)
-        self._record_phase(operation_id=operation_id, phase="vectors_published")
-        self._emit_operation_event(operation_id=operation_id, phase="vectors_published")
+        self._operations.record_phase(operation_id=operation_id, phase="vectors_published")
         view = DatasetView(dataset.repo_id, dataset.dataset_id, candidate_snapshot_id, branch, "branch", self)
         return CommitResult(view, inserted=inserted, updated=updated, changed=data_changed)
 
@@ -1507,12 +1350,7 @@ class DatasetManager:
             raise ValidationError("DatasetView belongs to another Dataset or Repo")
 
     def _repo_has_prefix(self, *, repo_id: str, prefix_id: str) -> bool:
-        statement = select(repo_storage_bindings).where(
-            repo_storage_bindings.c.repo_id == repo_id,
-            repo_storage_bindings.c.prefix_id == prefix_id,
-        )
-        with self._engine.connect() as connection:
-            return connection.execute(statement).first() is not None
+        return self._repositories.has_storage_prefix(repo_id=repo_id, prefix_id=prefix_id)
 
     def _validate_active_tags(self, *, repo_id: str, tag_ids: list[str]) -> None:
         if not tag_ids:
@@ -1528,33 +1366,24 @@ class DatasetManager:
             raise ValidationError("Unknown or archived tag_id")
 
     def _dataset_by_id(self, *, repo_id: str, dataset_id: str) -> Dataset:
-        statement = select(datasets).where(datasets.c.repo_id == repo_id, datasets.c.dataset_id == dataset_id)
-        with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(dataset_id)
-        return self._dataset_from_row(row)
+        return self._dataset_from_record(self._repositories.get_dataset(repo_id=repo_id, dataset_id=dataset_id))
 
     def _repo_by_id(self, repo_id: str) -> DatasetRepo:
-        with self._engine.connect() as connection:
-            row = connection.execute(select(repos).where(repos.c.repo_id == repo_id)).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(repo_id)
-        return self._repo_from_row(row)
+        return self._repo_from_record(self._repositories.get_repo(repo_id=repo_id))
 
-    def _repo_from_row(self, row: RowMapping) -> DatasetRepo:  # pyright: ignore[reportUnknownParameterType]
+    def _repo_from_record(self, record: RepositoryRecord) -> DatasetRepo:
         return DatasetRepo(
-            repo_id=str(row["repo_id"]),
-            name=str(row["name"]),
-            namespace=str(row["namespace"]),
+            repo_id=record.repo_id,
+            name=record.name,
+            namespace=record.namespace,
             _manager=self,
         )
 
-    def _dataset_from_row(self, row: RowMapping) -> Dataset:  # pyright: ignore[reportUnknownParameterType]
+    def _dataset_from_record(self, record: DatasetRecord) -> Dataset:
         return Dataset(
-            repo_id=str(row["repo_id"]),
-            dataset_id=str(row["dataset_id"]),
-            name=str(row["name"]),
-            table_identifier=str(row["table_identifier"]),
+            repo_id=record.repo_id,
+            dataset_id=record.dataset_id,
+            name=record.name,
+            table_identifier=record.table_identifier,
             _manager=self,
         )
