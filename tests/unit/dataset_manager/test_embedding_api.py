@@ -12,11 +12,12 @@ from image_gallery.storage_manager import ContentIntegrityError, StorageManager
 class Runtime:
     def __init__(self) -> None:
         self.fail = False
+        self.fail_on_call: int | None = None
         self.batch_sizes: list[int] = []
 
     def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
         self.batch_sizes.append(len(images))
-        if self.fail:
+        if self.fail or len(self.batch_sizes) == self.fail_on_call:
             raise RuntimeError("injected inference failure")
         return [(float(len(value)), 1.0) for value in images]
 
@@ -63,6 +64,27 @@ def setup_dataset(tmp_path: Path):  # pyright: ignore[reportUnknownParameterType
     )
     view = dataset.commit(branch="main", base=dataset.open_branch(), frame=frame).view
     return manager, repo, dataset, view, objects
+
+
+def expand_dataset_to_sixty_five(manager, dataset, view, objects):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+    prefix_id = objects[0].storage_prefix_id
+    more = [
+        manager.storage_manager.write_managed(prefix_id=prefix_id, data=f"batch-{index}".encode())
+        for index in range(63)
+    ]
+    rows = pd.DataFrame(
+        [
+            {
+                "asset_id": item.asset_id,
+                "storage_prefix_id": item.storage_prefix_id,
+                "relative_path": item.relative_path,
+                "source_uri": None,
+                "tag_ids": [],
+            }
+            for item in more
+        ]
+    )
+    return dataset.commit(branch="main", base=view, frame=rows).view, more
 
 
 def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
@@ -203,22 +225,7 @@ def test_generate_embed_defaults_to_main_and_combines_vector_fields(tmp_path: Pa
 
 def test_generate_embed_batches_more_than_sixty_four_images(tmp_path: Path) -> None:
     manager, repo, dataset, view, objects = setup_dataset(tmp_path)
-    prefix_id = objects[0].storage_prefix_id
-    storage = manager.storage_manager
-    more = [storage.write_managed(prefix_id=prefix_id, data=f"batch-{index}".encode()) for index in range(63)]
-    rows = pd.DataFrame(
-        [
-            {
-                "asset_id": item.asset_id,
-                "storage_prefix_id": item.storage_prefix_id,
-                "relative_path": item.relative_path,
-                "source_uri": None,
-                "tag_ids": [],
-            }
-            for item in more
-        ]
-    )
-    expanded = dataset.commit(branch="main", base=view, frame=rows).view
+    expanded, _ = expand_dataset_to_sixty_five(manager, dataset, view, objects)
     repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
 
     result = dataset.generate_embed(field="embedding", source=expanded)
@@ -274,6 +281,43 @@ def test_view_projection_keeps_field_order_and_uses_current_vectors(tmp_path: Pa
     assert list(view.scan(fields=[]).columns) == list(view.scan().columns)
 
 
+def test_view_rejects_unknown_fields_preserves_duplicates_and_batches_each_vector_field(
+    tmp_path: Path, monkeypatch
+) -> None:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+    manager, repo, dataset, view, objects = setup_dataset(tmp_path)
+    embedding = repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
+    features = repo.schema.add_vector(name="features", model_id="clip", distance="cosine")
+    dataset.generate_embed(field="embedding", source=view)
+    dataset.generate_embed(field="features", source=view)
+
+    duplicate = view.scan(fields=["embedding", "asset_id", "embedding"])
+    assert list(duplicate.columns) == ["embedding", "asset_id", "embedding"]
+    with pytest.raises(ValidationError, match=r"Unknown fields: \['missing'\]"):
+        view.scan(fields=["missing"])
+
+    original_list_current = manager._vectors.list_current  # pyright: ignore[reportPrivateUsage]
+    calls: list[tuple[str, list[str]]] = []
+
+    def record_list_current(
+        *, repo_id: str, vector_field_id: str, asset_ids: list[str]
+    ) -> dict[str, tuple[float, ...]]:
+        calls.append((vector_field_id, list(asset_ids)))
+        return original_list_current(
+            repo_id=repo_id,
+            vector_field_id=vector_field_id,
+            asset_ids=asset_ids,
+        )
+
+    monkeypatch.setattr(manager._vectors, "list_current", record_list_current)  # pyright: ignore[reportPrivateUsage]
+    scanned = view.scan(fields=["embedding", "features", "asset_id"])
+
+    expected_asset_ids = sorted(item.asset_id for item in objects)
+    assert scanned["asset_id"].tolist() == expected_asset_ids
+    assert {field_id for field_id, _ in calls} == {embedding.vector_field_id, features.vector_field_id}
+    assert len(calls) == 2
+    assert all(asset_ids == expected_asset_ids for _, asset_ids in calls)
+
+
 def test_generate_embed_rejects_ambiguous_source_before_storage_io(tmp_path: Path, monkeypatch) -> None:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
     manager, repo, dataset, view, _ = setup_dataset(tmp_path)
     repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
@@ -303,6 +347,27 @@ def test_generate_embed_preserves_existing_values_when_inference_fails(tmp_path:
 
     assert {item.asset_id: field.get(asset_id=item.asset_id) for item in objects} == before
     assert dataset.open_branch().snapshot_id == view.snapshot_id
+
+
+def test_generate_embed_second_batch_failure_publishes_nothing(tmp_path: Path) -> None:
+    manager, repo, dataset, view, objects = setup_dataset(tmp_path)
+    field = repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
+    dataset.generate_embed(field="embedding", source=view)
+    before = {item.asset_id: field.get(asset_id=item.asset_id) for item in objects}
+    expanded, more = expand_dataset_to_sixty_five(manager, dataset, view, objects)
+    runtime = manager.model_manager._runtimes["clip"]  # pyright: ignore[reportPrivateUsage]
+    assert isinstance(runtime, Runtime)
+    runtime.batch_sizes.clear()
+    runtime.fail_on_call = 2
+
+    with pytest.raises(RuntimeError, match="injected"):
+        dataset.generate_embed(field="embedding", source=expanded, overwrite=True)
+
+    assert runtime.batch_sizes == [64, 1]
+    scanned = expanded.scan(fields=["asset_id", "embedding"])
+    values = dict(zip(scanned["asset_id"], scanned["embedding"], strict=True))
+    assert {item.asset_id: values[item.asset_id] for item in objects} == before
+    assert all(values[item.asset_id] is None for item in more)
 
 
 def test_generate_embed_rejects_replaced_content_before_publish(tmp_path: Path) -> None:

@@ -1,3 +1,8 @@
+import hashlib
+from unittest.mock import MagicMock
+
+import pytest
+
 from image_gallery.dataset_manager._embedding import EmbeddingService
 from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
 from image_gallery.dataset_manager._tag_store import TagStore
@@ -45,3 +50,26 @@ def test_extension_collaborators_keep_narrow_responsibilities() -> None:
         "verify_image",
     }
     assert {name for name in vars(EmbeddingService) if not name.startswith("_")} == {"generate"}
+
+
+def test_postgres_schema_lock_preserves_key_and_releases_connection_on_failure() -> None:
+    engine = MagicMock()
+    engine.dialect.name = "postgresql"
+    connection = MagicMock()
+    engine.connect.return_value = connection
+    repo_id = "repo-a"
+    expected_digest = hashlib.sha256(f"image-gallery-dataset-schema:{repo_id}".encode()).digest()
+    expected_key = int.from_bytes(expected_digest[:8], byteorder="big", signed=True)
+
+    with pytest.raises(RuntimeError, match="injected"):
+        with RepoSchemaLock(engine).hold(repo_id=repo_id):
+            raise RuntimeError("injected")
+
+    engine.connect.assert_called_once_with()
+    assert len(connection.execute.call_args_list) == 2
+    lock_call, unlock_call = connection.execute.call_args_list
+    assert "pg_advisory_lock" in str(lock_call.args[0])
+    assert "pg_advisory_unlock" in str(unlock_call.args[0])
+    assert lock_call.args[1] == {"lock_key": expected_key}
+    assert unlock_call.args[1] == {"lock_key": expected_key}
+    connection.close.assert_called_once_with()
