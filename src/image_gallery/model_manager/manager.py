@@ -4,15 +4,20 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 from collections.abc import Callable, Mapping
 from dataclasses import asdict, dataclass
-from typing import Protocol, cast
+from typing import Protocol
 
-from sqlalchemy import JSON, Column, Integer, MetaData, String, Table, create_engine, insert, select
+from sqlalchemy import create_engine, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from image_gallery.model_manager._definitions import (
+    definition_fields_from_row,
+    metadata,
+    model_definitions,
+)
+from image_gallery.model_manager._runtime import RuntimePool
 from image_gallery.model_manager.errors import ModelRegistrationError, ModelRuntimeError
 
 
@@ -58,23 +63,6 @@ class ModelRuntime(Protocol):
 CredentialProvider = Callable[[str], Mapping[str, object]]
 RuntimeFactory = Callable[[ModelDefinition, Mapping[str, object]], ModelRuntime]
 
-metadata = MetaData()
-model_definitions = Table(
-    "model_definitions",
-    metadata,
-    Column("model_id", String(128), primary_key=True),
-    Column("provider", String(128), nullable=False),
-    Column("artifact_uri", String(2048), nullable=False),
-    Column("artifact_revision", String(255), nullable=False),
-    Column("artifact_checksum", String(128), nullable=False),
-    Column("dimension", Integer, nullable=False),
-    Column("dtype", String(32), nullable=False),
-    Column("config", JSON, nullable=False),
-    Column("credential_ref", String(1024), nullable=True),
-    Column("fingerprint", String(128), nullable=False),
-    schema="control",
-)
-
 
 class ModelManager:
     """持久化模型定义并管理按需加载的 provider runtime。"""
@@ -94,7 +82,12 @@ class ModelManager:
         metadata.create_all(self._engine)
         self._providers = dict(providers or {})
         self._credential_provider = credential_provider
-        self._runtimes: dict[str, ModelRuntime] = {}
+        self._runtime_pool = RuntimePool(
+            providers=self._providers,
+            credential_provider=lambda: self._credential_provider,
+        )
+        # 保留现有私有诊断入口，runtime 所有权仍由 RuntimePool 管理。
+        self._runtimes = self._runtime_pool.runtimes
         self._closed = False
 
     def register(self, definition: ModelDefinition) -> ModelDefinition:
@@ -120,14 +113,7 @@ class ModelManager:
 
     def bind_engine(self, engine: Engine) -> None:  # pyright: ignore[reportUnknownParameterType]
         """把注册表绑定到 DatasetManager 控制数据库并迁移内存定义。"""
-        definitions: list[ModelDefinition] = []
-        with self._engine.connect() as connection:
-            model_ids = list(connection.execute(select(model_definitions.c.model_id)).scalars())
-        for model_id in model_ids:
-            definition = self.get(model_id=str(model_id))
-            if definition is None:
-                raise ModelRegistrationError(str(model_id))
-            definitions.append(definition)
+        definitions = self._definitions()
         previous_engine = self._engine
         owned_previous_engine = self._owns_engine
         self._engine = engine
@@ -150,17 +136,7 @@ class ModelManager:
             if required:
                 raise ModelRegistrationError(f"Unknown model_id: {model_id}")
             return None
-        return ModelDefinition(
-            model_id=str(row["model_id"]),
-            provider=str(row["provider"]),
-            artifact_uri=str(row["artifact_uri"]),
-            artifact_revision=str(row["artifact_revision"]),
-            artifact_checksum=str(row["artifact_checksum"]),
-            dimension=int(row["dimension"]),
-            dtype=str(row["dtype"]),
-            config=cast(dict[str, object], row["config"]),
-            credential_ref=cast(str | None, row["credential_ref"]),
-        )
+        return ModelDefinition(*definition_fields_from_row(row))
 
     def embed(self, *, model_id: str, images: list[bytes]) -> list[tuple[float, ...]]:
         """使用冻结定义生成并基础校验一批向量。"""
@@ -169,39 +145,24 @@ class ModelManager:
         definition = self.get(model_id=model_id)
         if definition is None:
             raise ModelRegistrationError(model_id)
-        runtime = self._runtimes.get(model_id)
-        if runtime is None:
-            factory = self._providers.get(definition.provider)
-            if factory is None:
-                raise ModelRuntimeError(f"Model provider is unavailable: {definition.provider}")
-            secrets: Mapping[str, object] = {}
-            if definition.credential_ref is not None:
-                if self._credential_provider is None:
-                    raise ModelRuntimeError("Model credential provider is unavailable")
-                secrets = self._credential_provider(definition.credential_ref)
-            runtime = factory(definition, secrets)
-            self._runtimes[model_id] = runtime
-        outputs = runtime.embed(images)
-        if len(outputs) != len(images):
-            raise ModelRuntimeError("Model output count does not match input count")
-        normalized: list[tuple[float, ...]] = []
-        for output in outputs:
-            try:
-                value = tuple(float(component) for component in output)
-            except (TypeError, ValueError) as exc:
-                raise ModelRuntimeError("Model output dtype is invalid") from exc
-            if len(value) != definition.dimension or not all(math.isfinite(component) for component in value):
-                raise ModelRuntimeError("Model output dimension or finite-value contract failed")
-            normalized.append(value)
-        return normalized
+        return self._runtime_pool.embed(definition=definition, images=images)
 
     def close(self) -> None:
         """关闭全部已加载模型运行时。"""
         if self._closed:
             return
         self._closed = True
-        for runtime in self._runtimes.values():
-            runtime.close()
-        self._runtimes.clear()
+        self._runtime_pool.close()
         if self._owns_engine:
             self._engine.dispose()
+
+    def _definitions(self) -> list[ModelDefinition]:
+        with self._engine.connect() as connection:
+            model_ids = list(connection.execute(select(model_definitions.c.model_id)).scalars())
+        definitions: list[ModelDefinition] = []
+        for model_id in model_ids:
+            definition = self.get(model_id=str(model_id))
+            if definition is None:
+                raise ModelRegistrationError(str(model_id))
+            definitions.append(definition)
+        return definitions
