@@ -1,7 +1,7 @@
 ## 1. 生命周期 Characterization Tests
 
 - [x] 1.1 补充 DatasetManager factory、context manager 与外部注入资源所有权测试，固定 close 次数和异常传播。
-- [x] 1.2 补充 Repo/Dataset 创建中断、普通 API 可见性、恢复幂等和名称冲突测试。
+- [x] 1.2 复核 Repo 名称冲突，并补充 Dataset 创建中断、普通 API 可见性与恢复幂等测试。
 - [x] 1.3 补充 Storage Prefix 绑定、重启恢复、跨 Repo 授权与 operation intent/phase/failed 状态测试。
 
 ## 2. 私有 Operation Journal

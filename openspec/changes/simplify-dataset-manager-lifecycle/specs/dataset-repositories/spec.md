@@ -9,15 +9,20 @@
 - **WHEN** DatasetManager 关闭 factory 创建的资源或调用方注入的 ModelManager
 - **THEN** 只关闭自身拥有的 Engine 和 ModelManager，外部注入实例仍由调用方管理，重复关闭不会重复释放资源
 
-#### Scenario: Repo 与 Dataset 可见性保持原子
+#### Scenario: Repo 控制面可见性保持不变
 
-- **WHEN** Repo namespace 或 Dataset table 已创建但控制面 finalize 尚未完成
-- **THEN** 普通 list/open API 不返回半创建对象，recovery 可根据 durable intent 幂等完成
+- **WHEN** Iceberg namespace 已存在但 Repo 控制面记录尚不存在
+- **THEN** 普通 list/open API 继续只返回已登记的 Repo，不从 Catalog 隐式推断 Repo
+
+#### Scenario: Dataset durable 创建保持不变
+
+- **WHEN** Dataset table 已创建但 durable operation 尚未 finalize
+- **THEN** 普通 list/open API 不返回该 Dataset，`recover_operations()` 继续根据 Dataset intent 幂等完成登记
 
 #### Scenario: 名称与 Repo 隔离保持不变
 
-- **WHEN** 创建仅大小写或首尾空白不同的 Repo/Dataset 名称，或使用另一个 Repo 的对象
-- **THEN** 继续执行相同的规范化冲突与跨 Repo 拒绝规则，并在外部副作用前失败
+- **WHEN** 创建仅大小写不同的 Repo/Dataset 名称，或使用另一个 Repo 的对象
+- **THEN** 继续执行相同的大小写不敏感控制面冲突与跨 Repo 拒绝规则，不改变既有 Catalog 清理边界
 
 #### Scenario: Storage Prefix 重启恢复
 
