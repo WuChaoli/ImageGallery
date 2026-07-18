@@ -19,6 +19,10 @@
 - **WHEN** 恢复的计划运行再次发生失败
 - **THEN** 系统保留原始 started_at，保存最新表和 failed 状态快照、上报 run_failed，并把 SQLite run 状态更新为 failed
 
+#### Scenario: Evaluation 部分成功后失败
+- **WHEN** 前序 evaluator 已成功更新 tables 与算子状态，而后续 evaluator 或 merge 失败
+- **THEN** 系统的 failed 快照保留所有已成功 evaluator 的 evaluation 列、operator output 归属和 `OperatorRunState`
+
 #### Scenario: 公开契约保持不变
 - **WHEN** 调用方通过既有 `run_graph` 或 `resume_graph` 入口执行清洗
 - **THEN** 方法签名、返回值、异常和持久化格式与重构前一致

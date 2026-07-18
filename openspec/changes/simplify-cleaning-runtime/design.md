@@ -28,7 +28,7 @@
 
 ### 2. 用私有运行会话对象承载共享数据
 
-引入模块私有 dataclass，集中保存 `run_id`、数据集指纹、解析后的算子、编译计划、路径、上下文、当前表、artifact/relation 路径和开始时间。新运行与恢复运行分别构造会话，随后交给同一参数阶段和生命周期执行函数。
+引入模块私有 dataclass，集中保存 `run_id`、数据集指纹、解析后的算子、编译计划、路径、上下文、当前表、artifact/relation 路径、已完成算子状态和开始时间。新运行与恢复运行分别构造会话，随后交给同一参数阶段和生命周期执行函数。每个 evaluator 成功后立即把最新 tables 与 `OperatorRunState` 回写会话，使后续 evaluator 或 merge 失败时的 failed 快照保留已完成进度。
 
 替代方案是给共享 helper 传递十余个独立参数；这会减少重复行数，却继续保留高参数复杂度和容易错配的状态。
 
@@ -40,7 +40,8 @@
 
 ## Risks / Trade-offs
 
-- [共享可变会话可能使数据流不清晰] → dataclass 保持模块私有，只有参数阶段更新表和 artifact/relation 映射，并由 characterization tests 检查落盘结果。
+- [共享可变会话可能使数据流不清晰] → dataclass 保持模块私有，只有参数阶段和成功 evaluator 更新表、算子状态与 artifact/relation 映射，并由 characterization tests 检查落盘结果。
+- [evaluation 中途失败可能回退到参数阶段旧快照] → 每个 evaluator 成功后同步更新会话 tables 与 operator states，并用两算子部分成功测试锁定失败落盘内容。
 - [失败发生在运行目录创建前时，新运行与恢复运行的落盘条件不同] → 保留新运行现有的 `run_dir.exists()` 守卫，并将该差异作为共享失败函数的显式输入。
 - [重构可能改变时间戳或事件顺序] → 不缓存额外时间点，沿用现有 `started_at` 选择和事件发出位置，并在测试中断言关键顺序。
 

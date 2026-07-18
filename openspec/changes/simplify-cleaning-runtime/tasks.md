@@ -18,3 +18,10 @@
 - [x] 3.2 运行适用的 `test-all`、lint、format-check 和 OpenSpec validate
 - [x] 3.3 验证最终 coverage 不低于 90%，diff coverage 不低于 80%
 - [x] 3.4 审查公开导出、签名、返回值、异常和持久化格式均未改变
+
+## 4. Review Follow-up
+
+- [x] 4.1 补充参数阶段新运行与恢复运行失败的持久化测试
+- [x] 4.2 补充两个 evaluator 部分成功后失败时最新 tables 与 operator states 保留测试，并验证 RED
+- [x] 4.3 让 evaluation 阶段每次成功推进后立即回写 session 状态，使失败收尾持久化最新快照
+- [x] 4.4 重新运行目标测试、test-all、coverage、diff coverage、lint、format-check 与 OpenSpec strict validate

@@ -78,6 +78,7 @@ class _PlannedRunSession:
     artifact_paths: dict[str, str]
     relation_paths: dict[str, str]
     started_at: str
+    operator_states: list[OperatorRunState] = field(default_factory=list)
 
 
 class CleaningRuntime:
@@ -440,18 +441,7 @@ class CleaningRuntime:
         try:
             completed_node_ids = self._completed_parameter_node_ids(session) if reuse_completed_nodes else None
             self._run_parameter_stage(session, completed_node_ids=completed_node_ids)
-            definition = session.definition
-            return self._complete_planned_run(
-                run_id=definition.run_id,
-                dataset_fingerprint=definition.dataset_fingerprint,
-                parsed_operators=definition.parsed_operators,
-                plan=definition.plan,
-                paths=definition.paths,
-                tables=session.tables,
-                artifact_paths=session.artifact_paths,
-                relation_paths=session.relation_paths,
-                started_at=session.started_at,
-            )
+            return self._complete_planned_run(session)
         # 运行边界必须在任意失败后持久化可恢复状态，再返回原有失败结果。
         except Exception:  # noqa: BLE001
             return self._finish_failed_planned_run(
@@ -554,76 +544,71 @@ class CleaningRuntime:
             started_at=session.started_at,
             finished_at=finished_at,
             status=status,
-            operator_states=[],
+            operator_states=session.operator_states,
         )
 
     def _complete_planned_run(
         self,
-        *,
-        run_id: str,
-        dataset_fingerprint: str,
-        parsed_operators: list[ParsedOperatorConfig],
-        plan: CompiledCleaningPlan,
-        paths: CleanerRunPaths,
-        tables: CleaningTables,
-        artifact_paths: dict[str, str],
-        relation_paths: dict[str, str],
-        started_at: str,
+        session: _PlannedRunSession,
     ) -> RuntimeRunResult:
         """执行 evaluation/merge，并把最终状态写回运行目录。"""
         if self.state_store is None:
             raise RuntimeError("state store not initialized")
 
+        definition = session.definition
         evaluator = OperatorEvaluator()
-        operator_states: list[OperatorRunState] = []
-        for resolved in plan.resolved_operator_runs:
+        for resolved in definition.plan.resolved_operator_runs:
             node_id = f"evaluation.{resolved.spec.name}"
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_started",
                 node_id,
                 message=f"{node_id} started",
             )
             self.state_store.record_node_started(node_id)
             try:
-                tables, operator_state = evaluator.evaluate(resolved, tables)
+                tables, operator_state = evaluator.evaluate(resolved, session.tables)
             except Exception:
                 self.state_store.record_node_failed(node_id)
                 self._report(
-                    RunEventContext(run_id),
+                    RunEventContext(definition.run_id),
                     "node_failed",
                     node_id,
                     message=f"{node_id} failed",
                 )
                 raise
+            session.tables = tables
+            session.operator_states.append(operator_state)
             self.state_store.record_node_completed(node_id)
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_completed",
                 node_id,
                 message=f"{node_id} completed",
             )
-            operator_states.append(operator_state)
 
         merge_node_id = "merge.final_action"
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "node_started",
             merge_node_id,
             message="merge.final_action started",
         )
         self.state_store.record_node_started(merge_node_id)
         try:
-            tables = CleaningTables(
-                parameter_table=tables.parameter_table,
-                evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
-                operator_outputs=tables.operator_outputs,
-                parameter_manifest=tables.parameter_manifest,
+            session.tables = CleaningTables(
+                parameter_table=session.tables.parameter_table,
+                evaluation_table=apply_final_action(
+                    session.tables.evaluation_table,
+                    session.tables.operator_outputs,
+                ),
+                operator_outputs=session.tables.operator_outputs,
+                parameter_manifest=session.tables.parameter_manifest,
             )
         except Exception:
             self.state_store.record_node_failed(merge_node_id)
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_failed",
                 merge_node_id,
                 message="merge.final_action failed",
@@ -631,35 +616,26 @@ class CleaningRuntime:
             raise
         self.state_store.record_node_completed(merge_node_id)
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "node_completed",
             merge_node_id,
             message="merge.final_action completed",
         )
-        write_tables(tables=tables, paths=paths)
-        self._save_run_state(
-            run_id=run_id,
-            dataset_fingerprint=dataset_fingerprint,
-            parsed_operators=parsed_operators,
-            operator_config_hashes=plan.operator_config_hashes,
-            parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
-            paths=paths,
-            artifact_paths=artifact_paths,
-            relation_paths=relation_paths,
-            started_at=started_at,
+        write_tables(tables=session.tables, paths=definition.paths)
+        self._save_planned_run_snapshot(
+            session,
             finished_at=datetime.now(timezone.utc).isoformat(),
             status="completed",
-            operator_states=operator_states,
         )
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "run_completed",
             "runtime",
             message="run completed",
         )
-        self._set_run_status(run_id=run_id, status="completed")
+        self._set_run_status(run_id=definition.run_id, status="completed")
         return RuntimeRunResult(
-            run_id=run_id,
+            run_id=definition.run_id,
             cache_root=self._cache_root,
             status="completed",
             attempt_count=1,
