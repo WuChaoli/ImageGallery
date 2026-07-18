@@ -3,9 +3,7 @@
 ## Purpose
 
 定义 Repo 级 Tag Definition 与 Dataset 行内版本化 Assignment 的职责边界。
-
 ## Requirements
-
 ### Requirement: Tag Definition 属于 DatasetRepo
 DatasetRepo SHALL 在 PostgreSQL 管理不可变 tag_id、名称、颜色、描述和 lifecycle，且名称在 Repo 内大小写不敏感唯一。
 
@@ -41,3 +39,15 @@ Tag 变更 SHALL 作为普通 Dataset Commit，使用 Repo Tag Definition 校验
 #### Scenario: Tag No-op
 - **WHEN** 输入 tag_ids 规范化后与当前行相同
 - **THEN** 不因 Tag 产生新 Snapshot
+
+### Requirement: Tag 定义职责拆分保持协议稳定
+
+系统 SHALL 在把 Tag Definition SQL 拆入私有协作模块后，保持 `DatasetRepo` 的 Tag 公开入口、返回对象、异常文本、Repo 隔离、大小写折叠且不裁剪的名称语义以及每次写入的事务边界不变。
+
+#### Scenario: Tag 写操作经私有协作者执行
+- **WHEN** 调用方创建、重命名或归档 Tag Definition
+- **THEN** 系统通过私有 Tag 协作者完成单次事务，并保持原返回值、冲突映射、跨 Repo not found 和重复归档行为
+
+#### Scenario: Tag assignment 校验经私有协作者执行
+- **WHEN** Dataset Commit 校验一个或多个 tag_id
+- **THEN** 系统只接受所属 Repo 的 active Tag，并保持输入去重与既有异常行为

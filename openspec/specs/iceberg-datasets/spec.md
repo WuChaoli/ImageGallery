@@ -3,9 +3,7 @@
 ## Purpose
 
 定义每 Dataset 单 Iceberg Table 的 Schema、提交、读取、并发和 Clone 契约。
-
 ## Requirements
-
 ### Requirement: 每个 Dataset 一张 Iceberg Table
 DatasetRepo SHALL 在创建 Dataset 时创建且只创建一张 Iceberg Table，并同时建立默认 `main` Branch。
 
@@ -35,6 +33,7 @@ DatasetRepo SHALL 在创建 Dataset 时创建且只创建一张 Iceberg Table，
 #### Scenario: 不同 Repo Schema 修改独立
 - **WHEN** 两个调用方并发修改不同 Repo 的 Schema
 - **THEN** 两个 Repo 使用不同锁域且不因全局互斥而相互阻塞
+
 ### Requirement: 内容身份是行唯一键
 系统 SHALL 要求 `asset_id` 是实际图片 SHA-256，且同一 Dataset Snapshot 内一个 asset_id 最多存在一行。
 
@@ -60,6 +59,7 @@ Dataset SHALL 接受 pandas DataFrame 并按 `asset_id` 写入普通 Iceberg 字
 #### Scenario: No-op Commit
 - **WHEN** 规范化后所有普通行、Schema 和 tag_ids 均无变化
 - **THEN** Commit 返回 no-op，Branch 和 Snapshot 列表不变
+
 ### Requirement: DatasetView 固定精确 Snapshot
 打开 Branch Head 或 Checkpoint SHALL 返回只读 DatasetView，后续 ref 推进不得改变既有 View 的扫描和图片读取结果。
 
@@ -85,6 +85,7 @@ DatasetView SHALL 提供 `scan`、`count`、`preview`、按 asset_id 读取行�
 #### Scenario: 读取图片
 - **WHEN** View 中存在 asset_id 且其 Prefix 已授权可解析
 - **THEN** 系统使用该行唯一的 storage_prefix_id + relative_path 返回 bytes
+
 ### Requirement: Branch 推进使用显式基线
 所有推进 Dataset Branch 的操作 MUST 携带该 Branch 的精确 DatasetView 基线，并在当前 Head 与基线不一致时返回冲突。
 
@@ -102,9 +103,29 @@ DatasetRepo SHALL 支持从同 Repo 精确 DatasetView 创建新 Dataset，复�
 #### Scenario: Clone 复用外部数据
 - **WHEN** Clone 复制行
 - **THEN** 不复制图片 bytes 或 Repo 向量，只复用行内位置和相同 asset_id
+
 ### Requirement: Dataset 行位置随历史固定
 每个 Dataset Snapshot 中一行 SHALL 只保存一组 storage_prefix_id + relative_path；修改位置必须通过普通 Commit，并由 Checkpoint 固定。
 
 #### Scenario: 更新图片位置
 - **WHEN** 使用相同 asset_id 提交不同但校验匹配的已授权位置
 - **THEN** 新 Snapshot 使用新位置，旧 DatasetView 仍使用旧位置
+
+### Requirement: Dataset durable operation 状态语义稳定
+
+系统 SHALL 在 operation journal 私有化后保持 Dataset 创建和后续领域操作的 durable intent、阶段事件、完成、失败与恢复语义不变。
+
+#### Scenario: Operation intent 可恢复
+
+- **WHEN** 跨 Iceberg 与控制面的操作在候选状态持久化后中断
+- **THEN** intent 保留恢复所需的同一组字段，`recover_operations()` 继续选择相同动作并可幂等完成
+
+#### Scenario: 阶段事件顺序保持不变
+
+- **WHEN** 操作依次创建候选、发布引用并完成 finalize
+- **THEN** 控制面记录与重构前相同的 phase 顺序，完成状态不保留错误信息
+
+#### Scenario: 失败状态保留 intent
+
+- **WHEN** 操作无法恢复并被标记失败
+- **THEN** durable operation 保留最后 intent 与已完成 phase 并标记为 failed，普通 Dataset API 不暴露未 finalize 的对象
