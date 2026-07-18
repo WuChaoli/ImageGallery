@@ -26,13 +26,13 @@
 
 ### 1. 以可执行契约而不是文档声明守护公开接口
 
-新增集中式公开 API 契约测试，固定所有带 `__all__` 的包及其导出名称，并对可检查的函数、类和方法记录稳定签名。Cleaning 的惰性导出需要逐项访问，未知名称仍必须抛出 `AttributeError`。新旧 `Dataset` 和 Storage API 的隔离继续由领域语义测试证明。
+新增集中式公开 API 契约测试，固定所有带 `__all__` 的包及其导出名称，并对可检查的函数、类和方法记录规范化签名。规范化过程按参数名称、参数类型、注解、默认值和返回注解生成结构化表示，避免依赖 `inspect` 的展示排版。Cleaning 的惰性导出需要逐项验证对象 identity，未知名称仍必须抛出 `AttributeError`。新旧 `Dataset` 和 Storage API 的隔离继续由领域语义测试证明。
 
 选择该方案是因为单纯依赖 `__all__` 搜索无法发现签名漂移，完整序列化运行时返回值又会把动态环境细节错误地固化。集中契约测试只冻结用户选择的公开边界，领域行为仍由现有 OpenSpec 场景测试负责。
 
 ### 2. 将 90% 定义为原始源码行覆盖率门槛
 
-`tools.ci coverage` 使用 `--cov-fail-under=90`，默认快速测试中的 passed / failed / error 必须保持零失败；skip 和被既有 marker 分层排除的测试不计为失败。覆盖率提升优先来自真实契约和边界测试，尤其是当前未被集中访问的 Cleaning 惰性公开入口。
+`tools.ci coverage` 使用 `--cov-fail-under=90`，coverage report precision 固定为两位小数，确保 89.99% 失败、90.00% 通过。默认快速测试中的 passed / failed / error 必须保持零失败；skip 和被既有 marker 分层排除的测试不计为失败。覆盖率提升优先来自真实契约和边界测试，尤其是当前未被集中访问的 Cleaning 惰性公开入口。
 
 没有选择“允许 10% 测试失败”，因为这与公开语义不变冲突；也没有启用 branch coverage，因为它会把本轮质量护栏扩大成不同性质的测试治理项目。
 
@@ -65,7 +65,7 @@ Cleaning 的两个阶段以及 DatasetManager 的三个阶段必须顺序执行�
 
 ## Risks / Trade-offs
 
-- [集中式签名快照可能因 Python 表示差异产生噪声] → 只存规范化后的公开签名，并固定 Python 3.10 为权威生成环境。
+- [集中式签名快照可能因 Python 表示差异产生噪声] → 只存结构化规范化后的公开签名摘要，以 Python 3.10 生成基线，并由 compatibility suite 验证最新稳定 Python。
 - [覆盖率提升可能诱导低价值测试] → 新增测试必须对应公开导入、异常或边界语义，禁止仅执行行而不断言结果。
 - [并发 PR 基线漂移] → 以护栏分支作为首批共同基线；基础 PR 合并后逐个更新并重新运行完整门禁。
 - [DatasetManager 拆分破坏跨存储一致性] → 在基础设施稳定后再分三阶段处理，commit/recovery 协议单独 PR，并强制运行 `dataset-backend`。
