@@ -3,7 +3,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from image_gallery.dataset_manager import ConflictError, DatasetManager, NameConflictError, ValidationError
+from image_gallery.dataset_manager import (
+    ConflictError,
+    DatasetManager,
+    NameConflictError,
+    ObjectNotFoundError,
+    ValidationError,
+)
 from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
 
@@ -154,6 +160,21 @@ def test_tag_definition_identity_is_repo_scoped_and_name_is_unique(tmp_path: Pat
 
     assert renamed.tag_id == first.tag_id
     assert other_tag.tag_id != first.tag_id
+
+
+def test_tag_definition_preserves_untrimmed_names_and_repo_identity(tmp_path: Path) -> None:
+    repo, _, _ = setup_dataset(tmp_path)
+    other = repo._manager.create_repo(name="Other")
+    spaced = repo.create_tag(name=" cat ")
+    plain = repo.create_tag(name="cat")
+
+    assert spaced.name == " cat "
+    assert plain.name == "cat"
+    with pytest.raises(ObjectNotFoundError, match=spaced.tag_id):
+        other.rename_tag(tag_id=spaced.tag_id, name="animal")
+    first_archive = repo.archive_tag(tag_id=spaced.tag_id)
+    second_archive = repo.archive_tag(tag_id=spaced.tag_id)
+    assert first_archive == second_archive
 
 
 def test_checkpoint_and_non_ancestor_rollback_enforce_lineage(tmp_path: Path) -> None:

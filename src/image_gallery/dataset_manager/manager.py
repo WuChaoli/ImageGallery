@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
-import threading
 import uuid
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -15,19 +13,19 @@ from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.types import BooleanType, DoubleType, IntegerType, ListType, LongType, NestedField, StringType
-from sqlalchemy import create_engine, insert, select, text, update
-from sqlalchemy.engine import Engine, RowMapping
+from sqlalchemy import create_engine
+from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from image_gallery.dataset_manager._dataset_history import DatasetHistory
+from image_gallery.dataset_manager._embedding import EmbeddingService
 from image_gallery.dataset_manager._operation_journal import OperationJournal
 from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryRecord, RepositoryStore
-from image_gallery.dataset_manager.control import (
-    asset_vectors,
-    metadata,
-    tag_definitions,
-    vector_fields,
-)
+from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
+from image_gallery.dataset_manager._tag_store import TagRecord, TagStore
+from image_gallery.dataset_manager._vector_store import VectorFieldRecord, VectorStore
+from image_gallery.dataset_manager._view_io import ViewIO
+from image_gallery.dataset_manager.control import metadata
 from image_gallery.dataset_manager.errors import (
     ConflictError,
     NameConflictError,
@@ -65,8 +63,6 @@ _BUSINESS_FIELD_TYPES = {
     "long": LongType,
     "string": StringType,
 }
-_EMBED_BATCH_SIZE = 64
-_SCHEMA_LOCK_NAMESPACE = "image-gallery-dataset-schema"
 
 
 def _schema_name_key(name: str) -> str:
@@ -96,8 +92,6 @@ class DatasetManager:
         self._owns_catalog = owns_catalog
         self._owns_model_manager = model_manager is None
         self._closed = False
-        self._schema_locks_guard = threading.Lock()
-        self._schema_locks: dict[str, threading.RLock] = {}
         if self._engine.dialect.name == "postgresql":
             upgrade_control_database(self._engine)
         else:
@@ -107,6 +101,21 @@ class DatasetManager:
         self._operations = OperationJournal(control_engine, operation_hook=operation_hook)
         self._repositories = RepositoryStore(control_engine, storage_manager=storage_manager)
         self._repositories.restore_storage_prefixes()
+        self._tags = TagStore(control_engine)
+        self._vectors = VectorStore(control_engine)
+        self._schema_lock = RepoSchemaLock(control_engine)
+        self._view_io = ViewIO(
+            catalog=catalog,
+            storage_manager=storage_manager,
+            repositories=self._repositories,
+            vectors=self._vectors,
+        )
+        self._embedding = EmbeddingService(
+            storage_manager=storage_manager,
+            model_manager=self.model_manager,
+            vectors=self._vectors,
+            view_io=self._view_io,
+        )
         self._history = DatasetHistory(
             manager=self,
             engine=control_engine,
@@ -296,58 +305,19 @@ class DatasetManager:
         color: str | None,
         description: str | None,
     ) -> TagDefinition:
-        tag_id = uuid.uuid4().hex
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(tag_definitions).values(
-                        tag_id=tag_id,
-                        repo_id=repo.repo_id,
-                        name=name,
-                        name_key=name.casefold(),
-                        color=color,
-                        description=description,
-                        archived=False,
-                    )
-                )
-        except IntegrityError as exc:
-            raise NameConflictError(name) from exc
-        return TagDefinition(tag_id, repo.repo_id, name, color, description, False)
+        record = self._tags.create(
+            repo_id=repo.repo_id,
+            name=name,
+            color=color,
+            description=description,
+        )
+        return self._tag_from_record(record)
 
     def _rename_tag(self, *, repo: DatasetRepo, tag_id: str, name: str) -> TagDefinition:
-        statement = select(tag_definitions).where(
-            tag_definitions.c.repo_id == repo.repo_id,
-            tag_definitions.c.tag_id == tag_id,
-        )
-        try:
-            with self._engine.begin() as connection:
-                row = connection.execute(statement).mappings().one_or_none()
-                if row is None:
-                    raise ObjectNotFoundError(tag_id)
-                connection.execute(
-                    update(tag_definitions)
-                    .where(tag_definitions.c.repo_id == repo.repo_id, tag_definitions.c.tag_id == tag_id)
-                    .values(name=name, name_key=name.casefold())
-                )
-        except IntegrityError as exc:
-            raise NameConflictError(name) from exc
-        return TagDefinition(tag_id, repo.repo_id, name, row["color"], row["description"], bool(row["archived"]))
+        return self._tag_from_record(self._tags.rename(repo_id=repo.repo_id, tag_id=tag_id, name=name))
 
     def _archive_tag(self, *, repo: DatasetRepo, tag_id: str) -> TagDefinition:
-        statement = select(tag_definitions).where(
-            tag_definitions.c.repo_id == repo.repo_id,
-            tag_definitions.c.tag_id == tag_id,
-        )
-        with self._engine.begin() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-            if row is None:
-                raise ObjectNotFoundError(tag_id)
-            connection.execute(
-                update(tag_definitions)
-                .where(tag_definitions.c.repo_id == repo.repo_id, tag_definitions.c.tag_id == tag_id)
-                .values(archived=True)
-            )
-        return TagDefinition(tag_id, repo.repo_id, str(row["name"]), row["color"], row["description"], True)
+        return self._tag_from_record(self._tags.archive(repo_id=repo.repo_id, tag_id=tag_id))
 
     def _create_bound_vector_field(
         self,
@@ -399,91 +369,56 @@ class DatasetManager:
             ):
                 return existing
             raise NameConflictError(normalized_name)
-        vector_field_id = uuid.uuid4().hex
-        try:
-            with self._engine.begin() as connection:
-                connection.execute(
-                    insert(vector_fields).values(
-                        vector_field_id=vector_field_id,
-                        repo_id=repo.repo_id,
-                        name=normalized_name,
-                        name_key=name_key,
-                        model_id=model_id,
-                        model_fingerprint=definition.fingerprint,
-                        dimension=definition.dimension,
-                        numeric_type=definition.dtype,
-                        distance=distance,
-                    )
-                )
-        except IntegrityError as exc:
-            raise NameConflictError(normalized_name) from exc
-        return VectorField(
-            vector_field_id,
-            repo.repo_id,
-            normalized_name,
-            model_id,
-            definition.fingerprint,
-            definition.dimension,
-            definition.dtype,
-            distance,
-            self,
+        return self._vector_field_from_record(
+            self._vectors.create(
+                repo_id=repo.repo_id,
+                name=normalized_name,
+                name_key=name_key,
+                model_id=model_id,
+                model_fingerprint=definition.fingerprint,
+                dimension=definition.dimension,
+                numeric_type=definition.dtype,
+                distance=distance,
+            )
         )
 
     def _open_vector_field(self, *, repo: DatasetRepo, name: str) -> VectorField:
-        statement = select(vector_fields).where(
-            vector_fields.c.repo_id == repo.repo_id,
-            vector_fields.c.name_key == _schema_name_key(name),
+        return self._vector_field_from_record(
+            self._vectors.find_by_name(
+                repo_id=repo.repo_id,
+                name_key=_schema_name_key(name),
+                requested_name=name,
+            )
         )
-        with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(name)
-        return self._vector_field_from_row(row)
 
     def _get_vector_field(self, *, repo: DatasetRepo, vector_field_id: str) -> VectorField:
-        statement = select(vector_fields).where(
-            vector_fields.c.repo_id == repo.repo_id,
-            vector_fields.c.vector_field_id == vector_field_id,
+        return self._vector_field_from_record(
+            self._vectors.find_by_id(repo_id=repo.repo_id, vector_field_id=vector_field_id)
         )
-        with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().one_or_none()
-        if row is None:
-            raise ObjectNotFoundError(vector_field_id)
-        return self._vector_field_from_row(row)
 
     def _list_vector_fields(self, *, repo: DatasetRepo) -> list[VectorField]:
-        statement = (
-            select(vector_fields).where(vector_fields.c.repo_id == repo.repo_id).order_by(vector_fields.c.name_key)
-        )
-        with self._engine.connect() as connection:
-            rows = connection.execute(statement).mappings().all()
-        return [self._vector_field_from_row(row) for row in rows]
+        return [self._vector_field_from_record(record) for record in self._vectors.list(repo_id=repo.repo_id)]
 
     def _clone_dataset(self, *, repo: DatasetRepo, source: DatasetView, name: str) -> Dataset:
         return self._history.clone_dataset(repo=repo, source=source, name=name)
 
     def _get_vector(self, *, field: VectorField, asset_id: str) -> tuple[float, ...] | None:
-        statement = select(asset_vectors.c.value).where(
-            asset_vectors.c.repo_id == field.repo_id,
-            asset_vectors.c.vector_field_id == field.vector_field_id,
-            asset_vectors.c.asset_id == asset_id,
+        return self._vectors.get_current(
+            repo_id=field.repo_id,
+            vector_field_id=field.vector_field_id,
+            asset_id=asset_id,
         )
-        with self._engine.connect() as connection:
-            value = connection.execute(statement).scalar_one_or_none()
-        if value is None:
-            return None
-        return tuple(float(component) for component in value)
 
-    def _vector_field_from_row(self, row: RowMapping) -> VectorField:  # pyright: ignore[reportUnknownParameterType]
+    def _vector_field_from_record(self, record: VectorFieldRecord) -> VectorField:
         return VectorField(
-            str(row["vector_field_id"]),
-            str(row["repo_id"]),
-            str(row["name"]),
-            str(row["model_id"] or "legacy"),
-            str(row["model_fingerprint"] or "legacy"),
-            int(row["dimension"]),
-            str(row["numeric_type"]),
-            str(row["distance"]),
+            record.vector_field_id,
+            record.repo_id,
+            record.name,
+            record.model_id,
+            record.model_fingerprint,
+            record.dimension,
+            record.numeric_type,
+            record.distance,
             self,
         )
 
@@ -626,61 +561,15 @@ class DatasetManager:
     @contextmanager
     def _repo_schema_lock(self, *, repo_id: str):  # pyright: ignore[reportUnknownParameterType]
         """在同一 Repo 的跨 facade Schema 修改期间持有互斥锁。"""
-        if self._engine.dialect.name != "postgresql":
-            with self._schema_locks_guard:
-                lock = self._schema_locks.setdefault(repo_id, threading.RLock())
-            with lock:
-                yield
-            return
-
-        digest = hashlib.sha256(f"{_SCHEMA_LOCK_NAMESPACE}:{repo_id}".encode()).digest()
-        lock_key = int.from_bytes(digest[:8], byteorder="big", signed=True)
-        connection = self._engine.connect()
-        try:
-            connection.execute(text("SELECT pg_advisory_lock(:lock_key)"), {"lock_key": lock_key})
+        with self._schema_lock.hold(repo_id=repo_id):
             yield
-        finally:
-            try:
-                connection.execute(text("SELECT pg_advisory_unlock(:lock_key)"), {"lock_key": lock_key})
-            finally:
-                connection.close()
 
     def _list_columns(self, *, dataset: Dataset) -> list[str]:
         table = self.catalog.load_table(dataset.table_identifier)
         return [field.name for field in table.schema().fields]
 
     def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
-        dataset = self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
-        physical = self._list_columns(dataset=dataset)
-        repo = self._repo_by_id(view.repo_id)
-        vectors = {field.name: field for field in self._list_vector_fields(repo=repo)}
-        selected = fields or physical
-        unknown = set(selected) - set(physical) - set(vectors)
-        if unknown:
-            raise ValidationError(f"Unknown fields: {sorted(unknown)}")
-        physical_selected = [name for name in selected if name in physical]
-        query_columns = list(dict.fromkeys(["asset_id", *physical_selected]))
-        rows = self._scan_view(view=view, columns=query_columns)
-        frame = pd.DataFrame(rows, columns=query_columns)
-        vector_selected = [name for name in selected if name in vectors]
-        for name in vector_selected:
-            frame[name] = None
-        if vector_selected and not frame.empty:
-            asset_ids = frame["asset_id"].astype(str).tolist()
-            with self._engine.connect() as connection:
-                for name in vector_selected:
-                    field = vectors[name]
-                    values = connection.execute(
-                        select(asset_vectors.c.asset_id, asset_vectors.c.value).where(
-                            asset_vectors.c.repo_id == view.repo_id,
-                            asset_vectors.c.vector_field_id == field.vector_field_id,
-                            asset_vectors.c.asset_id.in_(asset_ids),
-                        )
-                    ).all()
-                    mapping = {str(asset_id): tuple(float(value) for value in vector) for asset_id, vector in values}
-                    frame[name] = frame["asset_id"].map(mapping).astype(object)
-                    frame[name] = frame[name].where(frame[name].notna(), None)
-        return frame.loc[:, selected].reset_index(drop=True)
+        return self._view_io.scan_frame(view=view, fields=fields)
 
     def _get_view_row_series(  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
         self,
@@ -689,17 +578,7 @@ class DatasetManager:
         asset_id: str,
         fields: list[str] | None,
     ) -> pd.Series:
-        selected = fields
-        if selected is not None and "asset_id" not in selected:
-            selected = ["asset_id", *selected]
-        frame = self._scan_view_frame(view=view, fields=selected)
-        matched = frame[frame["asset_id"] == asset_id]
-        if matched.empty:
-            raise ObjectNotFoundError(asset_id)
-        row = matched.iloc[0]
-        if fields is not None and "asset_id" not in fields:
-            row = row.loc[fields]
-        return row
+        return self._view_io.get_row_series(view=view, asset_id=asset_id, fields=fields)
 
     def _generate_embed(
         self,
@@ -721,95 +600,24 @@ class DatasetManager:
             raise ValidationError(f"Unknown model_id: {field.model_id}")
         if definition.fingerprint != field.model_fingerprint:
             raise ValidationError("VectorField model fingerprint does not match registered model")
-        rows = self._scan_view(view=view, columns=["asset_id", "storage_prefix_id", "relative_path"])
-        existing: set[str] = set()
-        if rows:
-            with self._engine.connect() as connection:
-                existing = {
-                    str(value)
-                    for value in connection.execute(
-                        select(asset_vectors.c.asset_id).where(
-                            asset_vectors.c.repo_id == dataset.repo_id,
-                            asset_vectors.c.vector_field_id == field.vector_field_id,
-                            asset_vectors.c.asset_id.in_([str(row["asset_id"]) for row in rows]),
-                        )
-                    ).scalars()
-                }
-        targets = rows if overwrite else [row for row in rows if str(row["asset_id"]) not in existing]
-        images: list[bytes] = []
-        for row in targets:
-            stored = StoredObject(str(row["asset_id"]), str(row["storage_prefix_id"]), str(row["relative_path"]))
-            self.storage_manager.verify(stored)
-            images.append(
-                self.storage_manager.read_bytes(prefix_id=stored.storage_prefix_id, relative_path=stored.relative_path)
-            )
-        outputs: list[tuple[float, ...]] = []
-        for offset in range(0, len(images), _EMBED_BATCH_SIZE):
-            outputs.extend(
-                self.model_manager.embed(
-                    model_id=field.model_id,
-                    images=images[offset : offset + _EMBED_BATCH_SIZE],
-                )
-            )
-        generated = 0
-        updated_count = 0
-        with self._engine.begin() as connection:
-            for row, value in zip(targets, outputs, strict=True):
-                asset_id = str(row["asset_id"])
-                key = (
-                    asset_vectors.c.repo_id == dataset.repo_id,
-                    asset_vectors.c.vector_field_id == field.vector_field_id,
-                    asset_vectors.c.asset_id == asset_id,
-                )
-                if asset_id in existing:
-                    connection.execute(update(asset_vectors).where(*key).values(value=list(value)))
-                    updated_count += 1
-                else:
-                    connection.execute(
-                        insert(asset_vectors).values(
-                            repo_id=dataset.repo_id,
-                            vector_field_id=field.vector_field_id,
-                            asset_id=asset_id,
-                            value=list(value),
-                        )
-                    )
-                    generated += 1
-        return EmbedResult(view.snapshot_id, generated, updated_count, len(rows) - len(targets))
+        return self._embedding.generate(
+            dataset=dataset,
+            field=field,
+            view=view,
+            overwrite=overwrite,
+        )
 
     def _scan_view(self, *, view: DatasetView, columns: list[str] | None) -> list[dict[str, object]]:
-        dataset = self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
-        table = self.catalog.load_table(dataset.table_identifier)
-        known_columns = {field.name for field in table.schema().fields}
-        if columns is not None and not set(columns).issubset(known_columns):
-            raise ValidationError("Unknown Physical Schema column")
-        if view.snapshot_id is None:
-            return []
-        selected = tuple(columns) if columns is not None else ("*",)
-        arrow_table = table.scan(snapshot_id=view.snapshot_id, selected_fields=selected).to_arrow()
-        return arrow_table.to_pylist()
+        return self._view_io.scan(view=view, columns=columns)
 
     def _get_view_row(self, *, view: DatasetView, asset_id: str) -> dict[str, object]:
-        rows = [row for row in self._scan_view(view=view, columns=None) if row["asset_id"] == asset_id]
-        if not rows:
-            raise ObjectNotFoundError(asset_id)
-        return rows[0]
+        return self._view_io.get_row(view=view, asset_id=asset_id)
 
     def _read_view_image(self, *, view: DatasetView, asset_id: str) -> bytes:
-        row = self._get_view_row(view=view, asset_id=asset_id)
-        return self.storage_manager.read_bytes(
-            prefix_id=str(row["storage_prefix_id"]),
-            relative_path=str(row["relative_path"]),
-        )
+        return self._view_io.read_image(view=view, asset_id=asset_id)
 
     def _verify_view_image(self, *, view: DatasetView, asset_id: str) -> bool:
-        row = self._get_view_row(view=view, asset_id=asset_id)
-        return self.storage_manager.verify(
-            StoredObject(
-                asset_id=str(row["asset_id"]),
-                storage_prefix_id=str(row["storage_prefix_id"]),
-                relative_path=str(row["relative_path"]),
-            )
-        )
+        return self._view_io.verify_image(view=view, asset_id=asset_id)
 
     def _branch_snapshot_id(
         self,
@@ -827,23 +635,24 @@ class DatasetManager:
         return self._repositories.has_storage_prefix(repo_id=repo_id, prefix_id=prefix_id)
 
     def _validate_active_tags(self, *, repo_id: str, tag_ids: list[str]) -> None:
-        if not tag_ids:
-            return
-        statement = select(tag_definitions.c.tag_id).where(
-            tag_definitions.c.repo_id == repo_id,
-            tag_definitions.c.tag_id.in_(tag_ids),
-            tag_definitions.c.archived.is_(False),
-        )
-        with self._engine.connect() as connection:
-            found = set(connection.execute(statement).scalars())
-        if found != set(tag_ids):
-            raise ValidationError("Unknown or archived tag_id")
+        self._tags.validate_active(repo_id=repo_id, tag_ids=tag_ids)
 
     def _dataset_by_id(self, *, repo_id: str, dataset_id: str) -> Dataset:
         return self._dataset_from_record(self._repositories.get_dataset(repo_id=repo_id, dataset_id=dataset_id))
 
     def _repo_by_id(self, repo_id: str) -> DatasetRepo:
         return self._repo_from_record(self._repositories.get_repo(repo_id=repo_id))
+
+    @staticmethod
+    def _tag_from_record(record: TagRecord) -> TagDefinition:
+        return TagDefinition(
+            record.tag_id,
+            record.repo_id,
+            record.name,
+            record.color,
+            record.description,
+            record.archived,
+        )
 
     def _repo_from_record(self, record: RepositoryRecord) -> DatasetRepo:
         return DatasetRepo(
