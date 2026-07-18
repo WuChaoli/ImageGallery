@@ -7,7 +7,7 @@
 #### Scenario: 资源所有权保持不变
 
 - **WHEN** DatasetManager 关闭 factory 创建的资源或调用方注入的 ModelManager
-- **THEN** 只关闭自身拥有的 Engine 和 ModelManager，外部注入实例仍由调用方管理，重复关闭不会重复释放资源
+- **THEN** 只关闭自身拥有的 Engine、可关闭 Catalog 和内部创建的 ModelManager，外部注入的 ModelManager 与 StorageManager 仍由调用方管理，重复关闭不会重复释放资源
 
 #### Scenario: Repo 控制面可见性保持不变
 
