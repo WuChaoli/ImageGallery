@@ -18,7 +18,7 @@
 
 ## 4. 规范、文档与验证
 
-- [ ] 4.1 运行 `tests/unit/dataset_manager`、默认 test、coverage、`test-all` 和 `dataset-backend`，确认全部执行测试通过且覆盖率不低于 90%。
-- [ ] 4.2 依次运行 `format-check`、`lint`、`docs`、`test`、`coverage`、`security`、`package`、`package-validate`、`package-smoke`。
-- [ ] 4.3 使用 `sync-docs` 检查 DatasetManager 模块导航，仅在职责边界确有变化时最小同步。
-- [ ] 4.4 审查最终 diff，确认公开契约、异常、持久化 schema 和无关用户修改均未变化。
+- [x] 4.1 运行 `tests/unit/dataset_manager`、默认 test、coverage、`test-all` 和 `dataset-backend`，确认全部执行测试通过且覆盖率不低于 90%。
+- [x] 4.2 依次运行 `format-check`、`lint`、`docs`、`test`、`coverage`、`security`、`package`、`package-validate`、`package-smoke`。
+- [x] 4.3 使用 `sync-docs` 检查 DatasetManager 模块导航，仅在职责边界确有变化时最小同步。
+- [x] 4.4 审查最终 diff，确认公开契约、异常、持久化 schema 和无关用户修改均未变化。
