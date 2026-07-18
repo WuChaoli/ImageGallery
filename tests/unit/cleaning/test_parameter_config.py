@@ -1,5 +1,6 @@
 import importlib
 from collections.abc import Iterable, Mapping
+from typing import cast
 
 import pandas as pd
 import pytest
@@ -28,6 +29,12 @@ class AggregateComputer(ParameterComputer):
     produced_parameters = frozenset({"group_id"})
     required_parameters = frozenset({"source_score"})
     config_parameters = frozenset({"max_distance"})
+
+    def __init__(self) -> None:
+        self.checked_configs: list[dict[str, object]] = []
+
+    def before_run_check(self, config: Mapping[str, object] | None = None) -> None:
+        self.checked_configs.append(dict(config or {}))
 
     def compute(self, request: ParameterRequest) -> ParameterResult:
         return ParameterResult(pd.DataFrame(), {}, {}, {})
@@ -61,6 +68,20 @@ def _registry() -> OperatorRegistry:
     registry.register_parameter_computer(SourceComputer())
     registry.register_parameter_computer(AggregateComputer())
     return registry
+
+
+def _configured_operators(
+    registry: OperatorRegistry,
+    *entries: tuple[str, int],
+) -> list[ConfiguredOperatorSpec]:
+    configured_operators: list[ConfiguredOperatorSpec] = []
+    for name, max_distance in entries:
+        spec = _operator(name)
+        registry.register_operator(spec)
+        configured_operators.append(
+            ConfiguredOperatorSpec.from_spec(spec, {"max_distance": max_distance}, source="test")
+        )
+    return configured_operators
 
 
 def _resolve_configs(
@@ -102,24 +123,76 @@ def test_resolver_rejects_conflicting_shared_computer_config() -> None:
 def test_planner_graph_and_dry_run_delegate_to_shared_resolver(monkeypatch: pytest.MonkeyPatch) -> None:
     parameter_config = importlib.import_module("image_gallery.cleaning._parameter_config")
     original_resolver = parameter_config.resolve_parameter_computer_configs
-    calls: list[tuple[str, ...]] = []
+    calls: list[
+        tuple[
+            list[tuple[str, dict[str, object]]],
+            OperatorRegistry,
+            dict[str, tuple[dict[str, object], str]],
+        ]
+    ] = []
 
     def tracking_resolver(
         operator_configs: Iterable[tuple[OperatorSpec, Mapping[str, object]]],
         registry: OperatorRegistry,
     ) -> dict[str, tuple[dict[str, object], str]]:
         items = list(operator_configs)
-        calls.append(tuple(spec.name for spec, _ in items))
-        return original_resolver(items, registry)
+        resolved = original_resolver(items, registry)
+        calls.append(
+            (
+                [(spec.name, dict(config)) for spec, config in items],
+                registry,
+                resolved,
+            )
+        )
+        return resolved
 
     monkeypatch.setattr(parameter_config, "resolve_parameter_computer_configs", tracking_resolver)
     registry = _registry()
-    spec = _operator("demo.shared")
-    registry.register_operator(spec)
-    configured = ConfiguredOperatorSpec.from_spec(spec, {"max_distance": 4}, source="test")
+    configured = _configured_operators(registry, ("demo.shared", 4))[0]
+    expected_hash = hash_config({"max_distance": 4})
+    expected_resolution = {
+        "aggregate_computer": ({"max_distance": 4}, expected_hash),
+        "source_computer": ({}, "default"),
+    }
 
-    CleaningRunPlanner(registry).compile(parse_operator_configs([{"demo.shared": {"max_distance": 4}}]))
+    plan = CleaningRunPlanner(registry).compile(parse_operator_configs([{"demo.shared": {"max_distance": 4}}]))
     graph = CleaningStateGraph.compile([configured], registry)
     build_dry_run_result(graph, [configured], registry=registry)
 
-    assert calls == [("demo.shared",), ("demo.shared",), ("demo.shared",)]
+    aggregate_step = next(step for step in plan.parameter_plan.steps if step.computer_name == "aggregate_computer")
+    aggregate_node = next(node for node in graph.nodes if node.computer_name == "aggregate_computer")
+    aggregate_computer = cast(AggregateComputer, registry.get_parameter_computer("aggregate_computer"))
+    assert aggregate_step.config == {"max_distance": 4}
+    assert aggregate_step.config_hash == expected_hash
+    assert aggregate_node.config_hash == expected_hash
+    assert aggregate_computer.checked_configs == [{"max_distance": 4}]
+    assert len(calls) == 3
+    for operator_configs, call_registry, resolved in calls:
+        assert operator_configs == [("demo.shared", {"max_distance": 4})]
+        assert call_registry is registry
+        assert resolved == expected_resolution
+
+
+def test_graph_rejects_conflicting_shared_computer_config() -> None:
+    registry = _registry()
+    configured_operators = _configured_operators(
+        registry,
+        ("demo.first", 1),
+        ("demo.second", 2),
+    )
+
+    with pytest.raises(ValueError, match="conflicting parameter computer config: aggregate_computer"):
+        CleaningStateGraph.compile(configured_operators, registry)
+
+
+def test_dry_run_rejects_conflicting_shared_computer_config() -> None:
+    registry = _registry()
+    configured_operators = _configured_operators(
+        registry,
+        ("demo.first", 1),
+        ("demo.second", 2),
+    )
+    graph = CleaningStateGraph.compile(configured_operators[:1], registry)
+
+    with pytest.raises(ValueError, match="conflicting parameter computer config: aggregate_computer"):
+        build_dry_run_result(graph, configured_operators, registry=registry)
