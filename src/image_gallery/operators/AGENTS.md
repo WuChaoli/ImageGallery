@@ -10,6 +10,8 @@
 
 从 `image_gallery.operators` 使用 `OperatorSpec`、`MetricSpec`、`OperatorRegistry`、`create_default_registry`、`create_default_metric_specs` 和 `relative_to_absolute`。参数计算器属于内部扩展契约，不应随意扩大顶层导出。
 
+维护内置目录时，以 `builtin.py` 作为稳定工厂 facade；算子规格、指标规格和 evaluator 分别位于 `_builtin_specs.py`、`_builtin_metrics.py` 与 `_builtin_evaluators.py`。这些私有模块不得成为新的公共导入路径。
+
 ## 核心契约与边界
 
 - 用户侧算子按能力命名，底层库保持实现细节。
