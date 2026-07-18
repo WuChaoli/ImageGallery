@@ -1,58 +1,23 @@
-"""ModelManager 私有冻结定义与持久化模型。"""
+"""ModelManager 私有持久化模型。"""
 
 from __future__ import annotations
 
-import hashlib
-import json
-from collections.abc import Callable, Mapping
-from dataclasses import asdict, dataclass
-from typing import Protocol, cast
+from typing import TypeAlias, cast
 
 from sqlalchemy import JSON, Column, Integer, MetaData, String, Table
 from sqlalchemy.engine import RowMapping
 
-
-@dataclass(frozen=True, slots=True)
-class ModelDefinition:
-    """描述可持久化且不可变的 embedding 模型定义。"""
-
-    model_id: str
-    provider: str
-    artifact_uri: str
-    artifact_revision: str
-    artifact_checksum: str
-    dimension: int
-    dtype: str
-    config: dict[str, object]
-    credential_ref: str | None = None
-
-    @property
-    def fingerprint_payload(self) -> str:
-        """返回排除凭证引用的规范指纹载荷。"""
-        payload = asdict(self)
-        payload.pop("credential_ref")
-        payload.pop("model_id")
-        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
-
-    @property
-    def fingerprint(self) -> str:
-        """返回冻结模型定义的 SHA-256 指纹。"""
-        return "sha256:" + hashlib.sha256(self.fingerprint_payload.encode()).hexdigest()
-
-
-class ModelRuntime(Protocol):
-    """定义 provider 加载后的最小运行时接口。"""
-
-    def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
-        """为一批图片生成向量。"""
-        ...
-
-    def close(self) -> None:
-        """释放模型运行时资源。"""
-
-
-CredentialProvider = Callable[[str], Mapping[str, object]]
-RuntimeFactory = Callable[[ModelDefinition, Mapping[str, object]], ModelRuntime]
+DefinitionFields: TypeAlias = tuple[
+    str,
+    str,
+    str,
+    str,
+    str,
+    int,
+    str,
+    dict[str, object],
+    str | None,
+]
 
 metadata = MetaData()
 model_definitions = Table(
@@ -72,16 +37,16 @@ model_definitions = Table(
 )
 
 
-def definition_from_row(row: RowMapping) -> ModelDefinition:
-    """从数据库映射恢复冻结模型定义。"""
-    return ModelDefinition(
-        model_id=str(row["model_id"]),
-        provider=str(row["provider"]),
-        artifact_uri=str(row["artifact_uri"]),
-        artifact_revision=str(row["artifact_revision"]),
-        artifact_checksum=str(row["artifact_checksum"]),
-        dimension=int(cast(int, row["dimension"])),
-        dtype=str(row["dtype"]),
-        config=cast(dict[str, object], row["config"]),
-        credential_ref=cast(str | None, row["credential_ref"]),
+def definition_fields_from_row(row: RowMapping) -> DefinitionFields:
+    """从数据库映射恢复构造公开模型定义所需的字段。"""
+    return (
+        str(row["model_id"]),
+        str(row["provider"]),
+        str(row["artifact_uri"]),
+        str(row["artifact_revision"]),
+        str(row["artifact_checksum"]),
+        int(cast(int, row["dimension"])),
+        str(row["dtype"]),
+        cast(dict[str, object], row["config"]),
+        cast(str | None, row["credential_ref"]),
     )

@@ -2,24 +2,66 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
-from dataclasses import asdict
+import hashlib
+import json
+from collections.abc import Callable, Mapping
+from dataclasses import asdict, dataclass
+from typing import Protocol
 
 from sqlalchemy import create_engine, insert, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from image_gallery.model_manager._definitions import (
-    CredentialProvider,
-    ModelDefinition,
-    RuntimeFactory,
-    definition_from_row,
+    definition_fields_from_row,
     metadata,
     model_definitions,
 )
-from image_gallery.model_manager._definitions import ModelRuntime as ModelRuntime
 from image_gallery.model_manager._runtime import RuntimePool
 from image_gallery.model_manager.errors import ModelRegistrationError, ModelRuntimeError
+
+
+@dataclass(frozen=True, slots=True)
+class ModelDefinition:
+    """描述可持久化且不可变的 embedding 模型定义。"""
+
+    model_id: str
+    provider: str
+    artifact_uri: str
+    artifact_revision: str
+    artifact_checksum: str
+    dimension: int
+    dtype: str
+    config: dict[str, object]
+    credential_ref: str | None = None
+
+    @property
+    def fingerprint_payload(self) -> str:
+        """返回排除凭证引用的规范指纹载荷。"""
+        payload = asdict(self)
+        payload.pop("credential_ref")
+        payload.pop("model_id")
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+    @property
+    def fingerprint(self) -> str:
+        """返回冻结模型定义的 SHA-256 指纹。"""
+        return "sha256:" + hashlib.sha256(self.fingerprint_payload.encode()).hexdigest()
+
+
+class ModelRuntime(Protocol):
+    """定义 provider 加载后的最小运行时接口。"""
+
+    def embed(self, images: list[bytes]) -> list[tuple[float, ...]]:
+        """为一批图片生成向量。"""
+        ...
+
+    def close(self) -> None:
+        """释放模型运行时资源。"""
+
+
+CredentialProvider = Callable[[str], Mapping[str, object]]
+RuntimeFactory = Callable[[ModelDefinition, Mapping[str, object]], ModelRuntime]
 
 
 class ModelManager:
@@ -94,7 +136,7 @@ class ModelManager:
             if required:
                 raise ModelRegistrationError(f"Unknown model_id: {model_id}")
             return None
-        return definition_from_row(row)
+        return ModelDefinition(*definition_fields_from_row(row))
 
     def embed(self, *, model_id: str, images: list[bytes]) -> list[tuple[float, ...]]:
         """使用冻结定义生成并基础校验一批向量。"""

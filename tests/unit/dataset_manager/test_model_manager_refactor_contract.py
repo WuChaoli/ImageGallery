@@ -1,3 +1,4 @@
+import pickle
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -28,6 +29,24 @@ def _definition() -> ModelDefinition:
         config={"normalize": True},
         credential_ref="secret://models/clip",
     )
+
+
+def test_public_model_types_keep_manager_module_identity() -> None:
+    from image_gallery.model_manager import ModelRuntime
+
+    assert ModelDefinition.__module__ == "image_gallery.model_manager.manager"
+    assert ModelRuntime.__module__ == "image_gallery.model_manager.manager"
+
+
+def test_model_definition_pickle_keeps_stable_global_path() -> None:
+    definition = _definition()
+
+    payload = pickle.dumps(definition)
+    restored = pickle.loads(payload)  # noqa: S301  # 仅反序列化本测试刚生成的可信载荷。
+
+    assert b"image_gallery.model_manager.manager" in payload
+    assert type(restored) is ModelDefinition
+    assert restored == definition
 
 
 def test_bind_engine_migrates_definitions_and_transfers_engine_ownership(tmp_path: Path) -> None:

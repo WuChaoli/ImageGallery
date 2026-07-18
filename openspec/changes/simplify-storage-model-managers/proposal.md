@@ -7,7 +7,7 @@
 - 为 StorageManager 的 Prefix、路径、file/S3 bytes IO、managed recovery 和 client 关闭补充 characterization tests。
 - 将 StorageManager 的路径规范化、Backend client 构造/缓存/关闭和 Backend 特定读写下沉到私有实现，保留稳定门面。
 - 为 ModelManager 的 Engine 绑定、provider runtime 缓存、凭证解析、输出校验和重复关闭补充 characterization tests。
-- 将 ModelManager 的冻结定义/持久化模型与 provider runtime 生命周期拆分为私有职责，保留稳定门面。
+- 保持公开模型类型实际定义在稳定 manager 模块，将持久化 table/row 映射与 provider runtime 生命周期拆分为私有职责。
 - 保持所有公开导出、类方法签名、返回值、异常、路径安全、内容完整性、凭证隔离和资源所有权语义不变。
 - 不修改 DatasetManager、旧 `storage` 平台，不新增 Backend 或 provider，不引入新依赖。
 

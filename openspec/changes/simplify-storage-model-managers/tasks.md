@@ -13,7 +13,7 @@
 
 ## 3. ModelManager 私有职责拆分
 
-- [x] 3.1 提取冻结模型定义、SQLAlchemy table 和 row 映射到私有定义模块
+- [x] 3.1 保持公开模型类型定义在 manager 模块，并提取 SQLAlchemy table 和 row 映射到私有定义模块
 - [x] 3.2 提取 provider runtime 加载/缓存、凭证解析、输出校验和关闭到私有 RuntimePool
 - [x] 3.3 将 ModelManager 收敛为定义持久化、Engine 绑定和 RuntimePool 编排门面
 - [x] 3.4 运行 ModelManager、DatasetManager lifecycle 与 embedding 测试，确认所有权和输出契约保持

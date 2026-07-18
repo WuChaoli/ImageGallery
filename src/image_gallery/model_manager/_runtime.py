@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Mapping
+from typing import TYPE_CHECKING
 
-from image_gallery.model_manager._definitions import (
-    CredentialProvider,
-    ModelDefinition,
-    ModelRuntime,
-    RuntimeFactory,
-)
 from image_gallery.model_manager.errors import ModelRuntimeError
+
+if TYPE_CHECKING:
+    from image_gallery.model_manager.manager import (
+        CredentialProvider,
+        ModelDefinition,
+        ModelRuntime,
+        RuntimeFactory,
+    )
 
 
 class RuntimePool:

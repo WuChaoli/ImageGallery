@@ -35,7 +35,7 @@ StorageManager 和 ModelManager 是新 DatasetManager 平台的独立基础设�
 
 ### 3. ModelManager 将冻结定义和 RuntimePool 分离
 
-模型定义、SQLAlchemy table 和 row 映射移入私有定义模块；provider factory 选择、凭证解析、runtime 缓存、批量输出校验和 runtime 关闭移入私有 RuntimePool。ModelManager 保持注册、查询、Engine 绑定和公开关闭门面，并继续决定是否拥有 Engine。
+`ModelDefinition` 与 `ModelRuntime` 继续实际定义在 `manager.py`，保持 `__module__`、pickle GLOBAL 路径和类型身份；SQLAlchemy table 与 row 映射移入私有定义模块。provider factory 选择、凭证解析、runtime 缓存、批量输出校验和 runtime 关闭移入私有 RuntimePool。ModelManager 保持注册、查询、Engine 绑定和公开关闭门面，并继续决定是否拥有 Engine。
 
 选择 RuntimePool 而不是为每个 provider 建立插件框架，因为当前 provider 已由 `RuntimeFactory` 映射注入；更宽的插件抽象不属于本阶段。
 
@@ -47,6 +47,7 @@ StorageManager 和 ModelManager 是新 DatasetManager 平台的独立基础设�
 
 - [风险] 私有拆分改变 IO 前的验证或异常顺序 → 用 characterization tests 覆盖不安全路径、对象存在、缺失对象和内容不一致，公开契约测试锁定签名。
 - [风险] fsspec/s3fs 关闭方式存在实现差异 → 保留 `close()`、`close_session()` 与 `_s3creator` finalizer 分支，并运行资源生命周期测试与 `test-all`。
+- [风险] 公开类型迁移改变 `__module__` 或 pickle GLOBAL 路径 → 保持类型实际定义在 manager 模块，并显式覆盖模块身份和 pickle 往返。
 - [风险] Engine 迁移或 runtime cache 拆分改变资源所有权 → 覆盖内部/外部 Engine、重复关闭和 provider runtime 关闭次数。
 - [权衡] 新增私有文件增加文件数量 → 换取职责边界清晰；每个私有模块只对应一个稳定职责，不建立通用框架。
 
