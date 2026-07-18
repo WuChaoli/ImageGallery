@@ -2,55 +2,32 @@
 
 from __future__ import annotations
 
-import json
 import shutil
-import sqlite3
-import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
 
 import pandas as pd
 
-from image_gallery.cleaning.context import CleanerRunPaths
+from image_gallery.cleaning._result_artifacts import ResultArtifacts, read_status
+from image_gallery.cleaning._result_exports import (
+    export_debug_bundle,
+    export_manifest,
+    export_relation,
+    export_table,
+)
+from image_gallery.cleaning._result_preview import ResultPreviewRequest, write_result_preview
 from image_gallery.cleaning.export import export_cleaning_result
-from image_gallery.cleaning.html_preview import PreviewHtmlOptions, write_preview_html
 from image_gallery.cleaning.preview import PreviewResult, build_preview
-from image_gallery.cleaning.preview_policy import PreviewPolicy, resolve_preview_policy
+from image_gallery.cleaning.preview_policy import PreviewPolicy
 from image_gallery.cleaning.state import JsonRunStateStore, build_state_frame
-from image_gallery.cleaning.tables import CleaningTables, initialize_evaluation_table
+from image_gallery.cleaning.tables import CleaningTables
 from image_gallery.dataset import Dataset
 
 
 def read_result_status(cache_root: Path, run_id: str) -> str:
     """读取 `run_state.sqlite` 中的运行状态。"""
-    database_path = Path(cache_root) / run_id / "run_state.sqlite"
-    if not database_path.exists():
-        return "running"
-
-    connection = sqlite3.connect(database_path)
-    try:
-        row = connection.execute(
-            "SELECT status FROM cleaning_run WHERE run_id = ?",
-            (run_id,),
-        ).fetchone()
-        if row is None:
-            return "running"
-        return str(row[0])
-    finally:
-        connection.close()
-
-
-def _read_json_or_empty(path: Path, default: dict[str, object] | list[object]) -> dict[str, object] | list[object]:
-    """读取 JSON 文件；文件不存在时返回默认值。"""
-    if not path.exists():
-        return default
-    raw = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(raw, dict):
-        return cast(dict[str, object], raw)
-    if isinstance(raw, list):
-        return cast(list[object], raw)
-    return default
+    return read_status(cache_root, run_id)
 
 
 def _normalize_value(value: object) -> object:
@@ -58,29 +35,6 @@ def _normalize_value(value: object) -> object:
     if cast(bool, pd.isna(cast(Any, value))):
         return ""
     return value
-
-
-def _deduplicate_columns(columns: list[str]) -> list[str]:
-    """去重并保留列顺序。"""
-    seen: set[str] = set()
-    deduplicated: list[str] = []
-    for column in columns:
-        if column in seen:
-            continue
-        seen.add(column)
-        deduplicated.append(column)
-    return deduplicated
-
-
-def _ensure_str_list(values: list[object], *, context: str) -> list[str]:
-    """按上下文过滤并校验 JSON 列表值。"""
-    normalized: list[str] = []
-    for value in values:
-        if isinstance(value, str):
-            normalized.append(value)
-        else:
-            raise TypeError(f"invalid {context}: {value!r}")
-    return normalized
 
 
 @dataclass(frozen=True)
@@ -110,80 +64,13 @@ class CleanerResult:
         )
         object.__setattr__(self, "_dataset", dataset)
 
+    def _artifacts(self) -> ResultArtifacts:
+        """返回本次运行的产物访问对象。"""
+        return ResultArtifacts(cache_root=self._cache_root, run_id=self.run_id)
+
     def _run_dir(self) -> Path:
         """返回本次运行目录。"""
-        return self._cache_root / self.run_id
-
-    def _table_file(self, filename: str) -> Path:
-        """返回运行时 tables 目录中的表文件。"""
-        table_path = self._run_dir() / "tables" / filename
-        if table_path.exists():
-            return table_path
-        raise FileNotFoundError(f"table file not found: {filename}")
-
-    def _run_paths(self) -> CleanerRunPaths:
-        """拼装本次运行的路径集合。"""
-        run_dir = self._run_dir()
-        return CleanerRunPaths(
-            run_dir=run_dir,
-            parameter_table_path=self._table_file("parameter_table.parquet"),
-            evaluation_table_path=self._table_file("evaluation_table.parquet"),
-            operator_outputs_path=run_dir / "manifests" / "operator_outputs.json",
-            parameter_manifest_path=run_dir / "manifests" / "parameter_manifest.json",
-            relations_dir=run_dir / "relations",
-            artifacts_dir=run_dir / "artifacts",
-            manifests_dir=run_dir / "manifests",
-            state_path=run_dir / "state.json",
-        )
-
-    def _load_operator_outputs(self) -> dict[str, list[str]]:
-        """读取 operator_outputs.json（兼容文件不存在）。"""
-        raw_outputs = _read_json_or_empty(self._run_paths().operator_outputs_path, default={})
-        if not isinstance(raw_outputs, dict):
-            return {}
-        parsed: dict[str, list[str]] = {}
-        for operator_name, columns in raw_outputs.items():
-            if not isinstance(columns, list):
-                continue
-            parsed[str(operator_name)] = _ensure_str_list(
-                columns,
-                context="operator_outputs columns",
-            )
-        return parsed
-
-    def _load_parameter_manifest(self) -> dict[str, dict[str, object]]:
-        """读取 parameter_manifest.json（兼容文件不存在）。"""
-        raw_manifest = _read_json_or_empty(self._run_paths().parameter_manifest_path, default={})
-        if not isinstance(raw_manifest, dict):
-            return {}
-        parsed: dict[str, dict[str, object]] = {}
-        for parameter_name, value in raw_manifest.items():
-            if not isinstance(value, dict):
-                continue
-            parsed[str(parameter_name)] = value
-        return parsed
-
-    def _load_parameter_table(self) -> pd.DataFrame:
-        """按文件加载 parameter_table，不存在时给出最小骨架。"""
-        path = self._run_paths().parameter_table_path
-        if path.exists():
-            return pd.read_parquet(path)
-        return pd.DataFrame({"image_id": pd.Series(dtype="string"), "image_uri": pd.Series(dtype="string")})
-
-    def _load_evaluation_table(self) -> pd.DataFrame:
-        """按文件加载 evaluation_table，不存在时用参数表补齐。"""
-        path = self._run_paths().evaluation_table_path
-        if path.exists():
-            return pd.read_parquet(path)
-        return initialize_evaluation_table(self._load_parameter_table())
-
-    def _load_relation_names(self) -> list[str]:
-        """优先从 state.json 读取 relation 名称。"""
-        state_path = self._run_paths().state_path
-        if not state_path.exists():
-            return []
-        state = JsonRunStateStore().load(state_path)
-        return sorted(state.relation_paths.keys())
+        return self._artifacts().run_dir()
 
     def status(self) -> str:
         """返回运行状态。"""
@@ -191,90 +78,28 @@ class CleanerResult:
 
     def export_table(self, kind: str, path: Path | str) -> Path:
         """把某张运行表拷贝到目标路径。"""
-        kind_map = {
-            "parameter": "parameter_table.parquet",
-            "parameters": "parameter_table.parquet",
-            "evaluation": "evaluation_table.parquet",
-            "evaluations": "evaluation_table.parquet",
-            "full": "evaluation_table.parquet",
-        }
-        normalized = kind.strip().lower()
-        if normalized not in kind_map:
-            raise ValueError(f"unsupported export_table kind: {kind}")
-        source = self._table_file(kind_map[normalized])
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return destination
+        return export_table(self._artifacts(), kind, path)
 
     def export_manifest(self, kind: str, path: Path | str) -> Path:
         """导出指定的运行时 manifest 到给定路径。"""
-        normalized = kind.strip().lower()
-        if normalized not in {"execution_plan", "artifacts"}:
-            raise ValueError(f"unsupported manifest kind: {kind}")
-        source = self._run_dir() / "manifests" / f"{normalized}.json"
-        if not source.exists():
-            raise FileNotFoundError(f"manifest file missing: {normalized}")
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return destination
+        return export_manifest(self._artifacts(), kind, path)
 
     def export_relations(self, relation_name: str, path: Path | str) -> Path:
         """把指定 relation 表复制到用户路径，不暴露内部运行目录。"""
-        state_path = self._run_dir() / "state.json"
-        if not state_path.exists():
-            raise FileNotFoundError(f"state file missing: {state_path.name}")
-        state = JsonRunStateStore().load(state_path)
-        relation_path = state.relation_paths.get(relation_name)
-        if relation_path is None:
-            raise KeyError(f"unknown relation_name: {relation_name}")
-
-        source = Path(relation_path)
-        if not source.exists():
-            raise FileNotFoundError(f"relation table missing: {relation_name}")
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(source, destination)
-        return destination
+        return export_relation(self._artifacts(), relation_name, path)
 
     def export_debug_bundle(self, path: Path | str) -> Path:
         """导出只读调试包，包含表、manifest、状态和 relation 副本。"""
-        destination = Path(path)
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        run_dir = self._run_dir()
-        with zipfile.ZipFile(destination, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for archive_name, source in (
-                ("tables/parameter_table.parquet", self._table_file("parameter_table.parquet")),
-                ("tables/evaluation_table.parquet", self._table_file("evaluation_table.parquet")),
-                ("manifests/operator_outputs.json", self._run_paths().operator_outputs_path),
-                ("manifests/parameter_manifest.json", self._run_paths().parameter_manifest_path),
-                ("manifests/execution_plan.json", run_dir / "manifests" / "execution_plan.json"),
-                ("manifests/artifacts.json", run_dir / "manifests" / "artifacts.json"),
-                ("state.json", run_dir / "state.json"),
-            ):
-                if source.exists():
-                    archive.write(source, archive_name)
-
-            state_path = run_dir / "state.json"
-            if state_path.exists():
-                state = JsonRunStateStore().load(state_path)
-                for relation_name, relation_path in sorted(state.relation_paths.items()):
-                    source = Path(relation_path)
-                    if source.exists():
-                        archive.write(source, f"relations/{relation_name}.parquet")
-                    manifest_path = source.with_name(f"{source.name}.manifest.json")
-                    if manifest_path.exists():
-                        archive.write(manifest_path, f"relations/{relation_name}.parquet.manifest.json")
-        return destination
+        return export_debug_bundle(self._artifacts(), path)
 
     def export(self, kind: str, path: Path | str) -> Dataset:
         """按 kind 导出清洗产物并返回 Dataset。"""
+        artifacts = self._artifacts()
         tables = CleaningTables(
-            parameter_table=self._load_parameter_table(),
-            evaluation_table=self._load_evaluation_table(),
-            operator_outputs=self._load_operator_outputs(),
-            parameter_manifest=self._load_parameter_manifest(),
+            parameter_table=artifacts.load_parameter_table(),
+            evaluation_table=artifacts.load_evaluation_table(),
+            operator_outputs=artifacts.load_operator_outputs(),
+            parameter_manifest=artifacts.load_parameter_manifest(),
         )
         export_cleaning_result(
             kind=str(kind).strip().lower(),
@@ -285,17 +110,12 @@ class CleanerResult:
 
     def preview(self, limit: int = 20) -> PreviewResult:
         """返回 preview 概览。"""
+        artifacts = self._artifacts()
         return build_preview(
-            evaluation_table=self._load_evaluation_table(),
-            operator_outputs=self._load_operator_outputs(),
+            evaluation_table=artifacts.load_evaluation_table(),
+            operator_outputs=artifacts.load_operator_outputs(),
             limit=limit,
         )
-
-    def _preview_policy(self, operator_name: str | None) -> PreviewPolicy:
-        """按算子名读取 preview 策略，缺省则回退默认策略。"""
-        if operator_name is None:
-            return PreviewPolicy()
-        return self._operator_preview_policies.get(operator_name, PreviewPolicy())
 
     def preview_html(
         self,
@@ -321,85 +141,31 @@ class CleanerResult:
         if requested_actions is None and action is not None:
             requested_actions = action
 
-        operator_outputs = self._load_operator_outputs()
-        evaluation_table = self._load_evaluation_table()
-        policy = self._preview_policy(operator_name)
-        action_column: str | None = None
-        if operator_name is not None and operator_name not in operator_outputs:
-            raise KeyError(f"unknown operator_name: {operator_name}")
-        if operator_name is not None:
-            selected = operator_outputs[operator_name]
-            action_columns = [column for column in selected if column.endswith("_action")]
-            if not action_columns:
-                raise ValueError(f"operator has no action column: {operator_name}")
-            action_column = action_columns[0]
-            keep_columns = _deduplicate_columns(["image_id", "image_uri", "final_action", action_column] + selected)
-            for required in keep_columns:
-                if required not in evaluation_table.columns:
-                    raise KeyError(f"missing required operator column: {required}")
-            frame = evaluation_table[keep_columns]
-        else:
-            frame = evaluation_table.copy()
-
-        resolved = resolve_preview_policy(
-            policy=policy,
-            actions=list(requested_actions) if isinstance(requested_actions, tuple) else requested_actions,
-            caption_columns=caption_columns,
-            groupby=groupby,
-            include_group_context=include_group_context,
-            sort_by=sort_by,
-            ascending=ascending,
-        )
-        resolved_max_rows = resolved.max_rows if max_rows is None else max_rows
-        resolved_max_groups = resolved.max_groups if max_groups is None else max_groups
-        resolved_max_items_per_group = (
-            resolved.max_items_per_group if max_items_per_group is None else max_items_per_group
-        )
-        resolved_thumbnail_size = resolved.thumbnail_size if thumbnail_size is None else thumbnail_size
-        resolved_columns_per_row = resolved.columns_per_row if columns_per_row is None else columns_per_row
-        if filters is not None:
-            for column, value in filters.items():
-                if column in frame.columns:
-                    frame = cast(pd.DataFrame, frame[frame[column] == value])
-
-        if action_column is not None and not resolved.include_all_actions:
-            frame = cast(pd.DataFrame, frame[cast(pd.Series, frame[action_column]).isin(resolved.actions)])
-        elif not resolved.include_all_actions:
-            frame = cast(pd.DataFrame, frame[cast(pd.Series, frame["final_action"]).isin(resolved.actions)])
-
-        options = PreviewHtmlOptions(
-            action=None,
-            filters=filters,
-            groupby=resolved.groupby,
-            include_group_context=resolved.include_group_context,
-            sort_by=resolved.sort_by,
-            ascending=resolved.ascending,
-            caption_columns=resolved.caption_columns,
-            max_rows=resolved_max_rows,
-            max_groups=resolved_max_groups,
-            max_items_per_group=resolved_max_items_per_group,
-            thumbnail_size=resolved_thumbnail_size,
-            columns_per_row=resolved_columns_per_row,
-            operator_name=operator_name,
-        )
-        if resolved.sort_by:
-            frame = frame.sort_values(by=resolved.sort_by, ascending=resolved.ascending, kind="mergesort")  # pyright: ignore[reportCallIssue]
-
-        dataset = self._dataset
-        if dataset is None:
-            dataset_frame = cast(pd.DataFrame, self._load_parameter_table()[["image_id", "image_uri"]])
-            dataset_path = self._run_dir() / "_result_preview_dataset.parquet"
-            dataset = Dataset.write(dataset_frame, str(dataset_path))
-        return write_preview_html(
-            frame=cast(pd.DataFrame, frame.head(resolved_max_rows)),
-            path=path,
-            dataset=dataset,
-            options=options,
+        return write_result_preview(
+            artifacts=self._artifacts(),
+            operator_preview_policies=self._operator_preview_policies,
+            dataset=self._dataset,
+            request=ResultPreviewRequest(
+                path=path,
+                operator_name=operator_name,
+                actions=requested_actions,
+                filters=filters,
+                groupby=groupby,
+                include_group_context=include_group_context,
+                sort_by=sort_by,
+                ascending=ascending,
+                caption_columns=caption_columns,
+                max_rows=max_rows,
+                max_groups=max_groups,
+                max_items_per_group=max_items_per_group,
+                thumbnail_size=thumbnail_size,
+                columns_per_row=columns_per_row,
+            ),
         )
 
     def state(self) -> pd.DataFrame:
         """返回算子运行状态矩阵。"""
-        state_path = self._run_paths().state_path
+        state_path = self._artifacts().run_paths().state_path
         if not state_path.exists():
             return pd.DataFrame(
                 columns=["operator_name", "status", "processed_count", "skipped_count", "failed_count", "message"]
@@ -408,10 +174,11 @@ class CleanerResult:
 
     def result(self, operator_name: str) -> pd.DataFrame:
         """返回指定算子的 evaluation 列。"""
-        operator_outputs = self._load_operator_outputs()
+        artifacts = self._artifacts()
+        operator_outputs = artifacts.load_operator_outputs()
         if operator_name not in operator_outputs:
             raise KeyError(f"unknown operator_name: {operator_name}")
-        table = self._load_evaluation_table()
+        table = artifacts.load_evaluation_table()
         columns = [
             column for column in ["image_id", "image_uri", *operator_outputs[operator_name]] if column in table.columns
         ]
@@ -419,8 +186,9 @@ class CleanerResult:
 
     def explain(self, image_id: str) -> dict[str, object]:
         """返回单图解释信息。"""
-        evaluation_table = self._load_evaluation_table()
-        parameter_table = self._load_parameter_table()
+        artifacts = self._artifacts()
+        evaluation_table = artifacts.load_evaluation_table()
+        parameter_table = artifacts.load_parameter_table()
         rows = evaluation_table[evaluation_table["image_id"] == image_id]
         if rows.empty:
             raise KeyError(f"image_id not found: {image_id}")
@@ -435,11 +203,11 @@ class CleanerResult:
             "triggered_operator_names": _normalize_value(evaluation_payload.get("triggered_operator_names")),
             "evaluation": {_normalize_value(key): _normalize_value(value) for key, value in evaluation_payload.items()},
             "parameters": {_normalize_value(key): _normalize_value(value) for key, value in parameter_payload.items()},
-            "operator_outputs": self._load_operator_outputs(),
-            "parameter_manifest": self._load_parameter_manifest(),
-            "relation_names": self._load_relation_names(),
+            "operator_outputs": artifacts.load_operator_outputs(),
+            "parameter_manifest": artifacts.load_parameter_manifest(),
+            "relation_names": artifacts.load_relation_names(),
         }
 
     def cleanup(self) -> None:
         """清理本次运行产物目录。"""
-        shutil.rmtree(self._run_dir(), ignore_errors=True)
+        shutil.rmtree(self._artifacts().run_dir(), ignore_errors=True)
