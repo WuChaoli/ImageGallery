@@ -255,7 +255,7 @@ def test_coverage_enforces_repository_and_diff_thresholds() -> None:
             "--cov=src/image_gallery",
             "--cov-report=term-missing",
             "--cov-report=xml:.tmp/coverage.xml",
-            "--cov-fail-under=89",
+            "--cov-fail-under=90",
             "tests/",
         ),
         (
