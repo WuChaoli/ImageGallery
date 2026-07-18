@@ -5,6 +5,7 @@
 - 管理 Backend、DatasetRepo、每 Dataset 单 Iceberg Table、Branch、Checkpoint、回退与同 Repo 状态 Clone。
 - 管理 Repo 级 Tag Definition、强绑定模型的 VectorField、Dataset 范围向量生成、pgvector 当前值和 durable operation recovery。
 - 不负责图片 bytes 存储、全 Repo 向量调度、搜索、复杂历史合并、删除、retention 或 GC。
+- `manager.py` 负责 Backend 生命周期与领域入口编排；`_dataset_history.py` 集中 Dataset 历史、候选 Snapshot 发布和 durable recovery，非历史职责不得反向迁入。
 
 ## 当前能力
 
