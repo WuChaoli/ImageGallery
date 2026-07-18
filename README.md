@@ -75,7 +75,7 @@ uv run python -m tools.ci dataset-backend
 
 面向 `master` 的 Pull Request 会运行以下硬门禁：
 
-- `CI / lint`、`CI / test`、`CI / coverage`、`CI / package`：检查格式、精选 Ruff 安全/风格规则、Pyright、文档与 OpenSpec、默认测试、89% 全仓覆盖率、80% 变更覆盖率，以及 wheel/sdist 的内容、重建和隔离安装。
+- `CI / lint`、`CI / test`、`CI / coverage`、`CI / package`：检查格式、精选 Ruff 安全/风格规则、Pyright、文档与 OpenSpec、默认测试、90% 全仓覆盖率、80% 变更覆盖率、公开接口契约，以及 wheel/sdist 的内容、重建和隔离安装。
 - `CI / compatibility-python-3.14`：在实施时确认的最新稳定 Python 上运行快速测试与包安装；最低支持版本 Python 3.10 由其他 CI job 显式安装。
 - `Security / secrets`、`Security / dependencies`、`Security / workflows`：检查提交中的密钥、Python 已知依赖漏洞和 GitHub Actions 自身的权限及注入风险。
 - `CodeQL`：对 Python 与 GitHub Actions 执行跨文件数据流分析；平台侧只应将新增 High/Critical 告警配置为合并阻断。

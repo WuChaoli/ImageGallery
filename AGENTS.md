@@ -108,6 +108,8 @@ uv run python -m tools.ci package-smoke
 
 任一命令失败时立即停止，修复后从失败项重新验证；所有必跑命令退出码均为 0 后，才能创建或更新 PR。`uv run python -m tools.ci check` 只用于日常快速反馈，不能替代完整的 PR 前手动验证。
 
+`coverage` 必须保持全仓源码行覆盖率不低于 90%、变更行覆盖率不低于 80%，并执行公开接口契约回归测试；不得通过排除完整业务模块或无依据覆盖率豁免提高数字。
+
 涉及 MinIO、sample_1000 或真实数据时，额外运行 `uv run python -m tools.ci test-real`。涉及 slow、并发、缓存、状态恢复或资源生命周期时，额外运行 `uv run python -m tools.ci test-all`。涉及 DatasetManager 的 PostgreSQL、pgvector、PyIceberg 或 S3-compatible Backend 时，额外运行 `uv run python -m tools.ci dataset-backend`。
 
 创建 git worktree 时，继续复用原仓库的 `.venv` 作为开发与验证环境，不要在 worktree 内重新创建独立虚拟环境。
