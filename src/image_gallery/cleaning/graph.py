@@ -4,6 +4,7 @@ from hashlib import sha256
 
 import pandas as pd
 
+import image_gallery.cleaning._parameter_config as _parameter_config
 from image_gallery.cleaning.config import hash_config
 from image_gallery.cleaning.policy import ComputerRuntimePolicy, NodePolicy
 from image_gallery.operators.computers.base import ExecutionMode, ParameterComputer
@@ -175,7 +176,6 @@ def _collect_parameter_plan(  # noqa: C901
     visited: set[str] = set()
     visiting: set[str] = set()
     upstream_by_computer: dict[str, set[str]] = {}
-    config_by_computer: dict[str, tuple[dict[str, object], str]] = {}
 
     def visit_parameter(parameter_name: str) -> str:
         computer = registry.get_parameter_producer(parameter_name)
@@ -208,32 +208,10 @@ def _collect_parameter_plan(  # noqa: C901
         computer_by_name,
     )
 
-    def collect_computer_names(parameter_name: str, seen: set[str]) -> set[str]:
-        computer = registry.get_parameter_producer(parameter_name)
-        if computer.name in seen:
-            return set()
-        seen.add(computer.name)
-        names = {computer.name}
-        for required_parameter in computer.required_parameters:
-            names.update(collect_computer_names(required_parameter, seen))
-        return names
-
-    for configured in configured_operators:
-        computer_names: set[str] = set()
-        for required_parameter in configured.spec.required_parameters:
-            computer_names.update(collect_computer_names(required_parameter, set()))
-
-        for computer_name in sorted(computer_names):
-            computer = registry.get_parameter_computer(computer_name)
-            projected_config = {
-                key: configured.config[key] for key in sorted(computer.config_parameters) if key in configured.config
-            }
-            config_hash = hash_config(projected_config) if projected_config else "default"
-            entry = (projected_config, config_hash)
-            prior = config_by_computer.get(computer.name)
-            if prior is not None and prior != entry:
-                raise ValueError(f"conflicting parameter computer config: {computer.name}")
-            config_by_computer[computer.name] = entry
+    config_by_computer = _parameter_config.resolve_parameter_computer_configs(
+        ((configured.spec, configured.config) for configured in configured_operators),
+        registry,
+    )
 
     return (
         tuple(ordered_computer_names),
@@ -341,6 +319,74 @@ def _parameter_terminal_node_id(computer: ParameterComputer) -> str:
     return f"parameter.{computer.name}"
 
 
+def _build_parameter_nodes(
+    ordered_computer_names: tuple[str, ...],
+    registry: OperatorRegistry,
+    upstream_by_computer: dict[str, set[str]],
+    config_hash_by_computer: dict[str, str],
+    parameter_node_policies: dict[str, NodePolicy],
+) -> list[GraphNode]:
+    """按计划顺序装配 staged 或普通参数节点。"""
+    nodes: list[GraphNode] = []
+    for computer_name in ordered_computer_names:
+        computer = registry.get_parameter_computer(computer_name)
+        policy = parameter_node_policies[computer_name]
+        upstream_node_ids = tuple(
+            sorted(
+                _parameter_terminal_node_id(registry.get_parameter_computer(upstream))
+                for upstream in upstream_by_computer[computer_name]
+            )
+        )
+        if computer.stages:
+            previous_upstreams = upstream_node_ids
+            for index, stage in enumerate(computer.stages):
+                produced_parameters = (
+                    frozenset(computer.produced_parameters) if index == len(computer.stages) - 1 else frozenset()
+                )
+                nodes.append(
+                    GraphNode(
+                        node_id=f"parameter.{computer_name}.{stage.name}",
+                        node_type="parameter",
+                        operator_name=None,
+                        computer_name=computer_name,
+                        stage_name=stage.name,
+                        execution_mode=computer.execution_mode,
+                        required_parameters=frozenset(computer.required_parameters) if index == 0 else frozenset(),
+                        produced_parameters=produced_parameters,
+                        config_hash=config_hash_by_computer.get(computer_name, "default"),
+                        policy_hash=_policy_hash(policy),
+                        upstream_node_ids=previous_upstreams,
+                        checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
+                        required_artifacts=stage.required_artifacts,
+                        produced_artifacts=stage.produced_artifacts,
+                        required_relations=stage.required_relations,
+                        produced_relations=stage.produced_relations,
+                        artifact_contract=stage.artifact_contract,
+                        cache_policy=stage.cache_policy,
+                    )
+                )
+                previous_upstreams = (f"parameter.{computer_name}.{stage.name}",)
+            continue
+
+        nodes.append(
+            GraphNode(
+                node_id=f"parameter.{computer_name}",
+                node_type="parameter",
+                operator_name=None,
+                computer_name=computer_name,
+                stage_name="parameter",
+                execution_mode=computer.execution_mode,
+                required_parameters=frozenset(computer.required_parameters),
+                produced_parameters=frozenset(computer.produced_parameters),
+                config_hash=config_hash_by_computer.get(computer_name, "default"),
+                policy_hash=_policy_hash(policy),
+                upstream_node_ids=upstream_node_ids,
+                checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
+            )
+        )
+    return nodes
+
+
 def compile_state_graph(
     configured_operators: list[ConfiguredOperatorSpec],
     registry: OperatorRegistry,
@@ -368,63 +414,13 @@ def compile_state_graph(
         operator_policies=operator_policies,
     )
 
-    parameter_nodes: list[GraphNode] = []
-    for computer_name in ordered_computer_names:
-        computer = registry.get_parameter_computer(computer_name)
-        policy = parameter_node_policies[computer_name]
-        upstream_node_ids = tuple(
-            sorted(
-                _parameter_terminal_node_id(registry.get_parameter_computer(upstream))
-                for upstream in upstream_by_computer[computer_name]
-            )
-        )
-        if computer.stages:
-            previous_upstreams = upstream_node_ids
-            for index, stage in enumerate(computer.stages):
-                produced_parameters = (
-                    frozenset(computer.produced_parameters) if index == len(computer.stages) - 1 else frozenset()
-                )
-                parameter_nodes.append(
-                    GraphNode(
-                        node_id=f"parameter.{computer_name}.{stage.name}",
-                        node_type="parameter",
-                        operator_name=None,
-                        computer_name=computer_name,
-                        stage_name=stage.name,
-                        execution_mode=computer.execution_mode,
-                        required_parameters=frozenset(computer.required_parameters) if index == 0 else frozenset(),
-                        produced_parameters=produced_parameters,
-                        config_hash=config_hash_by_computer.get(computer_name, "default"),
-                        policy_hash=_policy_hash(policy),
-                        upstream_node_ids=previous_upstreams,
-                        checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
-                        required_artifacts=stage.required_artifacts,
-                        produced_artifacts=stage.produced_artifacts,
-                        required_relations=stage.required_relations,
-                        produced_relations=stage.produced_relations,
-                        artifact_contract=stage.artifact_contract,
-                        cache_policy=stage.cache_policy,
-                    )
-                )
-                previous_upstreams = (f"parameter.{computer_name}.{stage.name}",)
-            continue
-
-        parameter_nodes.append(
-            GraphNode(
-                node_id=f"parameter.{computer_name}",
-                node_type="parameter",
-                operator_name=None,
-                computer_name=computer_name,
-                stage_name="parameter",
-                execution_mode=computer.execution_mode,
-                required_parameters=frozenset(computer.required_parameters),
-                produced_parameters=frozenset(computer.produced_parameters),
-                config_hash=config_hash_by_computer.get(computer_name, "default"),
-                policy_hash=_policy_hash(policy),
-                upstream_node_ids=upstream_node_ids,
-                checkpoint_strategy=_checkpoint_strategy(computer.execution_mode, computer, policy),
-            )
-        )
+    parameter_nodes = _build_parameter_nodes(
+        ordered_computer_names,
+        registry,
+        upstream_by_computer,
+        config_hash_by_computer,
+        parameter_node_policies,
+    )
 
     evaluation_nodes: list[GraphNode] = []
     evaluation_node_ids: list[str] = []
