@@ -30,10 +30,14 @@ def test_python_ci_keeps_default_real_and_all_test_tasks_separate(
     default = ci._commands_for_task("test")[0]
     real = ci._commands_for_task("test-real")[0]
     all_tests = ci._commands_for_task("test-all")[0]
+    dataset_backend = ci._commands_for_task("dataset-backend")[0]
 
     assert "addopts=" not in default
     assert "-m" not in default
     assert ("-o", "addopts=") == real[real.index("-o") : real.index("-o") + 2]
     assert ("-m", "real_dataset") == real[real.index("-m") : real.index("-m") + 2]
     assert ("-o", "addopts=") == all_tests[all_tests.index("-o") : all_tests.index("-o") + 2]
-    assert "-m" not in all_tests
+    assert ("-m", "not dataset_backend") == all_tests[all_tests.index("-m") : all_tests.index("-m") + 2]
+    assert ("-o", "addopts=") == dataset_backend[dataset_backend.index("-o") : dataset_backend.index("-o") + 2]
+    assert ("-m", "dataset_backend") == dataset_backend[dataset_backend.index("-m") : dataset_backend.index("-m") + 2]
+    assert dataset_backend[-1] == "tests/integration/dataset_manager"

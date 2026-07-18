@@ -2,7 +2,7 @@
 
 ### Requirement: 默认测试与真实数据验收分层
 
-系统 SHALL 将依赖 `sample_1000` 或 MinIO 的测试同时标记为 `slow` 和 `real_dataset`，Python CI 默认 `test` 任务 SHALL 排除 `slow` 测试。PR 涉及 MinIO、sample_1000 或真实数据时 MUST 额外运行 `test-real`；涉及 slow、并发、缓存、状态恢复或资源生命周期时 MUST 额外运行 `test-all`。
+系统 SHALL 将依赖 `sample_1000` 或 MinIO 的测试同时标记为 `slow` 和 `real_dataset`，将依赖 PostgreSQL、pgvector、PyIceberg 或 S3-compatible 容器的测试标记为 `dataset_backend`。Python CI 默认 `test` 任务 SHALL 排除 `slow` 与 `dataset_backend` 测试，`test-all` SHALL 排除 `dataset_backend` 测试。PR 涉及 MinIO、sample_1000 或真实数据时 MUST 额外运行 `test-real`；涉及 slow、并发、缓存、状态恢复或资源生命周期时 MUST 额外运行 `test-all`；涉及 DatasetManager Backend 时 MUST 额外运行 `dataset-backend`。
 
 #### Scenario: 运行默认测试
 - **WHEN** 执行 `uv run python -m tools.ci test`
@@ -14,4 +14,8 @@
 
 #### Scenario: 运行完整测试
 - **WHEN** 高风险运行时变更执行 `uv run python -m tools.ci test-all`
-- **THEN** pytest SHALL 同时收集默认测试、slow 测试和真实数据测试
+- **THEN** pytest SHALL 同时收集默认测试、slow 测试和真实数据测试，但 SHALL NOT 启动 `dataset_backend` 容器测试
+
+#### Scenario: 运行 DatasetManager Backend 验收
+- **WHEN** Backend 相关变更执行 `uv run python -m tools.ci dataset-backend`
+- **THEN** pytest SHALL 仅运行 DatasetManager 的 `dataset_backend` 容器集成测试

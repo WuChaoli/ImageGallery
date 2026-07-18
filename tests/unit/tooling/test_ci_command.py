@@ -33,6 +33,7 @@ def test_available_tasks_are_explicit_and_stable() -> None:
     assert ci.available_tasks() == (
         "check",
         "coverage",
+        "dataset-backend",
         "docs",
         "format",
         "format-check",
@@ -57,12 +58,14 @@ def test_available_tasks_are_explicit_and_stable() -> None:
     )
 
 
-def test_test_all_allows_network_for_real_backend_tests() -> None:
-    """test-all 包含容器集成测试，因此不得启用 pytest-socket 全局禁网。"""
+def test_test_all_allows_network_but_excludes_container_backends() -> None:
+    """test-all 允许真实数据联网，但不隐式启动容器 Backend。"""
     runner = RecordingRunner()
 
     assert ci.main(["test-all"], runner=runner) == 0
     assert "--disable-socket" not in runner.calls[0]
+    marker_index = runner.calls[0].index("-m")
+    assert runner.calls[0][marker_index : marker_index + 2] == ("-m", "not dataset_backend")
 
 
 def test_unknown_task_returns_usage_without_running_command(capsys: pytest.CaptureFixture[str]) -> None:
@@ -181,6 +184,23 @@ def test_format_is_the_only_quality_task_that_modifies_files() -> None:
 @pytest.mark.parametrize(
     ("task", "expected"),
     [
+        (
+            "dataset-backend",
+            (
+                "uv",
+                "run",
+                "pytest",
+                "-p",
+                "no:randomly",
+                "-n",
+                "0",
+                "-o",
+                "addopts=",
+                "-m",
+                "dataset_backend",
+                "tests/integration/dataset_manager",
+            ),
+        ),
         (
             "test-real",
             (

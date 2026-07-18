@@ -68,7 +68,7 @@ uv run python -m tools.ci test-real
 DatasetManager 的 PostgreSQL、pgvector、PyIceberg 和 S3-compatible 容器验收使用独立 `dataset_backend` marker，默认快测不会启动容器：
 
 ```bash
-uv run pytest -m dataset_backend tests/integration/dataset_manager
+uv run python -m tools.ci dataset-backend
 ```
 
 ## CI 安全门槛

@@ -93,6 +93,22 @@ _COMMANDS: dict[str, tuple[Command, ...]] = {
             "tests/",
         ),
     ),
+    "dataset-backend": (
+        (
+            "uv",
+            "run",
+            "pytest",
+            "-p",
+            "no:randomly",
+            "-n",
+            "0",
+            "-o",
+            "addopts=",
+            "-m",
+            "dataset_backend",
+            "tests/integration/dataset_manager",
+        ),
+    ),
     "test-all": (
         (
             "uv",
@@ -104,6 +120,8 @@ _COMMANDS: dict[str, tuple[Command, ...]] = {
             "auto",
             "-o",
             "addopts=",
+            "-m",
+            "not dataset_backend",
             "tests/",
         ),
     ),
@@ -182,10 +200,10 @@ def _run_commands(task: str, runner: Runner) -> int:
 def _commands_for_task(task: str) -> tuple[Command, ...]:
     """返回任务命令，并安全应用历史测试参数覆盖。"""
     commands = _COMMANDS[task]
-    if task not in {"test", "test-compat", "test-real", "test-all"}:
+    if task not in {"dataset-backend", "test", "test-compat", "test-real", "test-all"}:
         return commands
     command = commands[0]
-    test_file = os.environ.get("TEST_FILE", "tests/")
+    test_file = os.environ.get("TEST_FILE", command[-1])
     extra = tuple(shlex.split(os.environ.get("PYTEST_EXTRA", ""), posix=os.name != "nt"))
     return ((*command[:-1], *extra, test_file),)
 

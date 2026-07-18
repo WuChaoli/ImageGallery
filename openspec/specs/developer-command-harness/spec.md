@@ -50,7 +50,7 @@
 
 ### Requirement: 测试任务必须保持数据分层
 
-Python CI 入口 SHALL 保持默认快速测试、完整测试和真实数据验收相互独立。默认 `test` MUST 排除 `slow` 与 `real_dataset`，真实数据任务 MUST 显式执行且不得合并到普通 PR 默认测试。
+Python CI 入口 SHALL 保持默认快速测试、完整测试、真实数据验收和 DatasetManager Backend 容器验收相互独立。默认 `test` MUST 排除 `slow` 与 `dataset_backend`，`test-all` MUST 排除 `dataset_backend`，真实数据与 Backend 任务 MUST 显式执行且不得合并到普通 PR 默认测试。
 
 #### Scenario: 运行默认测试
 - **WHEN** 开发者或 CI 调用 Python CI 的 `test` 任务
@@ -59,3 +59,7 @@ Python CI 入口 SHALL 保持默认快速测试、完整测试和真实数据验
 #### Scenario: 运行真实数据验收
 - **WHEN** 开发者显式调用 Python CI 的 `test-real` 任务
 - **THEN** 系统仅执行标记为 `real_dataset` 的验收测试
+
+#### Scenario: 运行 DatasetManager Backend 验收
+- **WHEN** 开发者显式调用 Python CI 的 `dataset-backend` 任务
+- **THEN** 系统仅执行 DatasetManager 中标记为 `dataset_backend` 的容器验收测试

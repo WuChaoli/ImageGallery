@@ -16,6 +16,14 @@
 - **WHEN** 治理测试检查根目录和当前权威文档
 - **THEN** 根 Makefile 不存在且内容不提供 `make` 开发命令
 
+### Requirement: 测试任务必须隔离容器 Backend
+
+Python CI 的 `test` 与 `test-all` 任务 SHALL 排除 `dataset_backend`，并提供显式 `dataset-backend` 任务运行 DatasetManager 容器验收。
+
+#### Scenario: 运行 DatasetManager Backend 验收
+- **WHEN** 开发者显式调用 `uv run python -m tools.ci dataset-backend`
+- **THEN** 系统 SHALL 仅运行 DatasetManager 中标记为 `dataset_backend` 的容器集成测试
+
 ## ADDED Requirements
 
 ### Requirement: PR 前验证必须逐项执行
