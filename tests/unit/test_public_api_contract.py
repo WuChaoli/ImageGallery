@@ -7,6 +7,7 @@ import importlib
 import inspect
 import types
 import typing
+from enum import Enum
 
 import pytest
 
@@ -131,6 +132,14 @@ EXPECTED_CLEANING_TARGETS = {
     "evaluate_with_rules": "image_gallery.cleaning.rule_evaluator.evaluate_with_rules",
 }
 
+EXPECTED_ENUM_VALUES = {
+    "image_gallery.operators.computers.ExecutionMode": (
+        ("PER_IMAGE", "per_image"),
+        ("TABLE", "table"),
+        ("DATASET_AGGREGATE", "dataset_aggregate"),
+    ),
+}
+
 # 使用摘要避免在测试中复制冗长注解，同时逐符号报告签名漂移。
 EXPECTED_SIGNATURE_DIGESTS = {
     "image_gallery.annotations.LabelImgExporter": "db3019c01473f4f8",
@@ -182,7 +191,7 @@ EXPECTED_SIGNATURE_DIGESTS = {
     "image_gallery.operators.create_default_metric_specs": "7da0e28420db0da9",
     "image_gallery.operators.create_default_registry": "9233b9194444ffea",
     "image_gallery.operators.relative_to_absolute": "0f47a1f13f03a27f",
-    "image_gallery.operators.computers.ExecutionMode": "0496a3d409b3405c",
+    "image_gallery.operators.computers.ExecutionMode": "3d57a046cd56e99b",
     "image_gallery.operators.computers.DuplicateGroupComputer": "29b2d070f1ef36cf",
     "image_gallery.operators.computers.ImageBatch": "9c7af568aaff45e3",
     "image_gallery.operators.computers.ImageBatchItem": "edec8408fd04c98a",
@@ -450,6 +459,9 @@ def _canonical_default(default: object) -> str:
 
 def _canonical_signature(callable_object: object) -> str:
     """生成不依赖 inspect 文本排版的结构化签名。"""
+    if inspect.isclass(callable_object) and issubclass(callable_object, Enum):
+        return "enum(value)"
+
     signature = inspect.signature(callable_object)
     parameters = tuple(
         (
@@ -487,6 +499,18 @@ def test_public_callable_signatures_match() -> None:
         actual_digest = _signature_digest(public_object)
 
         assert actual_digest == expected_digest, f"{symbol} signature drifted: {signature}"
+
+
+def test_enum_constructor_signature_is_normalized() -> None:
+    assert _canonical_signature(Enum) == "enum(value)"
+
+
+@pytest.mark.parametrize(("symbol", "expected"), EXPECTED_ENUM_VALUES.items())
+def test_public_enum_values_match(symbol: str, expected: tuple[tuple[str, str], ...]) -> None:
+    module_name, name = symbol.rsplit(".", maxsplit=1)
+    enum_class = getattr(importlib.import_module(module_name), name)
+
+    assert tuple((member.name, member.value) for member in enum_class) == expected
 
 
 @pytest.mark.parametrize(("symbol", "expected_digest"), EXPECTED_METHOD_SIGNATURE_DIGESTS.items())
