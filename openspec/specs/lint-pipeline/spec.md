@@ -3,7 +3,7 @@
 ## Requirements
 ### Requirement: Python CI lint 统一入口
 
-系统 SHALL 提供 `uv run python -m tools.ci lint` 命令作为 lint 权威入口。该任务 SHALL 依次执行 Ruff check 和 Pyright 检查，任一阻断性检查失败 SHALL 导致非零退出码。Makefile 的 `lint` 目标 SHALL 仅作为兼容别名转发到该入口。GitHub Actions SHALL 在每个面向默认分支的 Pull Request 上调用 Python CI 入口，并将结果配置为 required check。
+系统 SHALL 提供 `uv run python -m tools.ci lint` 命令作为唯一 lint 权威入口。该任务 SHALL 依次执行 Ruff check 和 Pyright 检查，任一阻断性检查失败 SHALL 导致非零退出码。GitHub Actions SHALL 在每个面向默认分支的 Pull Request 上调用 Python CI 入口，并将结果配置为 required check。
 
 #### Scenario: Python CI lint 全部通过
 
@@ -24,11 +24,6 @@
 
 - **WHEN** Pyright 仅报告 warning 级别问题且无 error
 - **THEN** lint 以退出码 0 完成，输出保留 warning
-
-#### Scenario: Makefile 兼容调用
-
-- **WHEN** 开发者运行 `make lint`
-- **THEN** Makefile 转发到 Python CI `lint`，不维护独立 Ruff 或 Pyright 参数
 
 #### Scenario: PR lint required check 失败
 
@@ -74,17 +69,17 @@ Python CI `check` SHALL 按顺序执行 `format-check`、`lint` 和默认快速�
 
 #### Scenario: 缺失参数类型标注阻断 lint
 
-- **WHEN** 公开函数的参数缺少类型标注，运行 `make lint`
+- **WHEN** 公开函数的参数缺少类型标注并运行 Python CI `lint`
 - **THEN** pyright 报告 error，lint 以非零退出码退出
 
 #### Scenario: 显式 Any 使用不阻断 lint
 
-- **WHEN** 函数签名中使用 `Any` 类型，运行 `make lint`
+- **WHEN** 函数签名中使用 `Any` 类型并运行 Python CI `lint`
 - **THEN** pyright 报告 warning 但 lint 以退出码 0 完成
 
 #### Scenario: 隐式 unknown 类型不阻断 lint
 
-- **WHEN** 变量或参数推断为 unknown 类型（来自未标注的第三方库返回值），运行 `make lint`
+- **WHEN** 变量或参数推断为 unknown 类型（来自未标注的第三方库返回值）并运行 Python CI `lint`
 - **THEN** pyright 报告 warning 但 lint 以退出码 0 完成
 
 ### Requirement: ruff docstring 检查规则
@@ -93,7 +88,7 @@ Python CI `check` SHALL 按顺序执行 `format-check`、`lint` 和默认快速�
 
 #### Scenario: 公开函数缺少 docstring
 
-- **WHEN** 不以 `_` 开头的公开函数没有 docstring，运行 `make lint`
+- **WHEN** 不以 `_` 开头的公开函数没有 docstring 并运行 Python CI `lint`
 - **THEN** ruff 报告 D103 违规，lint 以非零退出码退出
 
 #### Scenario: 简单 getter 也需要 docstring
@@ -103,27 +98,27 @@ Python CI `check` SHALL 按顺序执行 `format-check`、`lint` 和默认快速�
 
 #### Scenario: 私有函数不需要 docstring
 
-- **WHEN** 以 `_` 开头的私有函数没有 docstring，运行 `make lint`
+- **WHEN** 以 `_` 开头的私有函数没有 docstring 并运行 Python CI `lint`
 - **THEN** ruff 不报告 D 规则违规
 
 #### Scenario: 测试文件豁免 docstring 检查
 
-- **WHEN** `tests/` 目录下的测试函数没有 docstring，运行 `make lint`
+- **WHEN** `tests/` 目录下的测试函数没有 docstring 并运行 Python CI `lint`
 - **THEN** ruff 不报告 D 规则违规（per-file-ignores 豁免）
 
 #### Scenario: docstring 格式不合规
 
-- **WHEN** 公开函数有 docstring 但首行不以句号结尾，运行 `make lint`
+- **WHEN** 公开函数有 docstring 但首行不以句号结尾并运行 Python CI `lint`
 - **THEN** ruff 报告 D400 违规，lint 以非零退出码退出
 
 ### Requirement: AGENTS.md 规范同步
 
-AGENTS.md SHALL 反映工具链变更：删除 mypy 命令，新增 pyright 和 `make lint` 命令。docstring 规范段落 SHALL 取消"简单 getter 可不写 docstring"的例外，明确所有不以 `_` 开头的公开函数/类/方法必须有 docstring。
+AGENTS.md SHALL 将 Python CI 记录为唯一 lint 入口，并 SHALL 明确所有不以 `_` 开头的公开函数、类和方法必须有 docstring。
 
 #### Scenario: AGENTS.md 命令段落更新
 
 - **WHEN** 查阅 AGENTS.md 的构建/测试/lint 命令段落
-- **THEN** 不包含 mypy 命令，包含 `make lint` 和 `python -m pyright src/image_gallery` 命令
+- **THEN** 文档只提供 `uv run python -m tools.ci` 入口且不提供 Make 命令
 
 #### Scenario: AGENTS.md docstring 规范更新
 
