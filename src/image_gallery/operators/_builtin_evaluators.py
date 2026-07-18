@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import cast
+from typing import Any, cast
 
 import pandas as pd
 
@@ -394,9 +394,9 @@ def evaluate_semantic_duplicate_check(parameter_table: pd.DataFrame, config: dic
 
 
 def _score_threshold_frame(
-    image_ids: pd.Series,
-    scores: pd.Series,
-    failed: pd.Series,
+    image_ids: pd.Series[Any],
+    scores: pd.Series[Any],
+    failed: pd.Series[bool],
     prefix: str,
     action: str,
     reason: str,
