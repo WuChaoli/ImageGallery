@@ -82,6 +82,9 @@ markers = [
   "stability: tests covering concurrency, state, cache, or resource lifecycle risks",
 ]
 
+[tool.coverage.report]
+precision = 2
+
 [tool.codespell]
 ignore-words-list = "cleane,fo,nd,statics,te"
 skip = "*.lock,*.json,*.ipynb,*.csv,*.parquet,*.xml,.git,.tmp,.venv,docs-backup.tar.gz"

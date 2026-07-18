@@ -139,7 +139,7 @@ _COMMANDS: dict[str, tuple[Command, ...]] = {
             "--cov=src/image_gallery",
             "--cov-report=term-missing",
             "--cov-report=xml:.tmp/coverage.xml",
-            "--cov-fail-under=89",
+            "--cov-fail-under=90",
             "tests/",
         ),
         (
