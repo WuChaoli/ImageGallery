@@ -158,8 +158,8 @@ def test_codeql_advanced_workflow_is_pinned_and_scans_supported_languages() -> N
     assert set(workflow["jobs"]) == {"codeql"}
     assert set(workflow["jobs"]["codeql"]["strategy"]["matrix"]["language"]) == {"python", "actions"}
     text = path.read_text(encoding="utf-8")
-    assert "github/codeql-action/init@02c5e83432fe5497fd85b873b6c9f16a8578e1d9" in text
-    assert "github/codeql-action/analyze@02c5e83432fe5497fd85b873b6c9f16a8578e1d9" in text
+    assert "github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9" in text
+    assert "github/codeql-action/analyze@99df26d4f13ea111d4ec1a7dddef6063f76b97e9" in text
 
 
 def test_python_versions_are_explicit_and_do_not_use_runner_defaults() -> None:
