@@ -86,6 +86,39 @@ def test_state_graph_orders_by_parameter_dependencies() -> None:
     assert node_ids[-1] == "merge.final_action"
 
 
+def test_state_graph_preserves_complete_node_order_and_plan_hash() -> None:
+    registry = create_default_registry()
+    operators = select_operators([{"exact_duplicate": {}}], registry)
+
+    graph = CleaningStateGraph.compile(operators, registry)
+
+    assert [
+        (
+            node.node_id,
+            node.config_hash,
+            node.upstream_node_ids,
+            node.checkpoint_strategy,
+        )
+        for node in graph.nodes
+    ] == [
+        ("parameter.image_hash_computer", "default", (), "batch"),
+        (
+            "parameter.duplicate_group_computer",
+            "default",
+            ("parameter.image_hash_computer",),
+            "whole_node",
+        ),
+        (
+            "evaluation.exact_duplicate",
+            "c01de66f7dd8ead1d8dc0b56c4d6c5796feacd1d7f1d5326a414fd76e282318a",
+            ("parameter.duplicate_group_computer",),
+            "none",
+        ),
+        ("merge.final_action", "default", ("evaluation.exact_duplicate",), "none"),
+    ]
+    assert graph.plan_hash == "15d3d8c7e5f835b00a9b5950b5bd3fda602e2ba86b5e1ae302271dcaa65b9f34"
+
+
 def test_state_graph_includes_evaluation_and_merge_nodes() -> None:
     registry = create_default_registry()
     operators = select_operators([{"blur": {}}], registry)

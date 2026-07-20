@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from pathlib import Path
 
 import pytest
+from coverage import Coverage
+from coverage.results import should_fail_under
 from tools import ci, lint_diff, package_smoke, package_validate
 
 
@@ -255,7 +257,7 @@ def test_coverage_enforces_repository_and_diff_thresholds() -> None:
             "--cov=src/image_gallery",
             "--cov-report=term-missing",
             "--cov-report=xml:.tmp/coverage.xml",
-            "--cov-fail-under=89",
+            "--cov-fail-under=90",
             "tests/",
         ),
         (
@@ -267,6 +269,16 @@ def test_coverage_enforces_repository_and_diff_thresholds() -> None:
             "--fail-under=80",
         ),
     ]
+
+
+def test_coverage_threshold_uses_two_decimal_precision() -> None:
+    """源码覆盖率必须按 90.00% 边界判定，不能按整数四舍五入。"""
+    coverage = Coverage(config_file="pyproject.toml")
+    coverage.load()
+
+    assert coverage.config.precision == 2
+    assert should_fail_under(89.99, fail_under=90, precision=coverage.config.precision)
+    assert not should_fail_under(90.00, fail_under=90, precision=coverage.config.precision)
 
 
 def test_compatibility_runs_default_suite_without_xdist() -> None:

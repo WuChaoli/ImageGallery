@@ -57,6 +57,30 @@ class RuntimeRunResult:
     attempt_count: int
 
 
+@dataclass(frozen=True)
+class _PlannedRunDefinition:
+    """计划运行中不会随阶段推进变化的上下文。"""
+
+    run_id: str
+    dataset_fingerprint: str
+    parsed_operators: list[ParsedOperatorConfig]
+    plan: CompiledCleaningPlan
+    paths: CleanerRunPaths
+    context: CleanerRunContext
+
+
+@dataclass
+class _PlannedRunSession:
+    """计划运行在参数阶段和失败收尾间共享的可变快照。"""
+
+    definition: _PlannedRunDefinition
+    tables: CleaningTables
+    artifact_paths: dict[str, str]
+    relation_paths: dict[str, str]
+    started_at: str
+    operator_states: list[OperatorRunState] = field(default_factory=list)
+
+
 class CleaningRuntime:
     """清洗运行时最小骨架。"""
 
@@ -281,36 +305,24 @@ class CleaningRuntime:
         run_id = run_options.run_id
         run_dir = self._cache_root / run_id
         start_at = datetime.now(timezone.utc).isoformat()
-
-        self._artifact_manager = ArtifactManager(run_dir / "artifacts")
-        parsed_operators = [
-            ParsedOperatorConfig(
-                operator_name=operator_spec.operator_name,
-                config=operator_spec.config,
-                config_hash=operator_spec.operator_config_hash,
-            )
-            for operator_spec in configured_operators
-        ]
-        planner = CleaningRunPlanner(self._registry)
-        plan = planner.compile(parsed_operators)
-
-        parameter_table = initialize_parameter_table(dataset)
-        evaluation_table = initialize_evaluation_table(parameter_table)
-        tables = CleaningTables(
-            parameter_table=parameter_table,
-            evaluation_table=evaluation_table,
-            operator_outputs={},
-            parameter_manifest={},
-        )
-
-        paths = build_run_paths(run_dir)
-        context = CleanerRunContext(
+        definition = self._build_planned_run_definition(
             run_id=run_id,
+            run_dir=run_dir,
             dataset=dataset,
-            dataset_fingerprint=dataset.fingerprint(),
-            cleaner_type="basic",
-            operator_configs=parsed_operators,
-            paths=paths,
+            configured_operators=configured_operators,
+        )
+        parameter_table = initialize_parameter_table(dataset)
+        session = _PlannedRunSession(
+            definition=definition,
+            tables=CleaningTables(
+                parameter_table=parameter_table,
+                evaluation_table=initialize_evaluation_table(parameter_table),
+                operator_outputs={},
+                parameter_manifest={},
+            ),
+            artifact_paths={},
+            relation_paths={},
+            started_at=start_at,
         )
 
         self.state_store = SQLiteRunStateStore.initialize(
@@ -319,7 +331,7 @@ class CleaningRuntime:
                 run_id=run_id,
                 cleaner_type="basic",
                 status="running",
-                dataset_fingerprint=dataset.fingerprint(),
+                dataset_fingerprint=definition.dataset_fingerprint,
                 plan_hash=graph.plan_hash,
                 label=run_options.label or "basic-run",
                 tags=run_options.tags,
@@ -336,88 +348,7 @@ class CleaningRuntime:
             "runtime",
             message="runtime started",
         )
-
-        attempt_count = 1
-        artifact_paths: dict[str, str] = {}
-        relation_paths: dict[str, str] = {}
-        operator_states: list[OperatorRunState] = []
-        try:
-            scheduler = ParameterScheduler(self._registry)
-            self._report(
-                RunEventContext(run_id),
-                "node_started",
-                "parameter.stage",
-                message="parameter stage started",
-            )
-            schedule_result = scheduler.run(plan.parameter_plan, context, tables, state_store=self.state_store)
-            tables = schedule_result.tables
-            self._report(
-                RunEventContext(run_id),
-                "node_completed",
-                "parameter.stage",
-                message="parameter stage completed",
-            )
-            write_tables(tables=tables, paths=paths)
-            artifact_paths = dict(schedule_result.artifact_paths)
-            relation_paths = dict(schedule_result.relation_paths)
-            self._save_run_state(
-                run_id=run_id,
-                dataset_fingerprint=dataset.fingerprint(),
-                parsed_operators=parsed_operators,
-                operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
-                paths=paths,
-                artifact_paths=artifact_paths,
-                relation_paths=relation_paths,
-                started_at=start_at,
-                finished_at="",
-                status="running",
-                operator_states=[],
-            )
-            return self._complete_planned_run(
-                run_id=run_id,
-                dataset_fingerprint=dataset.fingerprint(),
-                parsed_operators=parsed_operators,
-                plan=plan,
-                paths=paths,
-                tables=tables,
-                artifact_paths=artifact_paths,
-                relation_paths=relation_paths,
-                started_at=start_at,
-            )
-        # 运行边界必须在任意失败后持久化可恢复状态，再重新抛出原异常。
-        except Exception:  # noqa: BLE001
-            if paths.run_dir.exists():
-                write_tables(tables=tables, paths=paths)
-                self._save_run_state(
-                    run_id=run_id,
-                    dataset_fingerprint=dataset.fingerprint(),
-                    parsed_operators=parsed_operators,
-                    operator_config_hashes=plan.operator_config_hashes,
-                    parameter_config_hashes={
-                        step.computer_name: step.config_hash for step in plan.parameter_plan.steps
-                    },
-                    paths=paths,
-                    artifact_paths=artifact_paths,
-                    relation_paths=relation_paths,
-                    started_at=start_at,
-                    finished_at=datetime.now(timezone.utc).isoformat(),
-                    status="failed",
-                    operator_states=operator_states,
-                )
-            self._report(
-                RunEventContext(run_id),
-                "run_failed",
-                "runtime",
-                message="run failed",
-            )
-            self._set_run_status(run_id=run_id, status="failed")
-            return RuntimeRunResult(
-                run_id=run_id,
-                cache_root=self._cache_root,
-                status="failed",
-                attempt_count=attempt_count,
-            )
+        return self._execute_planned_run(session, require_run_dir_for_failure=True)
 
     def _resume_planned_graph(
         self,
@@ -431,6 +362,46 @@ class CleaningRuntime:
         """基于已有 run_dir 复用已完成参数节点并继续执行。"""
         run_id = run_options.run_id
         start_at = datetime.now(timezone.utc).isoformat()
+        definition = self._build_planned_run_definition(
+            run_id=run_id,
+            run_dir=run_dir,
+            dataset=dataset,
+            configured_operators=configured_operators,
+        )
+        persisted_state = JsonRunStateStore().load(definition.paths.state_path)
+        persisted_tables = read_tables(definition.paths)
+        session = _PlannedRunSession(
+            definition=definition,
+            tables=CleaningTables(
+                parameter_table=persisted_tables.parameter_table,
+                evaluation_table=initialize_evaluation_table(persisted_tables.parameter_table),
+                operator_outputs={},
+                parameter_manifest=persisted_tables.parameter_manifest,
+            ),
+            artifact_paths=dict(persisted_state.artifact_paths),
+            relation_paths=dict(persisted_state.relation_paths),
+            started_at=persisted_state.started_at or start_at,
+        )
+
+        self.state_store = SQLiteRunStateStore.open_existing(run_dir, run_id)
+        self._set_run_status(run_id=run_id, status="running")
+        self._report(
+            RunEventContext(run_id),
+            "run_started",
+            "runtime",
+            message="runtime resumed",
+        )
+        return self._execute_planned_run(session, reuse_completed_nodes=True)
+
+    def _build_planned_run_definition(
+        self,
+        *,
+        run_id: str,
+        run_dir: Path,
+        dataset: Dataset,
+        configured_operators: list[ConfiguredOperatorSpec],
+    ) -> _PlannedRunDefinition:
+        """编译 run/resume 共用的算子计划与运行上下文。"""
         self._artifact_manager = ArtifactManager(run_dir / "artifacts")
         parsed_operators = [
             ParsedOperatorConfig(
@@ -442,187 +413,202 @@ class CleaningRuntime:
         ]
         plan = CleaningRunPlanner(self._registry).compile(parsed_operators)
         paths = build_run_paths(run_dir)
-        persisted_state = JsonRunStateStore().load(paths.state_path)
-        persisted_tables = read_tables(paths)
-        tables = CleaningTables(
-            parameter_table=persisted_tables.parameter_table,
-            evaluation_table=initialize_evaluation_table(persisted_tables.parameter_table),
-            operator_outputs={},
-            parameter_manifest=persisted_tables.parameter_manifest,
-        )
-        context = CleanerRunContext(
+        dataset_fingerprint = dataset.fingerprint()
+        return _PlannedRunDefinition(
             run_id=run_id,
-            dataset=dataset,
-            dataset_fingerprint=dataset.fingerprint(),
-            cleaner_type="basic",
-            operator_configs=parsed_operators,
+            dataset_fingerprint=dataset_fingerprint,
+            parsed_operators=parsed_operators,
+            plan=plan,
             paths=paths,
+            context=CleanerRunContext(
+                run_id=run_id,
+                dataset=dataset,
+                dataset_fingerprint=dataset_fingerprint,
+                cleaner_type="basic",
+                operator_configs=parsed_operators,
+                paths=paths,
+            ),
         )
 
-        self.state_store = SQLiteRunStateStore.open_existing(run_dir, run_id)
-        self._set_run_status(run_id=run_id, status="running")
-        self._report(
-            RunEventContext(run_id),
-            "run_started",
-            "runtime",
-            message="runtime resumed",
-        )
-
-        artifact_paths = dict(persisted_state.artifact_paths)
-        relation_paths = dict(persisted_state.relation_paths)
-        operator_states: list[OperatorRunState] = []
+    def _execute_planned_run(
+        self,
+        session: _PlannedRunSession,
+        *,
+        reuse_completed_nodes: bool = False,
+        require_run_dir_for_failure: bool = False,
+    ) -> RuntimeRunResult:
+        """执行共享参数阶段，并统一进入完成或失败收尾。"""
         try:
-            completed_node_ids = {
-                node_id
-                for node_id, status in self.state_store.list_graph_node_statuses(run_id).items()
-                if status == "completed"
-            }
-            self._report(
-                RunEventContext(run_id),
-                "node_started",
-                "parameter.stage",
-                message="parameter stage started",
-            )
-            schedule_result = ParameterScheduler(self._registry).run(
-                plan.parameter_plan,
-                context,
-                tables,
-                state_store=self.state_store,
-                completed_node_ids=completed_node_ids,
-            )
-            tables = schedule_result.tables
-            self._report(
-                RunEventContext(run_id),
-                "node_completed",
-                "parameter.stage",
-                message="parameter stage completed",
-            )
-            artifact_paths.update(schedule_result.artifact_paths)
-            relation_paths.update(schedule_result.relation_paths)
-            write_tables(tables=tables, paths=paths)
-            self._save_run_state(
-                run_id=run_id,
-                dataset_fingerprint=dataset.fingerprint(),
-                parsed_operators=parsed_operators,
-                operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
-                paths=paths,
-                artifact_paths=artifact_paths,
-                relation_paths=relation_paths,
-                started_at=persisted_state.started_at or start_at,
-                finished_at="",
-                status="running",
-                operator_states=[],
-            )
-            return self._complete_planned_run(
-                run_id=run_id,
-                dataset_fingerprint=dataset.fingerprint(),
-                parsed_operators=parsed_operators,
-                plan=plan,
-                paths=paths,
-                tables=tables,
-                artifact_paths=artifact_paths,
-                relation_paths=relation_paths,
-                started_at=persisted_state.started_at or start_at,
-            )
-        # 恢复运行边界必须在任意失败后保存最新状态，再重新抛出原异常。
+            completed_node_ids = self._completed_parameter_node_ids(session) if reuse_completed_nodes else None
+            self._run_parameter_stage(session, completed_node_ids=completed_node_ids)
+            return self._complete_planned_run(session)
+        # 运行边界必须在任意失败后持久化可恢复状态，再返回原有失败结果。
         except Exception:  # noqa: BLE001
-            write_tables(tables=tables, paths=paths)
-            self._save_run_state(
-                run_id=run_id,
-                dataset_fingerprint=dataset.fingerprint(),
-                parsed_operators=parsed_operators,
-                operator_config_hashes=plan.operator_config_hashes,
-                parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
-                paths=paths,
-                artifact_paths=artifact_paths,
-                relation_paths=relation_paths,
-                started_at=persisted_state.started_at or start_at,
+            return self._finish_failed_planned_run(
+                session,
+                require_run_dir=require_run_dir_for_failure,
+            )
+
+    def _completed_parameter_node_ids(self, session: _PlannedRunSession) -> set[str]:
+        """读取恢复运行可以直接复用的 completed 参数节点。"""
+        if self.state_store is None:
+            raise RuntimeError("state store not initialized")
+        return {
+            node_id
+            for node_id, status in self.state_store.list_graph_node_statuses(session.definition.run_id).items()
+            if status == "completed"
+        }
+
+    def _run_parameter_stage(
+        self,
+        session: _PlannedRunSession,
+        *,
+        completed_node_ids: set[str] | None,
+    ) -> None:
+        """执行参数计划并持久化 evaluation 前的 running 快照。"""
+        definition = session.definition
+        self._report(
+            RunEventContext(definition.run_id),
+            "node_started",
+            "parameter.stage",
+            message="parameter stage started",
+        )
+        schedule_result = ParameterScheduler(self._registry).run(
+            definition.plan.parameter_plan,
+            definition.context,
+            session.tables,
+            state_store=self.state_store,
+            completed_node_ids=completed_node_ids,
+        )
+        session.tables = schedule_result.tables
+        self._report(
+            RunEventContext(definition.run_id),
+            "node_completed",
+            "parameter.stage",
+            message="parameter stage completed",
+        )
+        session.artifact_paths.update(schedule_result.artifact_paths)
+        session.relation_paths.update(schedule_result.relation_paths)
+        write_tables(tables=session.tables, paths=definition.paths)
+        self._save_planned_run_snapshot(session, status="running", finished_at="")
+
+    def _finish_failed_planned_run(
+        self,
+        session: _PlannedRunSession,
+        *,
+        require_run_dir: bool,
+    ) -> RuntimeRunResult:
+        """按既有 run/resume 语义保存失败快照并更新 SQLite。"""
+        definition = session.definition
+        if not require_run_dir or definition.paths.run_dir.exists():
+            write_tables(tables=session.tables, paths=definition.paths)
+            self._save_planned_run_snapshot(
+                session,
+                status="failed",
                 finished_at=datetime.now(timezone.utc).isoformat(),
-                status="failed",
-                operator_states=operator_states,
             )
-            self._report(
-                RunEventContext(run_id),
-                "run_failed",
-                "runtime",
-                message="run failed",
-            )
-            self._set_run_status(run_id=run_id, status="failed")
-            return RuntimeRunResult(
-                run_id=run_id,
-                cache_root=self._cache_root,
-                status="failed",
-                attempt_count=1,
-            )
+        self._report(
+            RunEventContext(definition.run_id),
+            "run_failed",
+            "runtime",
+            message="run failed",
+        )
+        self._set_run_status(run_id=definition.run_id, status="failed")
+        return RuntimeRunResult(
+            run_id=definition.run_id,
+            cache_root=self._cache_root,
+            status="failed",
+            attempt_count=1,
+        )
+
+    def _save_planned_run_snapshot(
+        self,
+        session: _PlannedRunSession,
+        *,
+        status: str,
+        finished_at: str,
+    ) -> None:
+        """把计划运行会话转换为既有 state.json 快照。"""
+        definition = session.definition
+        self._save_run_state(
+            run_id=definition.run_id,
+            dataset_fingerprint=definition.dataset_fingerprint,
+            parsed_operators=definition.parsed_operators,
+            operator_config_hashes=definition.plan.operator_config_hashes,
+            parameter_config_hashes={
+                step.computer_name: step.config_hash for step in definition.plan.parameter_plan.steps
+            },
+            paths=definition.paths,
+            artifact_paths=session.artifact_paths,
+            relation_paths=session.relation_paths,
+            started_at=session.started_at,
+            finished_at=finished_at,
+            status=status,
+            operator_states=session.operator_states,
+        )
 
     def _complete_planned_run(
         self,
-        *,
-        run_id: str,
-        dataset_fingerprint: str,
-        parsed_operators: list[ParsedOperatorConfig],
-        plan: CompiledCleaningPlan,
-        paths: CleanerRunPaths,
-        tables: CleaningTables,
-        artifact_paths: dict[str, str],
-        relation_paths: dict[str, str],
-        started_at: str,
+        session: _PlannedRunSession,
     ) -> RuntimeRunResult:
         """执行 evaluation/merge，并把最终状态写回运行目录。"""
         if self.state_store is None:
             raise RuntimeError("state store not initialized")
 
+        definition = session.definition
         evaluator = OperatorEvaluator()
-        operator_states: list[OperatorRunState] = []
-        for resolved in plan.resolved_operator_runs:
+        for resolved in definition.plan.resolved_operator_runs:
             node_id = f"evaluation.{resolved.spec.name}"
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_started",
                 node_id,
                 message=f"{node_id} started",
             )
             self.state_store.record_node_started(node_id)
             try:
-                tables, operator_state = evaluator.evaluate(resolved, tables)
+                tables, operator_state = evaluator.evaluate(resolved, session.tables)
             except Exception:
                 self.state_store.record_node_failed(node_id)
                 self._report(
-                    RunEventContext(run_id),
+                    RunEventContext(definition.run_id),
                     "node_failed",
                     node_id,
                     message=f"{node_id} failed",
                 )
                 raise
+            session.tables = tables
+            session.operator_states.append(operator_state)
             self.state_store.record_node_completed(node_id)
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_completed",
                 node_id,
                 message=f"{node_id} completed",
             )
-            operator_states.append(operator_state)
 
         merge_node_id = "merge.final_action"
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "node_started",
             merge_node_id,
             message="merge.final_action started",
         )
         self.state_store.record_node_started(merge_node_id)
         try:
-            tables = CleaningTables(
-                parameter_table=tables.parameter_table,
-                evaluation_table=apply_final_action(tables.evaluation_table, tables.operator_outputs),
-                operator_outputs=tables.operator_outputs,
-                parameter_manifest=tables.parameter_manifest,
+            session.tables = CleaningTables(
+                parameter_table=session.tables.parameter_table,
+                evaluation_table=apply_final_action(
+                    session.tables.evaluation_table,
+                    session.tables.operator_outputs,
+                ),
+                operator_outputs=session.tables.operator_outputs,
+                parameter_manifest=session.tables.parameter_manifest,
             )
         except Exception:
             self.state_store.record_node_failed(merge_node_id)
             self._report(
-                RunEventContext(run_id),
+                RunEventContext(definition.run_id),
                 "node_failed",
                 merge_node_id,
                 message="merge.final_action failed",
@@ -630,35 +616,26 @@ class CleaningRuntime:
             raise
         self.state_store.record_node_completed(merge_node_id)
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "node_completed",
             merge_node_id,
             message="merge.final_action completed",
         )
-        write_tables(tables=tables, paths=paths)
-        self._save_run_state(
-            run_id=run_id,
-            dataset_fingerprint=dataset_fingerprint,
-            parsed_operators=parsed_operators,
-            operator_config_hashes=plan.operator_config_hashes,
-            parameter_config_hashes={step.computer_name: step.config_hash for step in plan.parameter_plan.steps},
-            paths=paths,
-            artifact_paths=artifact_paths,
-            relation_paths=relation_paths,
-            started_at=started_at,
+        write_tables(tables=session.tables, paths=definition.paths)
+        self._save_planned_run_snapshot(
+            session,
             finished_at=datetime.now(timezone.utc).isoformat(),
             status="completed",
-            operator_states=operator_states,
         )
         self._report(
-            RunEventContext(run_id),
+            RunEventContext(definition.run_id),
             "run_completed",
             "runtime",
             message="run completed",
         )
-        self._set_run_status(run_id=run_id, status="completed")
+        self._set_run_status(run_id=definition.run_id, status="completed")
         return RuntimeRunResult(
-            run_id=run_id,
+            run_id=definition.run_id,
             cache_root=self._cache_root,
             status="completed",
             attempt_count=1,
