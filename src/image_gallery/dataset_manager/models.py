@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
 import pandas as pd
@@ -26,7 +26,7 @@ class DatasetView:
     ref_name: str
     ref_type: str
     _manager: DatasetManager
-    _provenance: str | None = None
+    _provenance: str | None = field(default=None, init=False, repr=False, compare=False)
 
     @property
     def dataset(self) -> Dataset:

@@ -16,7 +16,7 @@
 
 - [x] 3.1 先补充组合发布测试，覆盖显式 Checkpoint 名称、未请求 Checkpoint、名称冲突及中途失败恢复；自动命名留给后续 Cleaner change。
 - [x] 3.2 将显式 Schema additions、候选数据、Branch Head 发布和可选 Checkpoint 纳入同一个可恢复 history operation，并让 `CommitResult` 返回最终 View 与可选 Checkpoint 信息。
-- [ ] 3.3 为同一 Dataset 的 API operation 与 recovery 增加共享串行化保护；同时需要 Schema lock 时固定先 Repo 后 Dataset 的锁顺序，并覆盖 PostgreSQL advisory lock、同 Backend identity 的两个本地 Manager、两个 recoverer、API/recovery 并发及持锁后状态重查。
+- [x] 3.3 为同一 Dataset 的 API operation 与 recovery 增加共享串行化保护；同时需要 Schema lock 时固定先 Repo 后 Dataset 的锁顺序，并覆盖 PostgreSQL advisory lock、同 Backend identity 的两个本地 Manager、两个 recoverer、API/recovery 并发及持锁后状态重查。
 - [x] 3.4 补充各崩溃阶段与中间态可见性测试：active operation 阻断普通 Head/Checkpoint/Schema discovery；data/ref-only 时既有固定 View 可读，含 Schema additions 时其 schema-dependent IO 被阻断；恢复后不永久缺失或重复创建 Checkpoint。
 - [x] 3.5 补充 Schema additions 与数据/Checkpoint 的组合发布测试，覆盖 schema-only、非法 nested value 在 operation 前失败及无隐式 Dataset Checkpoint 自动命名。
 - [x] 3.6 覆盖 snapshotless 空 Dataset 的 empty replace：不请求 Checkpoint 时保持无 Snapshot no-op，请求时创建首个空 Snapshot 与 Checkpoint且 changed=False。
@@ -52,7 +52,7 @@
 
 ## 8. 完成验证与文档收敛准备
 
-- [ ] 8.1 运行 DatasetManager 定向单元测试和契约测试，确认新增失败用例在实现前有效、实现后通过。
-- [ ] 8.2 运行 `uv run python -m tools.ci format-check`、`lint`、`docs`、`test` 与 `coverage`。
-- [ ] 8.3 运行 `uv run python -m tools.ci dataset-backend`，验证 PostgreSQL、pgvector、PyIceberg 与 S3-compatible Backend 的真实原子性和恢复行为。
-- [ ] 8.4 更新 DatasetManager 模块文档与面向人的 README，说明默认 `replace`、历史保留、commit/Checkpoint、固定 View 分支、owner 导航和 typed Schema 契约；最终归档前由 `sync-docs` 收敛。
+- [x] 8.1 运行 DatasetManager 定向单元测试和契约测试，确认新增失败用例在实现前有效、实现后通过。
+- [x] 8.2 运行 `uv run python -m tools.ci format-check`、`lint`、`docs`、`test` 与 `coverage`。
+- [x] 8.3 运行 `uv run python -m tools.ci dataset-backend`，验证 PostgreSQL、pgvector、PyIceberg 与 S3-compatible Backend 的真实原子性和恢复行为。
+- [x] 8.4 更新 DatasetManager 模块文档与面向人的 README，说明默认 `replace`、历史保留、commit/Checkpoint、固定 View 分支、owner 导航和 typed Schema 契约；最终归档前由 `sync-docs` 收敛。

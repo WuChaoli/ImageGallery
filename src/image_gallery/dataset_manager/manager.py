@@ -484,15 +484,16 @@ class DatasetManager:
             ref_name=ref_name,
             ref_type=ref_type,
         )
-        return DatasetView(
+        view = DatasetView(
             repo_id,
             dataset_id,
             snapshot_id,
             ref_name,
             ref_type,
             self,
-            provenance,
         )
+        object.__setattr__(view, "_provenance", provenance)
+        return view
 
     def _view_signature(
         self,

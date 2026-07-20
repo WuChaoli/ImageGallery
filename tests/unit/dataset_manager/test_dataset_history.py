@@ -170,8 +170,8 @@ def test_view_owner_navigation_uses_immutable_ids_and_visibility(tmp_path: Path)
         ref_name="other",
         ref_type=view.ref_type,
         _manager=dataset._manager,  # pyright: ignore[reportPrivateUsage]
-        _provenance=view._provenance,  # pyright: ignore[reportPrivateUsage]
     )
+    object.__setattr__(tampered, "_provenance", view._provenance)  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(ValidationError, match="DatasetManager"):
         _ = tampered.dataset
     with pytest.raises(ValidationError, match="DatasetManager"):

@@ -24,6 +24,7 @@ def test_postgres_migration_creates_isolated_schemas_and_relations(dataset_postg
     assert {"control", "vectors", "iceberg_catalog"} <= set(inspector.get_schema_names())
     assert set(inspector.get_table_names(schema="control")) == {
         "alembic_version",
+        "dataset_name_reservations",
         "datasets",
         "model_definitions",
         "operation_phases",
