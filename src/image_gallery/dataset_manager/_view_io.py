@@ -35,14 +35,31 @@ class ViewIO:
         """从 View 固定 Snapshot 扫描指定物理列。"""
         dataset = self._dataset(view=view)
         table = self._catalog.load_table(dataset.table_identifier)
-        known_columns = {field.name for field in table.schema().fields}
-        if columns is not None and not set(columns).issubset(known_columns):
+        current_columns = [field.name for field in table.schema().fields]
+        known_columns = set(current_columns)
+        requested = current_columns if columns is None else columns
+        if not set(requested).issubset(known_columns):
             raise ValidationError("Unknown Physical Schema column")
         if view.snapshot_id is None:
             return []
-        selected = tuple(columns) if columns is not None else ("*",)
-        arrow_table = table.scan(snapshot_id=view.snapshot_id, selected_fields=selected).to_arrow()
-        return cast(list[dict[str, object]], arrow_table.to_pylist())
+        snapshot = table.snapshot_by_id(view.snapshot_id)
+        if snapshot is None:
+            raise ObjectNotFoundError(str(view.snapshot_id))
+        snapshot_schema_id = snapshot.schema_id
+        if snapshot_schema_id is None:
+            raise ObjectNotFoundError(f"Snapshot Schema: {view.snapshot_id}")
+        snapshot_schema = table.schemas().get(snapshot_schema_id)
+        if snapshot_schema is None:
+            raise ObjectNotFoundError(f"Snapshot Schema: {snapshot_schema_id}")
+        snapshot_columns = {field.name for field in snapshot_schema.fields}
+        available = [name for name in requested if name in snapshot_columns]
+        query_columns = available or ["asset_id"]
+        stored_rows = cast(
+            list[dict[str, object]],
+            table.scan(snapshot_id=view.snapshot_id, selected_fields=tuple(query_columns)).to_arrow().to_pylist(),
+        )
+        # Schema 是 Table 级；固定旧 Snapshot 对后来新增的 optional 列补 null。
+        return [{name: row.get(name) for name in requested} for row in stored_rows]
 
     def scan_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
         """按调用方字段顺序返回物理列和显式 Repo 当前向量。"""

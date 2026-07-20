@@ -76,3 +76,15 @@ def test_column_spec_is_accepted_as_canonicalization_contract() -> None:
     column = ColumnSpec("annotations", nested_type())
 
     assert canonicalize_value(column.field_type, [], required=column.required, path=column.name) == []
+
+
+def test_nested_list_keeps_null_empty_and_nested_values_distinct() -> None:
+    nested_list = ListFieldType(ListFieldType("integer", element_required=False), element_required=False)
+
+    assert canonicalize_value(nested_list, None, required=False, path="matrix") is None
+    assert canonicalize_value(nested_list, [], required=False, path="matrix") == []
+    assert canonicalize_value(nested_list, [None, [], [1, None]], required=False, path="matrix") == [
+        None,
+        [],
+        [1, None],
+    ]

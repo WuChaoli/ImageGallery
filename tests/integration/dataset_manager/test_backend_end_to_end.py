@@ -1,5 +1,6 @@
 import logging
 import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
@@ -10,7 +11,15 @@ import pytest
 from PIL import Image
 from tests.helpers.dataset_manager_importer import DatasetManagerTestImporter
 
-from image_gallery.dataset_manager import ConflictError, DatasetManager, ValidationError
+from image_gallery.dataset_manager import (
+    ColumnSpec,
+    ConflictError,
+    DatasetManager,
+    ListFieldType,
+    StructField,
+    StructFieldType,
+    ValidationError,
+)
 from image_gallery.importers import LocalPathParser
 from image_gallery.model_manager import ModelDefinition, ModelManager
 from image_gallery.storage_manager import StorageManager
@@ -294,6 +303,66 @@ def test_real_backend_complete_dataset_lifecycle(
                 assert renamed.tag_id == tag.tag_id
                 for row in reopened_dataset.open_checkpoint(name="v1").scan().to_dict(orient="records"):
                     assert row["tag_ids"] == [tag.tag_id]
+
+
+def test_postgres_materialize_round_trips_deeply_nested_values(
+    dataset_postgres_url: str,
+    dataset_catalog_url: str,
+    dataset_warehouse: str,
+    tmp_path: Path,
+) -> None:
+    """验证 PostgreSQL journal 与 Iceberg 保持深层 nested 值。"""
+    with StorageManager() as storage:
+        prefix = storage.register_file_prefix(name="nested", root=tmp_path / "images")
+        with DatasetManager.postgres(
+            control_url=dataset_postgres_url,
+            catalog_url=dataset_catalog_url,
+            warehouse=dataset_warehouse,
+            storage_manager=storage,
+        ) as manager:
+            repo = manager.create_repo(name=f"Nested-{uuid.uuid4().hex}")
+            repo.bind_storage_prefix(prefix_id=prefix.prefix_id)
+            source = repo.create_dataset(name="Source")
+            stored = storage.write_managed(prefix_id=prefix.prefix_id, data=b"image")
+            nested_columns = (
+                ColumnSpec("nullable_items", ListFieldType("string")),
+                ColumnSpec(
+                    "all_null_nested",
+                    StructFieldType(
+                        (
+                            StructField("values", ListFieldType("long")),
+                            StructField("note", "string"),
+                        )
+                    ),
+                ),
+                ColumnSpec(
+                    "matrix",
+                    ListFieldType(ListFieldType("long", element_required=False), element_required=False),
+                ),
+            )
+            row = {
+                "asset_id": stored.asset_id,
+                "storage_prefix_id": stored.storage_prefix_id,
+                "relative_path": stored.relative_path,
+                "source_uri": None,
+                "tag_ids": [],
+                "nullable_items": None,
+                "all_null_nested": {"values": None, "note": None},
+                "matrix": [None, [], [1, None]],
+            }
+            fixed = source.commit(
+                branch="main",
+                base=source.open_branch(),
+                frame=pd.DataFrame([row]),
+                schema_additions=nested_columns,
+            ).view
+
+            materialized = repo.materialize_dataset(source=fixed, name="Nested", frame=fixed.scan())
+
+            assert materialized.view.scan().to_dict(orient="records") == [row]
+            assert [materialized.dataset.schema.get_column(name=item.name) for item in nested_columns] == list(
+                nested_columns
+            )
 
 
 def storage_bytes(

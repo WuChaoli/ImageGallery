@@ -11,6 +11,7 @@ from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+from image_gallery.dataset_manager._dataset_names import dataset_name_key
 from image_gallery.dataset_manager.control import dataset_name_reservations, datasets, operation_phases, operations
 from image_gallery.dataset_manager.errors import NameConflictError, ValidationError
 
@@ -72,9 +73,7 @@ class OperationJournal:
         intent: dict[str, object],
     ) -> str:
         """原子创建 active operation 并唯一预留 Repo 内 Dataset 名称。"""
-        name_key = dataset_name.strip().casefold()
-        if not name_key:
-            raise ValidationError("Dataset name cannot be empty")
+        name_key = dataset_name_key(dataset_name)
         operation_id = uuid.uuid4().hex
         try:
             with self._engine.begin() as connection:

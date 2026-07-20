@@ -6,7 +6,7 @@ import hashlib
 import hmac
 import re
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -20,6 +20,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
 from image_gallery.dataset_manager._dataset_history import DatasetHistory
+from image_gallery.dataset_manager._dataset_names import dataset_name_key, normalize_dataset_name
 from image_gallery.dataset_manager._embedding import EmbeddingService
 from image_gallery.dataset_manager._history_lock import DatasetHistoryLock
 from image_gallery.dataset_manager._operation_journal import OperationJournal
@@ -63,7 +64,7 @@ SYSTEM_SCHEMA = Schema(
     NestedField(2, "storage_prefix_id", StringType(), required=True),
     NestedField(3, "relative_path", StringType(), required=True),
     NestedField(4, "source_uri", StringType(), required=False),
-    NestedField(5, "tag_ids", ListType(6, StringType(), element_required=True), required=True),
+    NestedField(5, "tag_ids", ListType(6, StringType(), element_required=False), required=True),
     identifier_field_ids=[1],
 )
 _ASSET_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
@@ -249,40 +250,32 @@ class DatasetManager:
         return [self._repo_from_record(record) for record in self._repositories.list_repos()]
 
     def _create_dataset(self, *, repo: DatasetRepo, name: str) -> Dataset:
+        normalized_name = normalize_dataset_name(name)
         dataset_id = uuid.uuid4().hex
         table_identifier = f"{repo.namespace}.d_{dataset_id[:12]}"
-        operation_id = self._operations.start(
+        intent: dict[str, object] = {
+            "dataset_id": dataset_id,
+            "repo_id": repo.repo_id,
+            "name": normalized_name,
+            "name_key": dataset_name_key(normalized_name),
+            "table_identifier": table_identifier,
+        }
+        operation_id = self._operations.start_with_dataset_name_reservation(
             kind="create_dataset",
             repo_id=repo.repo_id,
             dataset_id=dataset_id,
-            intent={
-                "dataset_id": dataset_id,
-                "repo_id": repo.repo_id,
-                "name": name,
-                "name_key": name.casefold(),
-                "table_identifier": table_identifier,
-            },
+            dataset_name=normalized_name,
+            intent=intent,
         )
         try:
-            self.catalog.create_table(table_identifier, schema=SYSTEM_SCHEMA)
-            self._operations.record_phase(operation_id=operation_id, phase="table_created")
-            self._repositories.register_dataset(
-                operation_id=operation_id,
-                record=DatasetRecord(
-                    repo_id=repo.repo_id,
-                    dataset_id=dataset_id,
-                    name=name,
-                    table_identifier=table_identifier,
-                ),
-                name_key=name.casefold(),
-            )
+            self._history._recover_create_dataset(operation_id=operation_id, intent=intent)
         except IntegrityError as exc:
             self._operations.fail(operation_id=operation_id)
-            raise NameConflictError(name) from exc
+            raise NameConflictError(normalized_name) from exc
         return Dataset(
             repo_id=repo.repo_id,
             dataset_id=dataset_id,
-            name=name,
+            name=normalized_name,
             table_identifier=table_identifier,
             _manager=self,
         )
@@ -418,7 +411,7 @@ class DatasetManager:
         source: DatasetView,
         name: str,
         frame: pd.DataFrame,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        schema_additions: Sequence[ColumnSpec],
         checkpoint_name: str | None,
     ) -> MaterializeResult:
         return self._history.materialize_dataset(
@@ -557,7 +550,7 @@ class DatasetManager:
         frame: pd.DataFrame,
         mode: CommitMode,
         fields: list[str] | None,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        schema_additions: Sequence[ColumnSpec],
         checkpoint_name: str | None,
     ) -> CommitResult:
         if schema_additions:

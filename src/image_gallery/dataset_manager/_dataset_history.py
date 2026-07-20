@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, cast
 
 import pandas as pd
@@ -15,6 +16,7 @@ from pyiceberg.table.refs import SnapshotRefType
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine
 
+from image_gallery.dataset_manager._dataset_names import dataset_name_key, normalize_dataset_name
 from image_gallery.dataset_manager._history_lock import DatasetHistoryLock
 from image_gallery.dataset_manager._operation_journal import OperationJournal, PendingOperation
 from image_gallery.dataset_manager._physical_schema import (
@@ -24,7 +26,7 @@ from image_gallery.dataset_manager._physical_schema import (
 )
 from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryStore
 from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
-from image_gallery.dataset_manager.control import asset_vectors, datasets, operations, pending_asset_vectors
+from image_gallery.dataset_manager.control import asset_vectors, operations, pending_asset_vectors
 from image_gallery.dataset_manager.errors import (
     ConflictError,
     NameConflictError,
@@ -140,6 +142,7 @@ class DatasetHistory:
         table_identifier = str(intent["table_identifier"])
         if not self.catalog.table_exists(table_identifier):
             self.catalog.create_table(table_identifier, schema=self._system_schema)
+        self._operations.record_phase(operation_id=operation_id, phase="table_created")
         self._register_dataset_from_intent(operation_id=operation_id, intent=intent)
 
     def _recover_clone(self, *, operation_id: str, intent: dict[str, object]) -> None:
@@ -273,7 +276,7 @@ class DatasetHistory:
         self._operations.finalize(operation_id=operation_id)
 
     def _register_dataset_from_intent(self, *, operation_id: str, intent: dict[str, object]) -> None:
-        self._repositories.register_dataset(
+        self._repositories.register_reserved_dataset(
             operation_id=operation_id,
             record=DatasetRecord(
                 dataset_id=str(intent["dataset_id"]),
@@ -282,7 +285,6 @@ class DatasetHistory:
                 table_identifier=str(intent["table_identifier"]),
             ),
             name_key=str(intent["name_key"]),
-            only_if_missing=True,
         )
 
     @staticmethod
@@ -457,35 +459,27 @@ class DatasetHistory:
             raise ValidationError("Clone source must belong to the target DatasetRepo")
         if source.snapshot_id is None:
             raise ValidationError("Clone source must reference a concrete Snapshot")
-        with self._engine.connect() as connection:
-            if (
-                connection.execute(
-                    select(datasets.c.dataset_id).where(
-                        datasets.c.repo_id == repo.repo_id,
-                        datasets.c.name_key == name.casefold(),
-                    )
-                ).first()
-                is not None
-            ):
-                raise NameConflictError(name)
+        normalized_name = normalize_dataset_name(name)
         dataset_id = uuid.uuid4().hex
         table_identifier = f"{repo.namespace}.d_{dataset_id[:12]}"
         source_dataset = self._manager._dataset_by_id(repo_id=source.repo_id, dataset_id=source.dataset_id)
         source_table = self.catalog.load_table(source_dataset.table_identifier)
         rows = self._manager._scan_view(view=source, columns=None)
-        operation_id = self._operations.start(
+        intent: dict[str, object] = {
+            "dataset_id": dataset_id,
+            "repo_id": repo.repo_id,
+            "name": normalized_name,
+            "name_key": dataset_name_key(normalized_name),
+            "table_identifier": table_identifier,
+            "source_table_identifier": source_dataset.table_identifier,
+            "source_snapshot_id": source.snapshot_id,
+        }
+        operation_id = self._operations.start_with_dataset_name_reservation(
             kind="clone",
             repo_id=repo.repo_id,
             dataset_id=dataset_id,
-            intent={
-                "dataset_id": dataset_id,
-                "repo_id": repo.repo_id,
-                "name": name,
-                "name_key": name.casefold(),
-                "table_identifier": table_identifier,
-                "source_table_identifier": source_dataset.table_identifier,
-                "source_snapshot_id": source.snapshot_id,
-            },
+            dataset_name=normalized_name,
+            intent=intent,
         )
         self.catalog.create_table(table_identifier, schema=self._system_schema)
         cloned_table = self.catalog.load_table(table_identifier)
@@ -498,12 +492,12 @@ class DatasetHistory:
             intent={
                 "dataset_id": dataset_id,
                 "repo_id": repo.repo_id,
-                "name": name,
-                "name_key": name.casefold(),
+                "name": normalized_name,
+                "name_key": dataset_name_key(normalized_name),
                 "table_identifier": table_identifier,
             },
         )
-        return Dataset(repo.repo_id, dataset_id, name, table_identifier, self._manager)
+        return Dataset(repo.repo_id, dataset_id, normalized_name, table_identifier, self._manager)
 
     def materialize_dataset(  # noqa: C901
         self,
@@ -512,7 +506,7 @@ class DatasetHistory:
         source: DatasetView,
         name: str,
         frame: pd.DataFrame,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        schema_additions: Sequence[ColumnSpec],
         checkpoint_name: str | None,
     ) -> MaterializeResult:
         """从固定 View 的 Repo 语义原子物化独立 Dataset。"""
@@ -531,6 +525,7 @@ class DatasetHistory:
                 raise ValidationError("Checkpoint name cannot be empty")
             if checkpoint_name == "main":
                 raise NameConflictError(checkpoint_name)
+        normalized_name = normalize_dataset_name(name)
 
         with self._schema_lock.hold(repo_id=repo.repo_id):
             self.assert_dataset_visible(dataset_id=source.dataset_id)
@@ -538,10 +533,14 @@ class DatasetHistory:
             if source_table.snapshot_by_id(source.snapshot_id) is None:
                 raise ValidationError(f"Source Snapshot does not exist: {source.snapshot_id}")
             source_schema = [column_spec_from_iceberg(field) for field in source_table.schema().fields]
-            by_key = {column.name.casefold(): column for column in source_schema}
+            by_key = {column.name.strip().casefold(): column for column in source_schema}
+            vector_keys = {
+                item.name.strip().casefold()
+                for item in self._manager._list_vector_fields(repo=self._manager._repo_by_id(repo.repo_id))
+            }
             target_schema = list(source_schema)
             for addition in schema_additions:
-                key = addition.name.casefold()
+                key = addition.name.strip().casefold()
                 existing = by_key.get(key)
                 if existing is not None:
                     if existing != addition:
@@ -549,10 +548,15 @@ class DatasetHistory:
                     continue
                 if addition.required or addition.name in self._system_fields:
                     raise ValidationError("Materialized business columns must be optional")
+                if key in vector_keys:
+                    raise ValidationError(f"Physical Schema column conflicts with VectorField: {addition.name}")
                 by_key[key] = addition
                 target_schema.append(addition)
 
             column_specs = {column.name: column for column in target_schema}
+            frame_columns = [str(column) for column in frame.columns]
+            if frame.empty and (len(frame_columns) != len(column_specs) or set(frame_columns) != set(column_specs)):
+                raise ValidationError("Empty materialize frame must contain every target Physical Schema column")
             records = cast(list[dict[str, object]], frame.to_dict(orient="records"))
             normalized_rows = [
                 self._manager._normalize_row(
@@ -584,8 +588,8 @@ class DatasetHistory:
             intent: dict[str, object] = {
                 "dataset_id": dataset_id,
                 "repo_id": repo.repo_id,
-                "name": name,
-                "name_key": name.strip().casefold(),
+                "name": normalized_name,
+                "name_key": dataset_name_key(normalized_name),
                 "table_identifier": table_identifier,
                 "source_dataset_id": source.dataset_id,
                 "source_snapshot_id": source.snapshot_id,
@@ -598,12 +602,12 @@ class DatasetHistory:
                     kind="materialize",
                     repo_id=repo.repo_id,
                     dataset_id=dataset_id,
-                    dataset_name=name,
+                    dataset_name=normalized_name,
                     intent=intent,
                 )
                 self._recover_materialize(operation_id=operation_id, intent=intent)
 
-        dataset = Dataset(repo.repo_id, dataset_id, name, table_identifier, self._manager)
+        dataset = Dataset(repo.repo_id, dataset_id, normalized_name, table_identifier, self._manager)
         table = self.catalog.load_table(table_identifier)
         current = table.current_snapshot()
         if current is None:
@@ -839,7 +843,7 @@ class DatasetHistory:
         frame: pd.DataFrame,
         mode: CommitMode,
         fields: list[str] | None,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        schema_additions: Sequence[ColumnSpec],
         checkpoint_name: str | None,
     ) -> CommitResult:
         """规范化 DataFrame 并提交到目标 Branch。"""
@@ -891,7 +895,7 @@ class DatasetHistory:
         base: DatasetView,
         rows: list[dict[str, object]],
         mode: CommitMode = "upsert",
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        schema_additions: Sequence[ColumnSpec] = (),
         checkpoint_name: str | None = None,
         frame_columns: list[str] | None = None,
     ) -> CommitResult:

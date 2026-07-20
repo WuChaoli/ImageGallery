@@ -113,3 +113,42 @@ def test_annotation_v1_round_trips_commit_checkpoint_and_branch(tmp_path: Path) 
     for view in (committed, checkpoint, branch):
         actual = {str(row["asset_id"]): row["annotations"] for row in view.scan().to_dict(orient="records")}
         assert actual == expected
+
+
+def test_annotation_v1_round_trips_materialize(tmp_path: Path) -> None:
+    storage = StorageManager()
+    manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
+    prefix = storage.register_file_prefix(name="images", root=tmp_path / "images")
+    repo = manager.create_repo(name="Vision")
+    repo.bind_storage_prefix(prefix_id=prefix.prefix_id)
+    source = repo.create_dataset(name="Raw")
+    stored = storage.write_managed(prefix_id=prefix.prefix_id, data=b"image")
+    annotation = voc_bbox_to_annotation(
+        label="person",
+        xmin=10,
+        ymin=20,
+        xmax=60,
+        ymax=70,
+        width=100,
+        height=100,
+    )
+    row = {
+        "asset_id": stored.asset_id,
+        "storage_prefix_id": stored.storage_prefix_id,
+        "relative_path": stored.relative_path,
+        "source_uri": None,
+        "tag_ids": [],
+    }
+    fixed = source.commit(branch="main", base=source.open_branch(), frame=pd.DataFrame([row])).view
+    frame = fixed.scan()
+    frame["annotations"] = pd.Series([[annotation]], dtype=object)
+
+    result = repo.materialize_dataset(
+        source=fixed,
+        name="Annotated",
+        frame=frame,
+        schema_additions=(annotation_column(),),
+    )
+
+    assert result.view.scan().iloc[0]["annotations"] == [annotation]
+    assert result.dataset.schema.get_column(name="annotations") == annotation_column()

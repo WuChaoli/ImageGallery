@@ -9,6 +9,7 @@ from typing import Literal, cast
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine, RowMapping
 
+from image_gallery.dataset_manager._dataset_names import dataset_name_key
 from image_gallery.dataset_manager.control import (
     dataset_name_reservations,
     datasets,
@@ -183,7 +184,7 @@ class RepositoryStore:
         """按 Repo 与大小写不敏感名称返回 Dataset 记录。"""
         statement = select(datasets).where(
             datasets.c.repo_id == repo_id,
-            datasets.c.name_key == name.casefold(),
+            datasets.c.name_key == dataset_name_key(name),
         )
         with self._engine.connect() as connection:
             row = connection.execute(statement).mappings().one_or_none()

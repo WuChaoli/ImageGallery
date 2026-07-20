@@ -148,7 +148,7 @@ def test_dataset_schema_returns_typed_columns_and_accepts_column_spec(tmp_path: 
     ]
     assert columns[4] == ColumnSpec(
         "tag_ids",
-        ListFieldType("string", element_required=True),
+        ListFieldType("string", element_required=False),
         required=True,
     )
     assert view.snapshot_id is None

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -155,7 +155,7 @@ class Dataset:
         frame: pd.DataFrame,
         mode: CommitMode = "replace",
         fields: list[str] | None = None,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        schema_additions: Sequence[ColumnSpec] = (),
         checkpoint_name: str | None = None,
     ) -> CommitResult:
         """按显式模式推进目标 Branch，并可原子新增列与创建 Checkpoint。"""
@@ -287,7 +287,7 @@ class DatasetRepo:
         source: DatasetView,
         name: str,
         frame: pd.DataFrame,
-        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        schema_additions: Sequence[ColumnSpec] = (),
         checkpoint_name: str | None = None,
     ) -> MaterializeResult:
         """从同 Repo 固定 View 原子创建独立 Dataset 当前状态。"""

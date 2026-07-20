@@ -136,7 +136,7 @@ def test_nested_field_ids_are_unique_stable_after_reopen_and_reallocated_for_clo
         "relative_path": stored.relative_path,
         "source_uri": None,
         "tag_ids": [],
-        "detections": [],
+        "detections": [{"label": "cat", "attributes": {"score": 0.9, "rank": 1}}],
     }
     fixed = source.commit(branch="main", base=base, frame=pd.DataFrame([row])).view
 
@@ -164,6 +164,7 @@ def test_nested_field_ids_are_unique_stable_after_reopen_and_reallocated_for_clo
     assert len(cloned_ids) == len(set(cloned_ids))
     assert len(all_cloned_ids) == len(set(all_cloned_ids))
     assert cloned.schema.get_column(name="detections") == nested
+    assert cloned.open_branch().scan().iloc[0]["detections"] == row["detections"]
 
 
 def test_clone_is_hidden_and_recovered_after_candidate_interruption(tmp_path: Path) -> None:
@@ -201,3 +202,29 @@ def test_clone_is_hidden_and_recovered_after_candidate_interruption(tmp_path: Pa
     assert recovered.open_repo(name="Vision").open_dataset(name="Clone").open_branch().scan().to_dict(
         orient="records"
     ) == [row]
+
+
+def test_create_and_clone_normalize_dataset_names(tmp_path: Path) -> None:
+    storage = StorageManager()
+    manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
+    prefix = storage.register_file_prefix(name="images", root=tmp_path / "images")
+    repo = manager.create_repo(name="Vision")
+    repo.bind_storage_prefix(prefix_id=prefix.prefix_id)
+    source = repo.create_dataset(name="Source")
+    stored = storage.write_managed(prefix_id=prefix.prefix_id, data=b"image")
+    row = {
+        "asset_id": stored.asset_id,
+        "storage_prefix_id": stored.storage_prefix_id,
+        "relative_path": stored.relative_path,
+        "source_uri": None,
+        "tag_ids": [],
+    }
+    fixed = source.commit(branch="main", base=source.open_branch(), frame=pd.DataFrame([row])).view
+
+    created = repo.create_dataset(name=" Empty ")
+    cloned = repo.clone_dataset(source=fixed, name=" Clone ")
+
+    assert created.name == "Empty"
+    assert cloned.name == "Clone"
+    assert repo.open_dataset(name=" empty ").dataset_id == created.dataset_id
+    assert repo.open_dataset(name=" clone ").dataset_id == cloned.dataset_id
