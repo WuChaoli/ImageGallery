@@ -296,3 +296,62 @@ def test_postgres_repo_schema_advisory_lock_is_scoped_and_reusable(dataset_postg
     models_b.close()
     engine_a.dispose()
     engine_b.dispose()
+
+
+def test_postgres_dataset_history_advisory_lock_is_scoped_and_reusable(dataset_postgres_url: str) -> None:
+    engine_a = create_engine(dataset_postgres_url)
+    engine_b = create_engine(dataset_postgres_url)
+    models_a = ModelManager()
+    models_b = ModelManager()
+    manager_a = DatasetManager(
+        control_engine=engine_a,
+        catalog=MagicMock(),
+        storage_manager=StorageManager(),
+        model_manager=models_a,
+    )
+    manager_b = DatasetManager(
+        control_engine=engine_b,
+        catalog=MagicMock(),
+        storage_manager=StorageManager(),
+        model_manager=models_b,
+    )
+    first_acquired = threading.Event()
+    release_first = threading.Event()
+    same_dataset_acquired = threading.Event()
+
+    def hold_dataset() -> None:
+        with manager_a._history_lock.hold(dataset_id="dataset-a"):  # pyright: ignore[reportPrivateUsage]
+            first_acquired.set()
+            release_first.wait(timeout=10)
+
+    def wait_same_dataset() -> None:
+        with manager_b._history_lock.hold(dataset_id="dataset-a"):  # pyright: ignore[reportPrivateUsage]
+            same_dataset_acquired.set()
+
+    holder = threading.Thread(target=hold_dataset)
+    waiter = threading.Thread(target=wait_same_dataset)
+    holder.start()
+    assert first_acquired.wait(timeout=10)
+    waiter.start()
+    assert not same_dataset_acquired.wait(timeout=0.3)
+    with manager_b._history_lock.hold(dataset_id="dataset-b"):  # pyright: ignore[reportPrivateUsage]
+        pass
+    release_first.set()
+    assert same_dataset_acquired.wait(timeout=10)
+    holder.join(timeout=10)
+    waiter.join(timeout=10)
+    assert not holder.is_alive()
+    assert not waiter.is_alive()
+
+    with pytest.raises(RuntimeError, match="injected"):
+        with manager_a._history_lock.hold(dataset_id="dataset-a"):  # pyright: ignore[reportPrivateUsage]
+            raise RuntimeError("injected")
+    with manager_b._history_lock.hold(dataset_id="dataset-a"):  # pyright: ignore[reportPrivateUsage]
+        pass
+
+    manager_a.close()
+    manager_b.close()
+    models_a.close()
+    models_b.close()
+    engine_a.dispose()
+    engine_b.dispose()

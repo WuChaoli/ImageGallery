@@ -385,3 +385,38 @@ def test_materialize_rejects_invalid_source_before_catalog_side_effect(tmp_path:
         first.materialize_dataset(source=source.open_branch(), name="Bad", frame=pd.DataFrame([{"asset_id": "bad"}]))
 
     assert not any(identifier[1].startswith("d_") for identifier in manager.catalog.list_tables(second.namespace))
+
+
+def test_materialize_rejects_asset_location_not_owned_by_source_view_before_catalog_side_effect(
+    tmp_path: Path,
+) -> None:
+    storage, manager, repo, source, row = _setup_source(tmp_path)
+    fixed = source.commit(branch="main", base=source.open_branch(), frame=pd.DataFrame([row])).view
+    alternate_prefix = storage.register_file_prefix(name="alternate", root=tmp_path / "alternate")
+    repo.bind_storage_prefix(prefix_id=alternate_prefix.prefix_id)
+    alternate = storage.write_managed(prefix_id=alternate_prefix.prefix_id, data=b"image")
+    assert alternate.asset_id == row["asset_id"]
+    frame = fixed.scan()
+    frame.loc[0, "storage_prefix_id"] = alternate.storage_prefix_id
+    frame.loc[0, "relative_path"] = alternate.relative_path
+    tables_before = set(manager.catalog.list_tables(repo.namespace))
+
+    with pytest.raises(ValidationError):
+        repo.materialize_dataset(source=fixed, name="Invalid location", frame=frame)
+
+    assert set(manager.catalog.list_tables(repo.namespace)) == tables_before
+    assert manager.recover_operations() == 0
+
+
+def test_materialize_rejects_duplicate_frame_columns_before_catalog_side_effect(tmp_path: Path) -> None:
+    _, manager, repo, source, row = _setup_source(tmp_path)
+    fixed = source.commit(branch="main", base=source.open_branch(), frame=pd.DataFrame([row])).view
+    frame = fixed.scan()
+    frame = pd.concat([frame, frame[["relative_path"]]], axis="columns")
+    tables_before = set(manager.catalog.list_tables(repo.namespace))
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        repo.materialize_dataset(source=fixed, name="Duplicate columns", frame=frame)
+
+    assert set(manager.catalog.list_tables(repo.namespace)) == tables_before
+    assert manager.recover_operations() == 0

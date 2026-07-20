@@ -268,7 +268,13 @@ class DatasetManager:
             intent=intent,
         )
         try:
-            self._history._recover_create_dataset(operation_id=operation_id, intent=intent)
+            with self._history_lock.hold(dataset_id=dataset_id):
+                current = self._operations.get_active(operation_id=operation_id)
+                if current is not None:
+                    self._history._recover_create_dataset(
+                        operation_id=current.operation_id,
+                        intent=current.intent,
+                    )
         except IntegrityError as exc:
             self._operations.fail(operation_id=operation_id)
             raise NameConflictError(normalized_name) from exc
@@ -737,12 +743,16 @@ class DatasetManager:
     def _list_columns(self, *, dataset: Dataset) -> list[ColumnSpec]:
         self._history.assert_dataset_visible(dataset_id=dataset.dataset_id)
         table = self.catalog.load_table(dataset.table_identifier)
-        return [column_spec_from_iceberg(field) for field in table.schema().fields]
+        columns = [column_spec_from_iceberg(field) for field in table.schema().fields]
+        self._history.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        return columns
 
     def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.scan_frame(view=view, fields=fields)
+        frame = self._view_io.scan_frame(view=view, fields=fields)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return frame
 
     def _get_view_row_series(  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
         self,
@@ -753,7 +763,9 @@ class DatasetManager:
     ) -> pd.Series:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.get_row_series(view=view, asset_id=asset_id, fields=fields)
+        row = self._view_io.get_row_series(view=view, asset_id=asset_id, fields=fields)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return row
 
     def _generate_embed(
         self,
@@ -785,22 +797,30 @@ class DatasetManager:
     def _scan_view(self, *, view: DatasetView, columns: list[str] | None) -> list[dict[str, object]]:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.scan(view=view, columns=columns)
+        rows = self._view_io.scan(view=view, columns=columns)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return rows
 
     def _get_view_row(self, *, view: DatasetView, asset_id: str) -> dict[str, object]:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.get_row(view=view, asset_id=asset_id)
+        row = self._view_io.get_row(view=view, asset_id=asset_id)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return row
 
     def _read_view_image(self, *, view: DatasetView, asset_id: str) -> bytes:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.read_image(view=view, asset_id=asset_id)
+        image = self._view_io.read_image(view=view, asset_id=asset_id)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return image
 
     def _verify_view_image(self, *, view: DatasetView, asset_id: str) -> bool:
         self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
-        return self._view_io.verify_image(view=view, asset_id=asset_id)
+        verified = self._view_io.verify_image(view=view, asset_id=asset_id)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
+        return verified
 
     def _branch_snapshot_id(
         self,

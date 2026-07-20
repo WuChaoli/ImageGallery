@@ -196,29 +196,33 @@ class OperationJournal:
         """将 operation 标记为 finalized。"""
         self._set_status(operation_id=operation_id, status="finalized")
 
-    def fail(self, *, operation_id: str) -> None:
-        """将 operation 标记为 failed。"""
+    def fail(self, *, operation_id: str, blocks_visibility: bool = False) -> None:
+        """将 operation 标记为 failed，并按需保留可见性门禁。"""
+        if blocks_visibility:
+            self.update_intent(operation_id=operation_id, values={"_blocks_visibility": True})
         self._set_status(operation_id=operation_id, status="failed")
 
     def has_active_dataset_operation(self, *, dataset_id: str) -> bool:
-        """返回 Dataset 是否仍有 active operation。"""
-        statement = select(operations.c.operation_id).where(
-            operations.c.dataset_id == dataset_id,
-            operations.c.status == "active",
-        )
-        with self._engine.connect() as connection:
-            return connection.execute(statement).first() is not None
+        """返回 Dataset 是否仍有 active 或阻断可见性的失败 operation。"""
+        return self.active_for_dataset(dataset_id=dataset_id) is not None
 
     def active_for_dataset(self, *, dataset_id: str) -> PendingOperation | None:
-        """优先返回会改变 Schema 的 active operation。"""
+        """优先返回会改变 Schema 的 active 或阻断可见性的失败 operation。"""
         statement = (
             select(operations)
-            .where(operations.c.dataset_id == dataset_id, operations.c.status == "active")
+            .where(
+                operations.c.dataset_id == dataset_id,
+                operations.c.status.in_(("active", "failed")),
+            )
             .order_by(operations.c.operation_id)
         )
         with self._engine.connect() as connection:
             rows = connection.execute(statement).mappings().all()
-        pending = [self._pending_operation(row) for row in rows]
+        pending = [
+            self._pending_operation(row)
+            for row in rows
+            if str(row["status"]) == "active" or bool(cast(dict[str, object], row["intent"]).get("_blocks_visibility"))
+        ]
         return next(
             (
                 item

@@ -26,7 +26,7 @@ from image_gallery.dataset_manager._physical_schema import (
 )
 from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryStore
 from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
-from image_gallery.dataset_manager.control import asset_vectors, operations, pending_asset_vectors
+from image_gallery.dataset_manager.control import asset_vectors, pending_asset_vectors
 from image_gallery.dataset_manager.errors import (
     ConflictError,
     NameConflictError,
@@ -147,6 +147,8 @@ class DatasetHistory:
 
     def _recover_clone(self, *, operation_id: str, intent: dict[str, object]) -> None:
         table_identifier = str(intent["table_identifier"])
+        source_dataset_id = str(intent["source_dataset_id"])
+        self.assert_fixed_view_readable(dataset_id=source_dataset_id)
         source_table = self.catalog.load_table(str(intent["source_table_identifier"]))
         if not self.catalog.table_exists(table_identifier):
             self.catalog.create_table(table_identifier, schema=self._system_schema)
@@ -159,6 +161,8 @@ class DatasetHistory:
             )
             target_table.append(pa.Table.from_pylist(rows, schema=target_table.schema().as_arrow()), branch="main")
             target_table = self.catalog.load_table(table_identifier)
+        self.assert_fixed_view_readable(dataset_id=source_dataset_id)
+        self._operations.record_phase(operation_id=operation_id, phase="clone_candidate_written")
         current = target_table.current_snapshot()
         if current is not None:
             self._verify_snapshot_storage(table=target_table, snapshot_id=current.snapshot_id)
@@ -240,6 +244,7 @@ class DatasetHistory:
         if ref is None:
             table.manage_snapshots().create_tag(snapshot_id, name).commit()
         elif ref.snapshot_ref_type != SnapshotRefType.TAG or ref.snapshot_id != snapshot_id:
+            self._operations.fail(operation_id=operation_id)
             raise ConflictError(name)
         self._operations.finalize(operation_id=operation_id)
 
@@ -256,6 +261,7 @@ class DatasetHistory:
             else:
                 snapshots.create_branch(target, branch).commit()
         elif actual != target:
+            self._operations.fail(operation_id=operation_id)
             raise ConflictError(branch)
         self._operations.finalize(operation_id=operation_id)
 
@@ -365,14 +371,24 @@ class DatasetHistory:
         if actual != candidate:
             base = intent.get("base_snapshot_id")
             if not isinstance(base, int) or not isinstance(candidate, int) or not isinstance(temporary_ref, str):
-                self._fail_operation(operation_id=operation_id, temporary_ref=temporary_ref, table=table)
+                self._fail_operation(
+                    operation_id=operation_id,
+                    temporary_ref=temporary_ref,
+                    table=table,
+                    blocks_visibility=bool(intent.get("schema_additions")),
+                )
                 return
             actual = self.branch_snapshot_id(
                 table=self.catalog.load_table(str(intent["table_identifier"])),
                 branch=branch,
             )
             if actual not in {base, candidate}:
-                self._fail_operation(operation_id=operation_id, temporary_ref=temporary_ref, table=table)
+                self._fail_operation(
+                    operation_id=operation_id,
+                    temporary_ref=temporary_ref,
+                    table=table,
+                    blocks_visibility=bool(intent.get("schema_additions")),
+                )
                 return
             self._publish_candidate(
                 table_identifier=str(intent["table_identifier"]),
@@ -394,6 +410,7 @@ class DatasetHistory:
             if ref is None:
                 table.manage_snapshots().create_tag(candidate, checkpoint_name).commit()
             elif ref.snapshot_ref_type != SnapshotRefType.TAG or ref.snapshot_id != candidate:
+                self._operations.fail(operation_id=operation_id, blocks_visibility=True)
                 raise ConflictError(checkpoint_name)
             self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
         self._publish_pending_vectors(operation_id=operation_id)
@@ -406,6 +423,7 @@ class DatasetHistory:
         operation_id: str,
         temporary_ref: object,
         table: Table,  # pyright: ignore[reportUnknownParameterType]
+        blocks_visibility: bool,
     ) -> None:
         if isinstance(temporary_ref, str) and temporary_ref in table.refs():
             table.manage_snapshots().remove_branch(temporary_ref).commit()
@@ -413,9 +431,7 @@ class DatasetHistory:
             connection.execute(
                 pending_asset_vectors.delete().where(pending_asset_vectors.c.operation_id == operation_id)
             )
-            connection.execute(
-                update(operations).where(operations.c.operation_id == operation_id).values(status="failed")
-            )
+        self._operations.fail(operation_id=operation_id, blocks_visibility=blocks_visibility)
 
     def _verify_snapshot_storage(
         self,
@@ -459,18 +475,18 @@ class DatasetHistory:
             raise ValidationError("Clone source must belong to the target DatasetRepo")
         if source.snapshot_id is None:
             raise ValidationError("Clone source must reference a concrete Snapshot")
+        self.assert_fixed_view_readable(dataset_id=source.dataset_id)
         normalized_name = normalize_dataset_name(name)
         dataset_id = uuid.uuid4().hex
         table_identifier = f"{repo.namespace}.d_{dataset_id[:12]}"
         source_dataset = self._manager._dataset_by_id(repo_id=source.repo_id, dataset_id=source.dataset_id)
-        source_table = self.catalog.load_table(source_dataset.table_identifier)
-        rows = self._manager._scan_view(view=source, columns=None)
         intent: dict[str, object] = {
             "dataset_id": dataset_id,
             "repo_id": repo.repo_id,
             "name": normalized_name,
             "name_key": dataset_name_key(normalized_name),
             "table_identifier": table_identifier,
+            "source_dataset_id": source.dataset_id,
             "source_table_identifier": source_dataset.table_identifier,
             "source_snapshot_id": source.snapshot_id,
         }
@@ -481,22 +497,10 @@ class DatasetHistory:
             dataset_name=normalized_name,
             intent=intent,
         )
-        self.catalog.create_table(table_identifier, schema=self._system_schema)
-        cloned_table = self.catalog.load_table(table_identifier)
-        self._copy_business_schema(source_table=source_table, target_table=cloned_table)
-        cloned_table = self.catalog.load_table(table_identifier)
-        cloned_table.append(pa.Table.from_pylist(rows, schema=cloned_table.schema().as_arrow()), branch="main")
-        self._operations.record_phase(operation_id=operation_id, phase="clone_candidate_written")
-        self._register_dataset_from_intent(
-            operation_id=operation_id,
-            intent={
-                "dataset_id": dataset_id,
-                "repo_id": repo.repo_id,
-                "name": normalized_name,
-                "name_key": dataset_name_key(normalized_name),
-                "table_identifier": table_identifier,
-            },
-        )
+        with self._history_lock.hold(dataset_id=dataset_id):
+            current = self._operations.get_active(operation_id=operation_id)
+            if current is not None:
+                self._recover_clone(operation_id=current.operation_id, intent=current.intent)
         return Dataset(repo.repo_id, dataset_id, normalized_name, table_identifier, self._manager)
 
     def materialize_dataset(  # noqa: C901
@@ -555,6 +559,8 @@ class DatasetHistory:
 
             column_specs = {column.name: column for column in target_schema}
             frame_columns = [str(column) for column in frame.columns]
+            if len(frame_columns) != len(set(frame_columns)):
+                raise ValidationError("Materialize frame contains duplicate columns")
             if frame.empty and (len(frame_columns) != len(column_specs) or set(frame_columns) != set(column_specs)):
                 raise ValidationError("Empty materialize frame must contain every target Physical Schema column")
             records = cast(list[dict[str, object]], frame.to_dict(orient="records"))
@@ -570,17 +576,29 @@ class DatasetHistory:
             asset_ids = [str(row["asset_id"]) for row in normalized_rows]
             if len(asset_ids) != len(set(asset_ids)):
                 raise ValidationError("Duplicate asset_id in materialized frame")
-            source_asset_ids = {
-                str(row["asset_id"])
+            source_locations = {
+                str(row["asset_id"]): (
+                    str(row["storage_prefix_id"]),
+                    str(row["relative_path"]),
+                )
                 for row in source_table.scan(
                     snapshot_id=source.snapshot_id,
-                    selected_fields=("asset_id",),
+                    selected_fields=("asset_id", "storage_prefix_id", "relative_path"),
                 )
                 .to_arrow()
                 .to_pylist()
             }
-            if not set(asset_ids).issubset(source_asset_ids):
+            if not set(asset_ids).issubset(source_locations):
                 raise ValidationError("Materialized frame must be derived from the fixed source View")
+            if any(
+                source_locations[asset_id]
+                != (
+                    str(row["storage_prefix_id"]),
+                    str(row["relative_path"]),
+                )
+                for asset_id, row in zip(asset_ids, normalized_rows, strict=True)
+            ):
+                raise ValidationError("Materialized frame must preserve source image locations")
             normalized_rows.sort(key=lambda row: str(row["asset_id"]))
 
             dataset_id = uuid.uuid4().hex
@@ -661,9 +679,10 @@ class DatasetHistory:
             snapshot_id = current.snapshot_id if current is not None else None
         else:
             ref = refs.get(name)
-            if ref is None or ref.snapshot_ref_type != SnapshotRefType.BRANCH:
-                raise ObjectNotFoundError(name)
-            snapshot_id = ref.snapshot_id
+            snapshot_id = None if ref is None or ref.snapshot_ref_type != SnapshotRefType.BRANCH else ref.snapshot_id
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        if snapshot_id is None and not (name == "main" and name not in refs):
+            raise ObjectNotFoundError(name)
         return self._manager._make_view(
             repo_id=dataset.repo_id,
             dataset_id=dataset.dataset_id,
@@ -677,6 +696,7 @@ class DatasetHistory:
         self.assert_dataset_visible(dataset_id=dataset.dataset_id)
         table = self.catalog.load_table(dataset.table_identifier)
         ref = table.refs().get(name)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
         if ref is None or ref.snapshot_ref_type != SnapshotRefType.TAG:
             raise ObjectNotFoundError(name)
         return self._manager._make_view(
@@ -691,7 +711,9 @@ class DatasetHistory:
         """列出 Dataset 的全部 Checkpoint 名称。"""
         self.assert_dataset_visible(dataset_id=dataset.dataset_id)
         table = self.catalog.load_table(dataset.table_identifier)
-        return sorted(name for name, ref in table.refs().items() if ref.snapshot_ref_type == SnapshotRefType.TAG)
+        checkpoints = sorted(name for name, ref in table.refs().items() if ref.snapshot_ref_type == SnapshotRefType.TAG)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        return checkpoints
 
     def create_checkpoint(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
         """从固定 View 创建 Checkpoint。"""
@@ -856,6 +878,9 @@ class DatasetHistory:
         vector_names = {
             item.name for item in self._manager._list_vector_fields(repo=self._manager._repo_by_id(dataset.repo_id))
         }
+        frame_columns = [str(column) for column in frame.columns]
+        if len(frame_columns) != len(set(frame_columns)):
+            raise ValidationError("Commit frame contains duplicate columns")
         requested = set(fields or []) | {str(column) for column in frame.columns}
         if requested & vector_names:
             raise ValidationError("Vector fields cannot be committed directly; use dataset.generate_embed()")

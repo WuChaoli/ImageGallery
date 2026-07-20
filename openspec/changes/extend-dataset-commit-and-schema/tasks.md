@@ -56,3 +56,12 @@
 - [x] 8.2 运行 `uv run python -m tools.ci format-check`、`lint`、`docs`、`test` 与 `coverage`。
 - [x] 8.3 运行 `uv run python -m tools.ci dataset-backend`，验证 PostgreSQL、pgvector、PyIceberg 与 S3-compatible Backend 的真实原子性和恢复行为。
 - [x] 8.4 更新 DatasetManager 模块文档与面向人的 README，说明默认 `replace`、历史保留、commit/Checkpoint、固定 View 分支、owner 导航和 typed Schema 契约；最终归档前由 `sync-docs` 收敛。
+
+## 9. 收敛 PR 审核发现
+
+- [x] 9.1 补充并修复普通 Head、Checkpoint 与 Schema discovery 的并发可见性复查，避免读取未 finalize 的发布中间态。
+- [x] 9.2 让 create/clone 与 recovery 复用目标 Dataset history lock 和幂等恢复入口，并保留 durable phase 故障注入契约。
+- [x] 9.3 将 Checkpoint、Rollback 与 Commit Checkpoint 的不可恢复冲突写入 terminal failed 状态，避免永久 reconciling。
+- [x] 9.4 在副作用前拒绝重复 DataFrame 列，并要求 materialize 保持固定来源 View 的图片位置与内容身份。
+- [x] 9.5 补齐 data/ref-only 固定 View 可读、两个 recoverer 与 API/recovery 竞争的行为测试。
+- [x] 9.6 重新执行完整 PR 前验证与 Dataset Backend 验收。

@@ -148,6 +148,23 @@ def test_invalid_typed_value_fails_before_operation_is_started(tmp_path: Path) -
     assert dataset.open_branch().snapshot_id is None
 
 
+def test_commit_rejects_duplicate_frame_columns_before_operation_is_started(tmp_path: Path) -> None:
+    storage, prefix, dataset = _dataset(tmp_path)
+    row = _row(storage, prefix.prefix_id, b"one")
+    frame = pd.DataFrame([row])
+    frame = pd.concat([frame, frame[["relative_path"]]], axis="columns")
+    table = dataset._manager.catalog.load_table(dataset.table_identifier)  # pyright: ignore[reportPrivateUsage]
+    snapshots_before = tuple(snapshot.snapshot_id for snapshot in table.snapshots())
+
+    with pytest.raises(ValidationError, match="duplicate"):
+        dataset.commit(branch="main", base=dataset.open_branch(), frame=frame)
+
+    table = dataset._manager.catalog.load_table(dataset.table_identifier)  # pyright: ignore[reportPrivateUsage]
+    assert tuple(snapshot.snapshot_id for snapshot in table.snapshots()) == snapshots_before
+    assert dataset.open_branch().snapshot_id is None
+    assert dataset._manager.recover_operations() == 0  # pyright: ignore[reportPrivateUsage]
+
+
 def test_add_column_is_recovered_as_durable_schema_operation(tmp_path: Path) -> None:
     storage, _, dataset = _dataset(tmp_path)
 
