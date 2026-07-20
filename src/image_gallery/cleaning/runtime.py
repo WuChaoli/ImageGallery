@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from image_gallery.cleaning._dataset_compat import read_dataset_fingerprint
 from image_gallery.cleaning.artifacts import ArtifactManager
 from image_gallery.cleaning.config import ParsedOperatorConfig
 from image_gallery.cleaning.context import CleanerRunContext, CleanerRunPaths, build_run_paths
@@ -413,7 +414,7 @@ class CleaningRuntime:
         ]
         plan = CleaningRunPlanner(self._registry).compile(parsed_operators)
         paths = build_run_paths(run_dir)
-        dataset_fingerprint = dataset.fingerprint()
+        dataset_fingerprint = read_dataset_fingerprint(dataset)
         return _PlannedRunDefinition(
             run_id=run_id,
             dataset_fingerprint=dataset_fingerprint,
@@ -734,7 +735,7 @@ class CleaningRuntime:
         expected_sample_rule = run_record.sample_rule if sample_rule is None else sample_rule
         if expected_sample_rule != run_record.sample_rule:
             raise ValueError("sample rule does not match the recorded run")
-        if not skip_dataset_validation and run_record.dataset_fingerprint != dataset.fingerprint():
+        if not skip_dataset_validation and run_record.dataset_fingerprint != read_dataset_fingerprint(dataset):
             raise ValueError("dataset fingerprint does not match the recorded run")
         if run_record.plan_hash != graph.plan_hash:
             raise ValueError("plan hash does not match the recorded run")
@@ -963,7 +964,7 @@ class CleaningRuntime:
                 run_id=run_id,
                 cleaner_type="test-runtime",
                 status="running",
-                dataset_fingerprint=dataset.fingerprint(),
+                dataset_fingerprint=read_dataset_fingerprint(dataset),
                 plan_hash="test-fake-plan",
                 label="test-fake",
                 tags=[],
