@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, cast
 import pandas as pd
 import pyarrow as pa
 from pyiceberg.catalog import Catalog
+from pyiceberg.exceptions import CommitFailedException
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
 from pyiceberg.table.refs import SnapshotRefType
@@ -73,6 +74,9 @@ class DatasetHistory:
             elif operation.kind == "rollback":
                 self._recover_rollback(operation_id=operation.operation_id, intent=operation.intent)
                 recovered += 1
+            elif operation.kind == "branch":
+                self._recover_branch(operation_id=operation.operation_id, intent=operation.intent)
+                recovered += 1
         return recovered
 
     def _recover_create_dataset(self, *, operation_id: str, intent: dict[str, object]) -> None:
@@ -125,6 +129,22 @@ class DatasetHistory:
                 snapshots.create_branch(target, branch).commit()
         elif actual != target:
             raise ConflictError(branch)
+        self._operations.finalize(operation_id=operation_id)
+
+    def _recover_branch(self, *, operation_id: str, intent: dict[str, object]) -> None:
+        """幂等完成固定 Snapshot 的 Branch ref 创建。"""
+        table = self.catalog.load_table(str(intent["table_identifier"]))
+        name = str(intent["branch"])
+        snapshot_id = self._required_int(intent["snapshot_id"])
+        if table.snapshot_by_id(snapshot_id) is None:
+            self._operations.fail(operation_id=operation_id)
+            raise ConflictError(f"Source Snapshot no longer exists: {snapshot_id}")
+        ref = table.refs().get(name)
+        if ref is None:
+            table.manage_snapshots().create_branch(snapshot_id, name).commit()
+        elif ref.snapshot_ref_type != SnapshotRefType.BRANCH or ref.snapshot_id != snapshot_id:
+            self._operations.fail(operation_id=operation_id)
+            raise ConflictError(name)
         self._operations.finalize(operation_id=operation_id)
 
     def _register_dataset_from_intent(self, *, operation_id: str, intent: dict[str, object]) -> None:
@@ -400,12 +420,39 @@ class DatasetHistory:
         )
 
     def create_branch(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
-        """从 Checkpoint 创建 Branch。"""
+        """从同 Dataset 的固定 View 创建 Branch。"""
         self._manager._validate_view_dataset(view=source, dataset=dataset)
-        if source.ref_type != "checkpoint" or source.snapshot_id is None:
-            raise ValidationError("Branches can only be created from Checkpoints")
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        if source.ref_type not in {"branch", "checkpoint"} or source.snapshot_id is None:
+            raise ValidationError("Branch source must be a fixed Branch or Checkpoint View")
         table = self.catalog.load_table(dataset.table_identifier)
-        table.manage_snapshots().create_branch(source.snapshot_id, name).commit()
+        if table.snapshot_by_id(source.snapshot_id) is None:
+            raise ValidationError(f"Source Snapshot does not exist: {source.snapshot_id}")
+        source_ref = table.refs().get(source.ref_name)
+        expected_ref_type = SnapshotRefType.BRANCH if source.ref_type == "branch" else SnapshotRefType.TAG
+        if source_ref is None or source_ref.snapshot_ref_type != expected_ref_type:
+            raise ValidationError("Branch source ref is not valid for this Dataset")
+        if source.ref_type == "checkpoint" and source_ref.snapshot_id != source.snapshot_id:
+            raise ValidationError("Checkpoint source no longer references the fixed Snapshot")
+        if name in table.refs():
+            raise NameConflictError(name)
+        operation_id = self._operations.start(
+            kind="branch",
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            intent={
+                "table_identifier": dataset.table_identifier,
+                "branch": name,
+                "snapshot_id": source.snapshot_id,
+            },
+        )
+        try:
+            table.manage_snapshots().create_branch(source.snapshot_id, name).commit()
+        except (CommitFailedException, ValueError):
+            self._operations.fail(operation_id=operation_id)
+            raise
+        self._operations.record_phase(operation_id=operation_id, phase="branch_created")
+        self._operations.finalize(operation_id=operation_id)
         return self.open_branch(dataset=dataset, name=name)
 
     def rollback(

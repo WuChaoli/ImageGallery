@@ -18,6 +18,8 @@ class PendingOperation:
     """描述等待恢复的 durable operation。"""
 
     operation_id: str
+    repo_id: str
+    dataset_id: str | None
     kind: str
     intent: dict[str, object]
 
@@ -63,14 +65,17 @@ class OperationJournal:
         statement = select(operations).where(operations.c.status == "active").order_by(operations.c.operation_id)
         with self._engine.connect() as connection:
             rows = connection.execute(statement).mappings().all()
-        return [
-            PendingOperation(
-                operation_id=str(row["operation_id"]),
-                kind=str(row["kind"]),
-                intent=dict(cast(dict[str, object], row["intent"])),
-            )
-            for row in rows
-        ]
+        return [self._pending_operation(row) for row in rows]
+
+    def get_active(self, *, operation_id: str) -> PendingOperation | None:
+        """按 ID 重读仍处于 active 状态的 operation。"""
+        statement = select(operations).where(
+            operations.c.operation_id == operation_id,
+            operations.c.status == "active",
+        )
+        with self._engine.connect() as connection:
+            row = connection.execute(statement).mappings().one_or_none()
+        return None if row is None else self._pending_operation(row)
 
     def update_intent(self, *, operation_id: str, values: dict[str, object]) -> None:
         """合并更新 operation 的 durable intent。"""
@@ -126,3 +131,15 @@ class OperationJournal:
             connection.execute(
                 update(operations).where(operations.c.operation_id == operation_id).values(status=status)
             )
+
+    @staticmethod
+    def _pending_operation(row: object) -> PendingOperation:
+        mapping = cast(dict[str, object], row)
+        dataset_id = mapping["dataset_id"]
+        return PendingOperation(
+            operation_id=str(mapping["operation_id"]),
+            repo_id=str(mapping["repo_id"]),
+            dataset_id=None if dataset_id is None else str(dataset_id),
+            kind=str(mapping["kind"]),
+            intent=dict(cast(dict[str, object], mapping["intent"])),
+        )

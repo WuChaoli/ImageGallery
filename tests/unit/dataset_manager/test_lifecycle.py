@@ -258,6 +258,47 @@ def test_plain_commit_recovers_temporary_ref_before_branch_publish(tmp_path: Pat
     assert not any(name.startswith("op_") for name in recovered.catalog.load_table(dataset.table_identifier).refs())
 
 
+def test_branch_ref_creation_is_hidden_and_recovered(tmp_path: Path) -> None:
+    storage = StorageManager()
+
+    def fail_after_branch(_operation_id: str, phase: str) -> None:
+        if phase == "branch_created":
+            raise RuntimeError("branch interruption")
+
+    manager = DatasetManager.local(
+        root=tmp_path / "backend",
+        storage_manager=storage,
+        operation_hook=fail_after_branch,
+    )
+    prefix = storage.register_file_prefix(name="images", root=tmp_path / "images")
+    repo = manager.create_repo(name="Vision")
+    repo.bind_storage_prefix(prefix_id=prefix.prefix_id)
+    dataset = repo.create_dataset(name="Raw")
+    stored = storage.write_managed(prefix_id=prefix.prefix_id, data=b"one")
+    row = {
+        "asset_id": stored.asset_id,
+        "storage_prefix_id": stored.storage_prefix_id,
+        "relative_path": stored.relative_path,
+        "source_uri": None,
+        "tag_ids": [],
+    }
+    source = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([row])).view
+
+    with pytest.raises(RuntimeError, match="branch interruption"):
+        dataset.create_branch(name="experiment", source=source)
+
+    with pytest.raises(ConflictError, match="reconciling"):
+        dataset.open_branch(name="experiment")
+    with pytest.raises(ConflictError, match="reconciling"):
+        _ = source.dataset
+
+    recovered = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
+    assert recovered.recover_operations() == 1
+    recovered_dataset = recovered.open_repo(name="Vision").open_dataset(name="Raw")
+    assert recovered_dataset.open_branch(name="experiment").snapshot_id == source.snapshot_id
+    assert recovered.recover_operations() == 0
+
+
 def test_checkpoint_and_rollback_recover_after_ref_publish(tmp_path: Path) -> None:
     storage = StorageManager()
     manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)

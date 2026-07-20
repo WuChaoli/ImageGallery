@@ -38,13 +38,17 @@ def test_operation_journal_persists_intent_phase_and_final_status(control_engine
     journal.record_phase(operation_id=operation_id, phase="table_created", details={"snapshot_id": 7})
 
     pending = journal.pending()
-    assert [(item.operation_id, item.kind, item.intent) for item in pending] == [
+    assert [(item.operation_id, item.repo_id, item.dataset_id, item.kind, item.intent) for item in pending] == [
         (
             operation_id,
+            "repo-1",
+            "dataset-1",
             "create_dataset",
             {"name": "Raw", "table_identifier": "r_vision.d_raw"},
         )
     ]
+    active = journal.get_active(operation_id=operation_id)
+    assert active == pending[0]
     assert journal.has_active_dataset_operation(dataset_id="dataset-1") is True
     assert events == [(operation_id, "table_created")]
 
@@ -61,6 +65,7 @@ def test_operation_journal_persists_intent_phase_and_final_status(control_engine
     journal.finalize(operation_id=operation_id)
 
     assert journal.pending() == []
+    assert journal.get_active(operation_id=operation_id) is None
     assert journal.has_active_dataset_operation(dataset_id="dataset-1") is False
     with control_engine.connect() as connection:
         status = connection.execute(

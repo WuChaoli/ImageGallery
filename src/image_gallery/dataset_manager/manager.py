@@ -12,7 +12,7 @@ import pandas as pd
 from pyiceberg.catalog import Catalog, load_catalog
 from pyiceberg.schema import Schema
 from pyiceberg.table import Table
-from pyiceberg.types import BooleanType, DoubleType, IntegerType, ListType, LongType, NestedField, StringType
+from pyiceberg.types import ListType, NestedField, StringType
 from sqlalchemy import create_engine
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +20,12 @@ from sqlalchemy.exc import IntegrityError
 from image_gallery.dataset_manager._dataset_history import DatasetHistory
 from image_gallery.dataset_manager._embedding import EmbeddingService
 from image_gallery.dataset_manager._operation_journal import OperationJournal
+from image_gallery.dataset_manager._physical_schema import (
+    ColumnSpec,
+    FieldType,
+    column_spec_from_iceberg,
+    iceberg_type_for_addition,
+)
 from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryRecord, RepositoryStore
 from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
 from image_gallery.dataset_manager._tag_store import TagRecord, TagStore
@@ -51,20 +57,11 @@ SYSTEM_SCHEMA = Schema(
     NestedField(2, "storage_prefix_id", StringType(), required=True),
     NestedField(3, "relative_path", StringType(), required=True),
     NestedField(4, "source_uri", StringType(), required=False),
-    NestedField(5, "tag_ids", ListType(6, StringType(), element_required=False), required=True),
+    NestedField(5, "tag_ids", ListType(6, StringType(), element_required=True), required=True),
     identifier_field_ids=[1],
 )
 _ASSET_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SYSTEM_FIELDS = {"asset_id", "storage_prefix_id", "relative_path", "source_uri", "tag_ids"}
-_BUSINESS_FIELD_TYPES = {
-    "boolean": BooleanType,
-    "double": DoubleType,
-    "integer": IntegerType,
-    "long": LongType,
-    "string": StringType,
-}
-
-
 def _schema_name_key(name: str) -> str:
     """返回普通列与 VectorField 共享的名称冲突键。"""
     return name.strip().casefold()
@@ -351,7 +348,7 @@ class DatasetManager:
         if distance not in {"cosine", "dot", "l2"}:
             raise ValidationError("VectorField requires a supported distance")
         for dataset in self._list_datasets(repo=repo):
-            if name_key in {_schema_name_key(column) for column in self._list_columns(dataset=dataset)}:
+            if name_key in {_schema_name_key(column.name) for column in self._list_columns(dataset=dataset)}:
                 raise ValidationError(f"VectorField conflicts with Physical Schema column: {normalized_name}")
         definition = self.model_manager.get(model_id=model_id)
         if definition is None:
@@ -437,6 +434,18 @@ class DatasetManager:
     def _create_branch(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
         return self._history.create_branch(dataset=dataset, name=name, source=source)
 
+    def _view_owner_dataset(self, *, view: DatasetView) -> Dataset:
+        """按 View 的不可变 ID 解析可见 Dataset。"""
+        if view._manager is not self:
+            raise ValidationError("DatasetView belongs to another DatasetManager")
+        self._assert_dataset_visible(dataset_id=view.dataset_id)
+        return self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
+
+    def _view_owner_repo(self, *, view: DatasetView) -> DatasetRepo:
+        """按 View 的不可变 ID 解析可见 DatasetRepo。"""
+        dataset = self._view_owner_dataset(view=view)
+        return self._repo_by_id(dataset.repo_id)
+
     def _rollback(
         self,
         *,
@@ -513,16 +522,17 @@ class DatasetManager:
         dataset: Dataset,
         branch: str,
         base: DatasetView,
-        name: str,
-        field_type: str,
+        column: ColumnSpec | None,
+        name: str | None,
+        field_type: FieldType | str | None,
     ) -> DatasetView:
+        resolved = self._resolve_column_spec(column=column, name=name, field_type=field_type)
         with self._repo_schema_lock(repo_id=dataset.repo_id):
             return self._add_column_locked(
                 dataset=dataset,
                 branch=branch,
                 base=base,
-                name=name,
-                field_type=field_type,
+                column=resolved,
             )
 
     def _add_column_locked(
@@ -531,8 +541,7 @@ class DatasetManager:
         dataset: Dataset,
         branch: str,
         base: DatasetView,
-        name: str,
-        field_type: str,
+        column: ColumnSpec,
     ) -> DatasetView:
         """在已持有 Repo Schema 锁时新增普通列。"""
         self._validate_view_dataset(view=base, dataset=dataset)
@@ -541,7 +550,9 @@ class DatasetManager:
         table = self.catalog.load_table(dataset.table_identifier)
         if self._branch_snapshot_id(table=table, branch=branch) != base.snapshot_id:
             raise ConflictError(branch)
-        normalized_name = name.strip()
+        if column.required:
+            raise ValidationError("Business columns must be optional")
+        normalized_name = column.name
         if not normalized_name or normalized_name in _SYSTEM_FIELDS:
             raise ValidationError("System fields cannot be changed")
         repo = self._repo_by_id(dataset.repo_id)
@@ -549,14 +560,31 @@ class DatasetManager:
             _schema_name_key(field.name) for field in self._list_vector_fields(repo=repo)
         }:
             raise ValidationError(f"Physical Schema column conflicts with VectorField: {normalized_name}")
-        type_factory = _BUSINESS_FIELD_TYPES.get(field_type)
-        if type_factory is None:
-            raise ValidationError(f"Unsupported Physical Schema type: {field_type}")
         try:
-            table.update_schema().add_column(normalized_name, type_factory(), required=False).commit()
+            table.update_schema().add_column(
+                normalized_name,
+                iceberg_type_for_addition(column.field_type),
+                required=False,
+            ).commit()
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         return self._open_branch(dataset=dataset, name=branch)
+
+    @staticmethod
+    def _resolve_column_spec(
+        *,
+        column: ColumnSpec | None,
+        name: str | None,
+        field_type: FieldType | str | None,
+    ) -> ColumnSpec:
+        """统一 typed ColumnSpec 与旧标量参数入口。"""
+        if column is not None:
+            if name is not None or field_type is not None:
+                raise ValidationError("column cannot be combined with name or field_type")
+            return column
+        if name is None or field_type is None:
+            raise ValidationError("name and field_type are required when column is omitted")
+        return ColumnSpec(name=name, field_type=field_type)
 
     @contextmanager
     def _repo_schema_lock(self, *, repo_id: str):  # pyright: ignore[reportUnknownParameterType]
@@ -564,9 +592,9 @@ class DatasetManager:
         with self._schema_lock.hold(repo_id=repo_id):
             yield
 
-    def _list_columns(self, *, dataset: Dataset) -> list[str]:
+    def _list_columns(self, *, dataset: Dataset) -> list[ColumnSpec]:
         table = self.catalog.load_table(dataset.table_identifier)
-        return [field.name for field in table.schema().fields]
+        return [column_spec_from_iceberg(field) for field in table.schema().fields]
 
     def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
         return self._view_io.scan_frame(view=view, fields=fields)
