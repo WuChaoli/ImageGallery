@@ -84,7 +84,7 @@ def expand_dataset_to_sixty_five(manager, dataset, view, objects):  # pyright: i
             for item in more
         ]
     )
-    return dataset.commit(branch="main", base=view, frame=rows).view, more
+    return dataset.commit(branch="main", base=view, frame=rows, mode="upsert").view, more
 
 
 def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
@@ -96,6 +96,7 @@ def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
         branch="main",
         base=dataset.open_branch(),
         frame=pd.DataFrame([{"asset_id": objects[0].asset_id, "split": "train"}]),
+        mode="patch",
         fields=["split"],
     ).view
     assert list(patched.scan(fields=["asset_id", "split"]).columns) == ["asset_id", "split"]
@@ -107,6 +108,28 @@ def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
         dataset.schema.add_column(branch="main", base=patched, name="embedding", field_type="string")
     with pytest.raises(ValidationError):
         repo.schema.add_vector(name="split", model_id="clip", distance="cosine")
+
+
+def test_replace_preserves_history_bytes_tag_definition_and_current_vectors(tmp_path: Path) -> None:
+    manager, repo, dataset, view, objects = setup_dataset(tmp_path)
+    tag = repo.create_tag(name="retained-definition")
+    tagged_frame = view.scan()
+    tagged_frame.at[1, "tag_ids"] = [tag.tag_id]
+    tagged = dataset.commit(branch="main", base=view, frame=tagged_frame).view
+    field = repo.schema.add_vector(name="embedding", model_id="clip", distance="cosine")
+    dataset.generate_embed(field="embedding", source=tagged)
+    removed_id = objects[1].asset_id
+
+    result = dataset.commit(branch="main", base=tagged, frame=tagged.scan().iloc[[0]].reset_index(drop=True))
+
+    assert result.removed == 1
+    assert tagged.count() == 2
+    assert tagged.get_row(asset_id=removed_id)["tag_ids"] == [tag.tag_id]
+    assert tagged.read_image(asset_id=removed_id) == manager.storage_manager.read_bytes(
+        prefix_id=objects[1].storage_prefix_id, relative_path=objects[1].relative_path
+    )
+    assert field.get(asset_id=removed_id) is not None
+    assert repo.rename_tag(tag_id=tag.tag_id, name="still-present").tag_id == tag.tag_id
 
 
 def test_schema_names_conflict_after_trimming_and_casefolding(tmp_path: Path) -> None:
@@ -248,6 +271,7 @@ def test_generate_embed_rejects_cross_dataset_view_and_direct_vector_commit(tmp_
             branch="main",
             base=view,
             frame=pd.DataFrame([{"asset_id": view.scan().iloc[0]["asset_id"], "embedding": [1.0, 2.0]}]),
+            mode="patch",
             fields=["embedding"],
         )
 

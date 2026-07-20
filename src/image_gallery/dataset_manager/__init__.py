@@ -5,6 +5,13 @@ MVP 不提供 merge、跨 Repo clone、完整历史继承、diff、rebase、cher
 或语义搜索；这些能力需要独立 OpenSpec change。
 """
 
+from image_gallery.dataset_manager._physical_schema import (
+    ColumnSpec,
+    ListFieldType,
+    PrimitiveFieldType,
+    StructField,
+    StructFieldType,
+)
 from image_gallery.dataset_manager.errors import (
     ConflictError,
     DatasetManagerError,
@@ -15,19 +22,23 @@ from image_gallery.dataset_manager.errors import (
 )
 from image_gallery.dataset_manager.manager import DatasetManager
 from image_gallery.dataset_manager.models import (
+    CommitMode,
     CommitResult,
     Dataset,
     DatasetRepo,
     DatasetSchema,
     DatasetView,
     EmbedResult,
+    MaterializeResult,
     RepoSchema,
     TagDefinition,
     VectorField,
 )
 
 __all__ = [
+    "ColumnSpec",
     "CommitResult",
+    "CommitMode",
     "ConflictError",
     "Dataset",
     "DatasetManager",
@@ -36,10 +47,15 @@ __all__ = [
     "DatasetSchema",
     "DatasetView",
     "EmbedResult",
+    "ListFieldType",
+    "MaterializeResult",
     "NameConflictError",
     "ObjectNotFoundError",
+    "PrimitiveFieldType",
     "RepoSchema",
     "StorageAuthorizationError",
+    "StructField",
+    "StructFieldType",
     "TagDefinition",
     "ValidationError",
     "VectorField",

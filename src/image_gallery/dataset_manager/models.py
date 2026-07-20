@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator
-from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Literal, cast
 
 import pandas as pd
 
+from image_gallery.dataset_manager._physical_schema import ColumnSpec, FieldType
+
 if TYPE_CHECKING:
     from image_gallery.dataset_manager.manager import DatasetManager
+
+CommitMode = Literal["replace", "upsert", "patch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -22,6 +26,17 @@ class DatasetView:
     ref_name: str
     ref_type: str
     _manager: DatasetManager
+    _provenance: str | None = field(default=None, init=False, repr=False, compare=False)
+
+    @property
+    def dataset(self) -> Dataset:
+        """按不可变 ID 返回所属 Dataset 句柄。"""
+        return self._manager._view_owner_dataset(view=self)
+
+    @property
+    def repo(self) -> DatasetRepo:
+        """按不可变 ID 返回所属 DatasetRepo 句柄。"""
+        return self._manager._view_owner_repo(view=self)
 
     def scan(self, *, fields: list[str] | None = None) -> pd.DataFrame:
         """以 DataFrame 读取固定 Snapshot，可组合 Repo 当前向量。"""
@@ -55,9 +70,9 @@ class DatasetView:
         if selected is not None and "asset_id" not in selected:
             selected = ["asset_id", *selected]
         frame = self.scan(fields=selected)
-        matched = frame[frame["asset_id"].isin(asset_ids)].reset_index(drop=True)
+        matched = cast(pd.DataFrame, frame[frame["asset_id"].isin(asset_ids)]).reset_index(drop=True)
         if fields is not None and "asset_id" not in fields:
-            matched = matched.loc[:, fields]
+            matched = cast(pd.DataFrame, matched.loc[:, fields])
         return matched
 
     def iter_images(self) -> Iterator[tuple[dict[str, object], bytes]]:
@@ -73,7 +88,18 @@ class CommitResult:
     view: DatasetView
     inserted: int
     updated: int
+    removed: int
     changed: bool
+    checkpoint: DatasetView | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializeResult:
+    """描述一次 Repo 新 Dataset 原子物化的可见结果。"""
+
+    dataset: Dataset
+    view: DatasetView
+    checkpoint: DatasetView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -127,15 +153,21 @@ class Dataset:
         branch: str,
         base: DatasetView,
         frame: pd.DataFrame,
+        mode: CommitMode = "replace",
         fields: list[str] | None = None,
+        schema_additions: Sequence[ColumnSpec] = (),
+        checkpoint_name: str | None = None,
     ) -> CommitResult:
-        """以完整行 upsert 推进目标 Branch。"""
+        """按显式模式推进目标 Branch，并可原子新增列与创建 Checkpoint。"""
         return self._manager._commit(
             dataset=self,
             branch=branch,
             base=base,
             frame=frame,
+            mode=mode,
             fields=fields,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
         )
 
     @property
@@ -173,7 +205,7 @@ class Dataset:
         return self._manager._list_checkpoints(dataset=self)
 
     def create_branch(self, *, name: str, source: DatasetView) -> DatasetView:
-        """从 Checkpoint 创建新 Branch。"""
+        """从同 Dataset 的固定 View 创建新 Branch。"""
         return self._manager._create_branch(dataset=self, name=name, source=source)
 
     def rollback(self, *, branch: str, base: DatasetView, checkpoint: DatasetView) -> DatasetView:
@@ -249,6 +281,25 @@ class DatasetRepo:
         """从同 Repo 精确 View 克隆当前状态，不继承历史。"""
         return self._manager._clone_dataset(repo=self, source=source, name=name)
 
+    def materialize_dataset(
+        self,
+        *,
+        source: DatasetView,
+        name: str,
+        frame: pd.DataFrame,
+        schema_additions: Sequence[ColumnSpec] = (),
+        checkpoint_name: str | None = None,
+    ) -> MaterializeResult:
+        """从同 Repo 固定 View 原子创建独立 Dataset 当前状态。"""
+        return self._manager._materialize_dataset(
+            repo=self,
+            source=source,
+            name=name,
+            frame=frame,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class EmbedResult:
@@ -266,21 +317,35 @@ class DatasetSchema:
 
     dataset: Dataset
 
-    def add_column(self, *, branch: str, base: DatasetView, name: str, field_type: str) -> DatasetView:
+    def add_column(
+        self,
+        *,
+        branch: str,
+        base: DatasetView,
+        column: ColumnSpec | None = None,
+        name: str | None = None,
+        field_type: FieldType | str | None = None,
+    ) -> DatasetView:
         """向目标 Branch 新增可选普通列。"""
         return self.dataset._manager._add_column(
-            dataset=self.dataset, branch=branch, base=base, name=name, field_type=field_type
+            dataset=self.dataset,
+            branch=branch,
+            base=base,
+            column=column,
+            name=name,
+            field_type=field_type,
         )
 
-    def list_columns(self) -> list[str]:
-        """返回物理列名。"""
+    def list_columns(self) -> list[ColumnSpec]:
+        """按物理顺序返回 typed 列定义。"""
         return self.dataset._manager._list_columns(dataset=self.dataset)
 
-    def get_column(self, *, name: str) -> str:
-        """返回存在的物理列名。"""
-        if name not in self.list_columns():
-            raise KeyError(name)
-        return name
+    def get_column(self, *, name: str) -> ColumnSpec:
+        """按精确名称返回 typed 物理列定义。"""
+        for column in self.list_columns():
+            if column.name == name:
+                return column
+        raise KeyError(name)
 
 
 @dataclass(frozen=True, slots=True)

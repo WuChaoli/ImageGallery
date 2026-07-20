@@ -9,7 +9,9 @@ from typing import Literal, cast
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine, RowMapping
 
+from image_gallery.dataset_manager._dataset_names import dataset_name_key
 from image_gallery.dataset_manager.control import (
+    dataset_name_reservations,
     datasets,
     operations,
     repo_storage_bindings,
@@ -117,11 +119,72 @@ class RepositoryStore:
                 update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
             )
 
+    def register_reserved_dataset(
+        self,
+        *,
+        operation_id: str,
+        record: DatasetRecord,
+        name_key: str,
+    ) -> None:
+        """按 durable 名称预留原子登记 Dataset 并完成 operation。"""
+        normalized_name_key = name_key.strip().casefold()
+        with self._engine.begin() as connection:
+            reservation = (
+                connection.execute(
+                    select(dataset_name_reservations).where(dataset_name_reservations.c.operation_id == operation_id)
+                )
+                .mappings()
+                .one_or_none()
+            )
+            operation = (
+                connection.execute(select(operations).where(operations.c.operation_id == operation_id))
+                .mappings()
+                .one_or_none()
+            )
+            if (
+                reservation is None
+                or operation is None
+                or str(reservation["repo_id"]) != record.repo_id
+                or str(reservation["target_dataset_id"]) != record.dataset_id
+                or str(reservation["name_key"]) != normalized_name_key
+                or record.name.strip().casefold() != normalized_name_key
+                or str(operation["repo_id"]) != record.repo_id
+                or str(operation["dataset_id"]) != record.dataset_id
+                or str(operation["status"]) not in {"active", "finalized"}
+            ):
+                raise ValidationError("Dataset registration does not match its durable name reservation")
+
+            existing = (
+                connection.execute(select(datasets).where(datasets.c.dataset_id == record.dataset_id))
+                .mappings()
+                .one_or_none()
+            )
+            if existing is None:
+                connection.execute(
+                    insert(datasets).values(
+                        dataset_id=record.dataset_id,
+                        repo_id=record.repo_id,
+                        name=record.name,
+                        name_key=normalized_name_key,
+                        table_identifier=record.table_identifier,
+                    )
+                )
+            elif (
+                str(existing["repo_id"]) != record.repo_id
+                or str(existing["name"]) != record.name
+                or str(existing["name_key"]) != normalized_name_key
+                or str(existing["table_identifier"]) != record.table_identifier
+            ):
+                raise ValidationError("Existing Dataset does not match its durable name reservation")
+            connection.execute(
+                update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
+            )
+
     def get_dataset_by_name(self, *, repo_id: str, name: str) -> DatasetRecord:
         """按 Repo 与大小写不敏感名称返回 Dataset 记录。"""
         statement = select(datasets).where(
             datasets.c.repo_id == repo_id,
-            datasets.c.name_key == name.casefold(),
+            datasets.c.name_key == dataset_name_key(name),
         )
         with self._engine.connect() as connection:
             row = connection.execute(statement).mappings().one_or_none()

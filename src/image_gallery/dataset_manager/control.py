@@ -51,6 +51,23 @@ operations = Table(
     schema="control",
 )
 
+dataset_name_reservations = Table(
+    "dataset_name_reservations",
+    metadata,
+    Column("repo_id", String(32), ForeignKey("control.repos.repo_id"), primary_key=True),
+    Column("name_key", String(255), primary_key=True),
+    Column(
+        "operation_id",
+        String(32),
+        ForeignKey("control.operations.operation_id"),
+        nullable=False,
+        unique=True,
+    ),
+    # 预留发生在 Dataset 登记前，因此 target_dataset_id 不能建立 Dataset 外键。
+    Column("target_dataset_id", String(32), nullable=False, unique=True),
+    schema="control",
+)
+
 operation_phases = Table(
     "operation_phases",
     metadata,

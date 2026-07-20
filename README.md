@@ -14,7 +14,11 @@ ImageGallery 是一个 local-first 的 Python 图片数据集工具包，覆盖�
 
 Model 与 Storage Prefix 的非敏感冻结定义保存在 PostgreSQL control schema，明文凭证只由部署层的 CredentialProvider 解析。进程重启后相同 `model_id` 和 `prefix_id` 会自动恢复原 provider/backend、artifact/root、endpoint 与 secret reference；模型文件或 Backend 离线不可达时会明确失败，不会静默改绑。`DatasetManager` 会关闭自己创建的 `ModelManager`，但不会关闭调用方注入、可能被共享的实例；外部实例由调用方负责关闭。
 
-Dataset 数据使用 pandas DataFrame 提交和读取。`dataset.commit(..., fields=[...])` 表示普通列 patch，省略 `fields` 表示完整 upsert；向量字段不能直接 Commit。先通过 `repo.schema.add_vector(..., model_id=...)` 冻结模型绑定，再调用 `dataset.generate_embed(field=...)` 为 main 当前 Head 的全部行生成，也可指定 Branch 或精确 View。普通列与 VectorField 名称均去除首尾空白后按大小写不敏感规则判重；物理列固定在 Iceberg Snapshot，显式扫描的向量列始终读取 Repo 当前值。
+Dataset 数据使用 pandas DataFrame 提交和读取。`dataset.commit(...)` 默认以 `replace` 把 frame 发布为目标 Branch 的完整新状态；增量导入必须显式使用 `mode="upsert"`，局部业务列更新使用 `mode="patch"` 和非空 `fields`。Replace 只从新 Head 移除未提交行，既有 Snapshot、Checkpoint、Tag Assignment、图片 bytes 和 Repo 当前向量仍保留。Commit 可以同时发布顶层可选 `ColumnSpec` 和显式命名的 Checkpoint；未传 Checkpoint 名称时不会自动创建。
+
+`dataset.schema` 以 typed `ColumnSpec` 描述标量、List 和 Struct，可承载 Annotation 所需的 `list<struct>`。Branch 可直接从同 Dataset 的任意固定 `DatasetView` 创建，不会为来源隐式打 Checkpoint；View 通过 `dataset` 和 `repo` 属性导航到所属句柄。需要隔离 Schema 或发布筛选结果时，使用 `repo.materialize_dataset(...)` 从同 Repo 固定 View 原子创建独立 Dataset；它复用内容身份与图片位置，不复制 bytes、向量或来源历史。
+
+向量字段不能直接 Commit。先通过 `repo.schema.add_vector(..., model_id=...)` 冻结模型绑定，再调用 `dataset.generate_embed(field=...)` 为 main 当前 Head 的全部行生成，也可指定 Branch 或精确 View。普通列与 VectorField 名称均去除首尾空白后按大小写不敏感规则判重；物理列固定在 Iceberg Snapshot，显式扫描的向量列始终读取 Repo 当前值。
 
 Alembic migration 需要建 schema、extension 和 role 的管理员权限；当前 `DatasetManager` 初始化会自动执行 migration，因此 PostgreSQL 连接默认也需要这些权限。迁移会创建 control、vectors、catalog 三个 runtime role，并把它们授予迁移执行用户。
 

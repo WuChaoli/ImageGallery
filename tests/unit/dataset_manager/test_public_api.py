@@ -1,5 +1,12 @@
 from image_gallery.dataset import Dataset as LegacyDataset
-from image_gallery.dataset_manager import Dataset, DatasetManager, DatasetRepo, DatasetView, VectorField
+from image_gallery.dataset_manager import (
+    Dataset,
+    DatasetManager,
+    DatasetRepo,
+    DatasetView,
+    MaterializeResult,
+    VectorField,
+)
 
 
 def test_dataset_manager_exports_new_domain_objects() -> None:
@@ -7,6 +14,7 @@ def test_dataset_manager_exports_new_domain_objects() -> None:
     assert DatasetRepo.__module__.startswith("image_gallery.dataset_manager")
     assert Dataset.__module__.startswith("image_gallery.dataset_manager")
     assert DatasetView.__module__.startswith("image_gallery.dataset_manager")
+    assert MaterializeResult.__module__.startswith("image_gallery.dataset_manager")
     assert not issubclass(Dataset, LegacyDataset)
 
 
