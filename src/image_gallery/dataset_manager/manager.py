@@ -789,6 +789,7 @@ class DatasetManager:
 
     def _get_view_row(self, *, view: DatasetView, asset_id: str) -> dict[str, object]:
         self._assert_issued_view(view=view)
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.get_row(view=view, asset_id=asset_id)
 
     def _read_view_image(self, *, view: DatasetView, asset_id: str) -> bytes:

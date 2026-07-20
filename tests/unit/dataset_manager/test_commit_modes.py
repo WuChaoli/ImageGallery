@@ -164,6 +164,11 @@ def test_add_column_is_recovered_as_durable_schema_operation(tmp_path: Path) -> 
         )
     with pytest.raises(ConflictError):
         fixed.scan()
+    with pytest.raises(ConflictError):
+        interrupted._get_view_row(  # pyright: ignore[reportPrivateUsage]
+            view=fixed,
+            asset_id="sha256:" + "0" * 64,
+        )
 
     recovered = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
     assert recovered.recover_operations() == 1
