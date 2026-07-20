@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import cast
+from typing import cast, Literal
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine, RowMapping
@@ -186,7 +186,7 @@ class RepositoryStore:
                 StoragePrefix(
                     prefix_id=str(row["prefix_id"]),
                     name=str(row["name"]),
-                    backend="file" if str(row["backend"]) == "file" else "s3",
+                    backend=cast(Literal["file", "s3", "sftp"], str(row["backend"])),
                     root=str(row["root"]),
                     credential_ref=cast(str | None, row["credential_ref"]),
                     endpoint_url=cast(str | None, row["endpoint_url"]),

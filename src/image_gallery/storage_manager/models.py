@@ -10,7 +10,7 @@ class StoragePrefix:
 
     prefix_id: str
     name: str
-    backend: Literal["file", "s3"]
+    backend: Literal["file", "s3", "sftp"]
     root: str
     credential_ref: str | None = None
     endpoint_url: str | None = None

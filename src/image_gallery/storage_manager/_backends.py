@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections.abc import Callable, Mapping
+from pathlib import PurePosixPath
 from typing import BinaryIO, cast
 
 from fsspec import AbstractFileSystem
@@ -23,19 +24,28 @@ OperationHook = Callable[[str], None]
 
 
 def create_filesystem(prefix: StoragePrefix, credentials: Mapping[str, object]) -> AbstractFileSystem:
-    """按 S3-compatible Prefix 配置创建隔离的 fsspec client。"""
-    if prefix.backend != "s3":
-        raise NotImplementedError(prefix.backend)
-    from s3fs import S3FileSystem
+    """按 Prefix 配置创建隔离的 fsspec client。"""
+    if prefix.backend == "s3":
+        from s3fs import S3FileSystem
 
-    client_kwargs = {"endpoint_url": prefix.endpoint_url} if prefix.endpoint_url else {}
-    return S3FileSystem(
-        key=cast(str | None, credentials.get("key")),
-        secret=cast(str | None, credentials.get("secret")),
-        token=cast(str | None, credentials.get("token")),
-        client_kwargs=client_kwargs,
-        skip_instance_cache=True,
-    )
+        client_kwargs = {"endpoint_url": prefix.endpoint_url} if prefix.endpoint_url else {}
+        return S3FileSystem(
+            key=cast(str | None, credentials.get("key")),
+            secret=cast(str | None, credentials.get("secret")),
+            token=cast(str | None, credentials.get("token")),
+            client_kwargs=client_kwargs,
+            skip_instance_cache=True,
+        )
+    if prefix.backend == "sftp":
+        from fsspec.implementations.sftp import SFTPFileSystem
+
+        host = prefix.endpoint_url or "localhost"
+        return SFTPFileSystem(
+            host=host,
+            skip_instance_cache=True,
+            **{k: v for k, v in credentials.items() if k != "port" and v is not None},
+        )
+    raise NotImplementedError(prefix.backend)
 
 
 class BackendStore:
@@ -70,7 +80,7 @@ class BackendStore:
             return filesystem
 
     def close(self) -> None:
-        """关闭缓存 client，并兼容 s3fs 的 session finalizer。"""
+        """关闭缓存 client，并兼容 s3fs session finalizer 与 SFTP 连接。"""
         for filesystem in self.filesystems.values():
             close = getattr(filesystem, "close", None)
             if callable(close):
@@ -83,6 +93,13 @@ class BackendStore:
             session = getattr(filesystem, "s3", None)
             if callable(close_session) and session is not None:
                 close_session(getattr(filesystem, "loop", None), session)
+            # SFTPFileSystem 未实现 close，需手动关闭 paramiko 连接。
+            ftp_client = getattr(filesystem, "ftp", None)
+            if ftp_client is not None and hasattr(ftp_client, "close"):
+                ftp_client.close()
+            ssh_client = getattr(filesystem, "client", None)
+            if ssh_client is not None and hasattr(ssh_client, "close"):
+                ssh_client.close()
         self.filesystems.clear()
 
     def write_bytes(
@@ -194,6 +211,9 @@ class BackendStore:
                     raise ContentIntegrityError(asset_id)
             return
         temp = object_path(prefix=prefix, relative_path=staging_relative_path())
+        # 对 SFTP 等真实文件系统，需确保 staging 与 target 父目录存在；S3 makedirs 为无操作。
+        filesystem.makedirs(PurePosixPath(temp).parent.as_posix(), exist_ok=True)
+        filesystem.makedirs(PurePosixPath(target).parent.as_posix(), exist_ok=True)
         with cast(BinaryIO, filesystem.open(temp, "wb")) as stream:
             stream.write(data)
         self._emit_operation_event("managed_temp_written")
