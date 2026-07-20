@@ -215,7 +215,10 @@ def test_real_backend_complete_dataset_lifecycle(
                         "tag_ids": [tag.tag_id],
                     }
                     main_v2 = dataset.commit(
-                        branch="main", base=dataset.open_branch(), frame=pd.DataFrame([main_v2_row])
+                        branch="main",
+                        base=dataset.open_branch(),
+                        frame=pd.DataFrame([main_v2_row]),
+                        mode="upsert",
                     ).view
                     generated = dataset.generate_embed(field="clip", source=main_v2)
                     assert generated.generated == 3
@@ -236,6 +239,7 @@ def test_real_backend_complete_dataset_lifecycle(
                         branch="experiment",
                         base=dataset.open_branch(name="experiment"),
                         frame=pd.DataFrame([experiment_row]),
+                        mode="upsert",
                     ).view
 
                     assert imported.view.scan().equals(v1_rows)

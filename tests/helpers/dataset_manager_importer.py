@@ -74,6 +74,7 @@ class DatasetManagerTestImporter:
             branch=self._base.ref_name,
             base=self._base,
             frame=pd.DataFrame(rows),
+            mode="upsert",
         )
         return DatasetManagerTestImportResult(
             view=result.view,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Literal, cast
 
 import pandas as pd
 
@@ -12,6 +12,8 @@ from image_gallery.dataset_manager._physical_schema import ColumnSpec, FieldType
 
 if TYPE_CHECKING:
     from image_gallery.dataset_manager.manager import DatasetManager
+
+CommitMode = Literal["replace", "upsert", "patch"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -85,7 +87,9 @@ class CommitResult:
     view: DatasetView
     inserted: int
     updated: int
+    removed: int
     changed: bool
+    checkpoint: DatasetView | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,15 +143,21 @@ class Dataset:
         branch: str,
         base: DatasetView,
         frame: pd.DataFrame,
+        mode: CommitMode = "replace",
         fields: list[str] | None = None,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        checkpoint_name: str | None = None,
     ) -> CommitResult:
-        """以完整行 upsert 推进目标 Branch。"""
+        """按显式模式推进目标 Branch，并可原子新增列与创建 Checkpoint。"""
         return self._manager._commit(
             dataset=self,
             branch=branch,
             base=base,
             frame=frame,
+            mode=mode,
             fields=fields,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
         )
 
     @property

@@ -1,25 +1,25 @@
 ## 1. 固化公共契约与回归基线
 
-- [ ] 1.1 为 `CommitMode`、默认 `replace`、显式 `upsert`/`patch`、Schema additions、可选 Checkpoint、`CommitResult.removed` 及 `DatasetView` owner 导航补充公共接口契约测试。
+- [x] 1.1 为 `CommitMode`、默认 `replace`、显式 `upsert`/`patch`、Schema additions、可选 Checkpoint、`CommitResult.removed` 及 `DatasetView` owner 导航补充公共接口契约测试。
 - [ ] 1.2 为 `ColumnSpec` 与递归 Schema DTO（primitive、list、struct）补充公共导出、构造、typed introspection、序列化和非法嵌套输入测试，确保公共类型不泄露 PyIceberg field ID。
-- [ ] 1.3 审计依赖旧 commit 默认语义的调用点，至少覆盖 `tests/helpers/dataset_manager_importer.py`、DatasetManager demo helper/notebook、backend E2E 与单元测试，并明确每处迁移为 `replace`、显式 `upsert` 或显式 `patch`。
+- [x] 1.3 审计依赖旧 commit 默认语义的调用点，至少覆盖 `tests/helpers/dataset_manager_importer.py`、DatasetManager demo helper/notebook、backend E2E 与单元测试，并明确每处迁移为 `replace`、显式 `upsert` 或显式 `patch`。
 
 ## 2. 实现 Dataset commit 模式
 
-- [ ] 2.1 先补充 `replace` 的失败测试，覆盖默认调用、空表替换、删除 Head 中缺失行、无变化提交和旧 Snapshot/Checkpoint 仍可读取。
-- [ ] 2.2 实现默认 `replace`，并保持 `upsert` 与 `patch` 只能通过显式 mode 选择。
+- [x] 2.1 先补充 `replace` 的失败测试，覆盖默认调用、空表替换、删除 Head 中缺失行、无变化提交和旧 Snapshot/Checkpoint 仍可读取。
+- [x] 2.2 实现默认 `replace`，并保持 `upsert` 与 `patch` 只能通过显式 mode 选择。
 - [ ] 2.3 补充外部状态回归测试，证明 `replace` 不删除图片 bytes、Tag Definition、历史 tag 赋值或 Repo 当前向量。
-- [ ] 2.4 迁移仓库内现有调用点与测试，消除对旧默认 upsert 语义的隐式依赖。
-- [ ] 2.5 锁定三种模式的 inserted、updated、removed、changed 计算，覆盖未变化重提行、replace 删除和 schema-only change。
+- [x] 2.4 迁移仓库内现有调用点与测试，消除对旧默认 upsert 语义的隐式依赖。
+- [x] 2.5 锁定三种模式的 inserted、updated、removed、changed 计算，覆盖未变化重提行、replace 删除和 schema-only change。
 
 ## 3. 原子化 commit 与 Checkpoint
 
 - [ ] 3.1 先补充组合发布测试，覆盖显式 Checkpoint 名称、未请求 Checkpoint、名称冲突及中途失败恢复；自动命名留给后续 Cleaner change。
-- [ ] 3.2 将显式 Schema additions、候选数据、Branch Head 发布和可选 Checkpoint 纳入同一个可恢复 history operation，并让 `CommitResult` 返回最终 View 与可选 Checkpoint 信息。
+- [x] 3.2 将显式 Schema additions、候选数据、Branch Head 发布和可选 Checkpoint 纳入同一个可恢复 history operation，并让 `CommitResult` 返回最终 View 与可选 Checkpoint 信息。
 - [ ] 3.3 为同一 Dataset 的 API operation 与 recovery 增加共享串行化保护；同时需要 Schema lock 时固定先 Repo 后 Dataset 的锁顺序，并覆盖 PostgreSQL advisory lock、同 Backend identity 的两个本地 Manager、两个 recoverer、API/recovery 并发及持锁后状态重查。
 - [ ] 3.4 补充各崩溃阶段与中间态可见性测试：active operation 阻断普通 Head/Checkpoint/Schema discovery；data/ref-only 时既有固定 View 可读，含 Schema additions 时其 schema-dependent IO 被阻断；恢复后不永久缺失或重复创建 Checkpoint。
 - [ ] 3.5 补充 Schema additions 与数据/Checkpoint 的组合发布测试，覆盖 schema-only、非法 nested value 在 operation 前失败及无隐式 Dataset Checkpoint 自动命名。
-- [ ] 3.6 覆盖 snapshotless 空 Dataset 的 empty replace：不请求 Checkpoint 时保持无 Snapshot no-op，请求时创建首个空 Snapshot 与 Checkpoint且 changed=False。
+- [x] 3.6 覆盖 snapshotless 空 Dataset 的 empty replace：不请求 Checkpoint 时保持无 Snapshot no-op，请求时创建首个空 Snapshot 与 Checkpoint且 changed=False。
 
 ## 4. 从固定 DatasetView 创建 Branch
 
@@ -35,7 +35,7 @@
 - [ ] 5.3 实现 JSON-safe canonical value 规范化，覆盖 None/空 List、optional/required、pd.NA/NaN、NumPy scalar、bool 与 integer 范围，并补充 SQLite/PostgreSQL journal、Arrow、Iceberg、空表与全空嵌套列 round-trip 测试。
 - [ ] 5.4 用 `voc_bbox_to_annotation()` 的真实 Annotation v1 返回值完成 `annotations` 列兼容性测试，覆盖嵌套 bbox、全部现有字段、多标注和空列表。
 - [ ] 5.5 补充多层嵌套 field ID 唯一性、Backend 重开稳定性，以及 clone/materialize 到新 Table 后重新分配且无碰撞测试。
-- [ ] 5.6 将独立 `DatasetSchema.add_column()` 纳入 schema-only durable history operation，复用 Commit 的 pending gate、锁顺序、中间态门禁和 recovery 测试。
+- [x] 5.6 将独立 `DatasetSchema.add_column()` 纳入 schema-only durable history operation，复用 Commit 的 pending gate、锁顺序、中间态门禁和 recovery 测试。
 
 ## 6. 原子化创建新 Dataset
 

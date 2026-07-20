@@ -19,10 +19,12 @@ from sqlalchemy.exc import IntegrityError
 
 from image_gallery.dataset_manager._dataset_history import DatasetHistory
 from image_gallery.dataset_manager._embedding import EmbeddingService
+from image_gallery.dataset_manager._history_lock import DatasetHistoryLock
 from image_gallery.dataset_manager._operation_journal import OperationJournal
 from image_gallery.dataset_manager._physical_schema import (
     ColumnSpec,
     FieldType,
+    canonicalize_value,
     column_spec_from_iceberg,
     iceberg_type_for_addition,
 )
@@ -41,6 +43,7 @@ from image_gallery.dataset_manager.errors import (
 )
 from image_gallery.dataset_manager.migrations import upgrade_control_database
 from image_gallery.dataset_manager.models import (
+    CommitMode,
     CommitResult,
     Dataset,
     DatasetRepo,
@@ -62,6 +65,8 @@ SYSTEM_SCHEMA = Schema(
 )
 _ASSET_ID_PATTERN = re.compile(r"^sha256:[0-9a-f]{64}$")
 _SYSTEM_FIELDS = {"asset_id", "storage_prefix_id", "relative_path", "source_uri", "tag_ids"}
+
+
 def _schema_name_key(name: str) -> str:
     """返回普通列与 VectorField 共享的名称冲突键。"""
     return name.strip().casefold()
@@ -101,6 +106,7 @@ class DatasetManager:
         self._tags = TagStore(control_engine)
         self._vectors = VectorStore(control_engine)
         self._schema_lock = RepoSchemaLock(control_engine)
+        self._history_lock = DatasetHistoryLock(control_engine)
         self._view_io = ViewIO(
             catalog=catalog,
             storage_manager=storage_manager,
@@ -122,6 +128,8 @@ class DatasetManager:
             repositories=self._repositories,
             system_schema=SYSTEM_SCHEMA,
             system_fields=_SYSTEM_FIELDS,
+            history_lock=self._history_lock,
+            schema_lock=self._schema_lock,
         )
 
     @classmethod
@@ -463,9 +471,35 @@ class DatasetManager:
         branch: str,
         base: DatasetView,
         frame: pd.DataFrame,
+        mode: CommitMode,
         fields: list[str] | None,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        checkpoint_name: str | None,
     ) -> CommitResult:
-        return self._history.commit(dataset=dataset, branch=branch, base=base, frame=frame, fields=fields)
+        if schema_additions:
+            with self._schema_lock.hold(repo_id=dataset.repo_id):
+                with self._history_lock.hold(dataset_id=dataset.dataset_id):
+                    return self._history.commit(
+                        dataset=dataset,
+                        branch=branch,
+                        base=base,
+                        frame=frame,
+                        mode=mode,
+                        fields=fields,
+                        schema_additions=schema_additions,
+                        checkpoint_name=checkpoint_name,
+                    )
+        with self._history_lock.hold(dataset_id=dataset.dataset_id):
+            return self._history.commit(
+                dataset=dataset,
+                branch=branch,
+                base=base,
+                frame=frame,
+                mode=mode,
+                fields=fields,
+                schema_additions=schema_additions,
+                checkpoint_name=checkpoint_name,
+            )
 
     def _commit_rows(
         self,
@@ -483,6 +517,7 @@ class DatasetManager:
         repo_id: str,
         row: dict[str, object],
         allowed_fields: set[str],
+        column_specs: dict[str, ColumnSpec] | None = None,
     ) -> dict[str, object]:
         if not _SYSTEM_FIELDS.issubset(row) or not set(row).issubset(allowed_fields):
             raise ValidationError(
@@ -513,7 +548,17 @@ class DatasetManager:
             "source_uri": source_uri,
             "tag_ids": tag_ids,
         }
-        normalized.update({key: value for key, value in row.items() if key not in _SYSTEM_FIELDS})
+        for key, value in row.items():
+            if key in _SYSTEM_FIELDS:
+                continue
+            spec = None if column_specs is None else column_specs.get(key)
+            normalized[key] = (
+                value if spec is None else canonicalize_value(spec.field_type, value, required=spec.required, path=key)
+            )
+        if column_specs is not None:
+            for key, spec in column_specs.items():
+                if key not in normalized and key not in _SYSTEM_FIELDS:
+                    normalized[key] = canonicalize_value(spec.field_type, None, required=spec.required, path=key)
         return normalized
 
     def _add_column(
@@ -528,12 +573,8 @@ class DatasetManager:
     ) -> DatasetView:
         resolved = self._resolve_column_spec(column=column, name=name, field_type=field_type)
         with self._repo_schema_lock(repo_id=dataset.repo_id):
-            return self._add_column_locked(
-                dataset=dataset,
-                branch=branch,
-                base=base,
-                column=resolved,
-            )
+            with self._history_lock.hold(dataset_id=dataset.dataset_id):
+                return self._add_column_locked(dataset=dataset, branch=branch, base=base, column=resolved)
 
     def _add_column_locked(
         self,
@@ -560,12 +601,36 @@ class DatasetManager:
             _schema_name_key(field.name) for field in self._list_vector_fields(repo=repo)
         }:
             raise ValidationError(f"Physical Schema column conflicts with VectorField: {normalized_name}")
+        existing_columns = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        same_name = next(
+            (item for name, item in existing_columns.items() if name.casefold() == normalized_name.casefold()),
+            None,
+        )
+        if same_name is not None:
+            if same_name == column:
+                return base
+            raise ValidationError(f"Physical Schema column conflicts: {normalized_name}")
         try:
+            operation_id = self._operations.start(
+                kind="schema",
+                repo_id=dataset.repo_id,
+                dataset_id=dataset.dataset_id,
+                intent={
+                    "repo_id": dataset.repo_id,
+                    "dataset_id": dataset.dataset_id,
+                    "table_identifier": dataset.table_identifier,
+                    "branch": branch,
+                    "base_snapshot_id": base.snapshot_id,
+                    "column": column.to_dict(),
+                },
+            )
             table.update_schema().add_column(
                 normalized_name,
                 iceberg_type_for_addition(column.field_type),
                 required=False,
             ).commit()
+            self._operations.record_phase(operation_id=operation_id, phase="schema_updated")
+            self._operations.finalize(operation_id=operation_id)
         except ValueError as exc:
             raise ValidationError(str(exc)) from exc
         return self._open_branch(dataset=dataset, name=branch)
@@ -593,10 +658,12 @@ class DatasetManager:
             yield
 
     def _list_columns(self, *, dataset: Dataset) -> list[ColumnSpec]:
+        self._history.assert_dataset_visible(dataset_id=dataset.dataset_id)
         table = self.catalog.load_table(dataset.table_identifier)
         return [column_spec_from_iceberg(field) for field in table.schema().fields]
 
     def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.scan_frame(view=view, fields=fields)
 
     def _get_view_row_series(  # pyright: ignore[reportMissingTypeArgument, reportUnknownParameterType]
@@ -606,6 +673,7 @@ class DatasetManager:
         asset_id: str,
         fields: list[str] | None,
     ) -> pd.Series:
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.get_row_series(view=view, asset_id=asset_id, fields=fields)
 
     def _generate_embed(
@@ -636,15 +704,18 @@ class DatasetManager:
         )
 
     def _scan_view(self, *, view: DatasetView, columns: list[str] | None) -> list[dict[str, object]]:
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.scan(view=view, columns=columns)
 
     def _get_view_row(self, *, view: DatasetView, asset_id: str) -> dict[str, object]:
         return self._view_io.get_row(view=view, asset_id=asset_id)
 
     def _read_view_image(self, *, view: DatasetView, asset_id: str) -> bytes:
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.read_image(view=view, asset_id=asset_id)
 
     def _verify_view_image(self, *, view: DatasetView, asset_id: str) -> bool:
+        self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.verify_image(view=view, asset_id=asset_id)
 
     def _branch_snapshot_id(

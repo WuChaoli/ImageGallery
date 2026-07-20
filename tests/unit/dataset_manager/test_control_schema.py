@@ -4,6 +4,7 @@ from image_gallery.dataset_manager.control import metadata
 def test_control_plane_declares_all_mvp_relations() -> None:
     assert set(metadata.tables) == {
         "control.datasets",
+        "control.dataset_name_reservations",
         "control.operation_phases",
         "control.operations",
         "control.repo_storage_bindings",

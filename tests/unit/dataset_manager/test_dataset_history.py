@@ -75,6 +75,7 @@ def test_checkpoint_is_fixed_and_branch_diverges(tmp_path: Path) -> None:
         branch="experiment",
         base=dataset.open_branch(name="experiment"),
         frame=pd.DataFrame([second]),
+        mode="upsert",
     ).view
 
     assert dataset.list_checkpoints() == ["raw"]
@@ -298,7 +299,7 @@ def test_upsert_replaces_complete_row(tmp_path: Path) -> None:
     first = dataset.commit(branch="main", base=dataset.open_branch(), frame=pd.DataFrame([base_row])).view
 
     replacement = {**base_row, "source_uri": "source://updated"}
-    result = dataset.commit(branch="main", base=first, frame=pd.DataFrame([replacement]))
+    result = dataset.commit(branch="main", base=first, frame=pd.DataFrame([replacement]), mode="upsert")
 
     assert result.inserted == 0
     assert result.updated == 1

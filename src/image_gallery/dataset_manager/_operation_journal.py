@@ -7,10 +7,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import cast
 
-from sqlalchemy import insert, select, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
-from image_gallery.dataset_manager.control import operation_phases, operations
+from image_gallery.dataset_manager.control import dataset_name_reservations, datasets, operation_phases, operations
+from image_gallery.dataset_manager.errors import NameConflictError, ValidationError
 
 
 @dataclass(frozen=True)
@@ -60,6 +62,80 @@ class OperationJournal:
             )
         return operation_id
 
+    def start_with_dataset_name_reservation(
+        self,
+        *,
+        kind: str,
+        repo_id: str,
+        dataset_id: str,
+        dataset_name: str,
+        intent: dict[str, object],
+    ) -> str:
+        """原子创建 active operation 并唯一预留 Repo 内 Dataset 名称。"""
+        name_key = dataset_name.strip().casefold()
+        if not name_key:
+            raise ValidationError("Dataset name cannot be empty")
+        operation_id = uuid.uuid4().hex
+        try:
+            with self._engine.begin() as connection:
+                existing = connection.execute(
+                    select(datasets.c.dataset_id).where(
+                        datasets.c.repo_id == repo_id,
+                        datasets.c.name_key == name_key,
+                    )
+                ).first()
+                if existing is not None:
+                    raise NameConflictError(dataset_name)
+                connection.execute(
+                    insert(operations).values(
+                        operation_id=operation_id,
+                        repo_id=repo_id,
+                        dataset_id=dataset_id,
+                        kind=kind,
+                        status="active",
+                        intent=intent,
+                    )
+                )
+                connection.execute(
+                    insert(dataset_name_reservations).values(
+                        repo_id=repo_id,
+                        name_key=name_key,
+                        operation_id=operation_id,
+                        target_dataset_id=dataset_id,
+                    )
+                )
+        except IntegrityError as exc:
+            with self._engine.connect() as connection:
+                conflict = connection.execute(
+                    select(dataset_name_reservations.c.operation_id).where(
+                        dataset_name_reservations.c.repo_id == repo_id,
+                        dataset_name_reservations.c.name_key == name_key,
+                    )
+                ).first()
+            if conflict is not None:
+                raise NameConflictError(dataset_name) from exc
+            raise
+        return operation_id
+
+    def release_failed_dataset_name_reservation(self, *, operation_id: str) -> None:
+        """显式释放确认未产生 Catalog 副作用的 failed operation 名称预留。"""
+        with self._engine.begin() as connection:
+            status = connection.execute(
+                select(operations.c.status).where(operations.c.operation_id == operation_id)
+            ).scalar_one_or_none()
+            if status != "failed":
+                raise ValidationError("Only a failed operation may release its Dataset name reservation")
+            reservation = connection.execute(
+                select(dataset_name_reservations.c.operation_id).where(
+                    dataset_name_reservations.c.operation_id == operation_id
+                )
+            ).first()
+            if reservation is None:
+                raise ValidationError("Operation has no Dataset name reservation")
+            connection.execute(
+                delete(dataset_name_reservations).where(dataset_name_reservations.c.operation_id == operation_id)
+            )
+
     def pending(self) -> list[PendingOperation]:
         """按 ID 返回全部等待恢复的 operation。"""
         statement = select(operations).where(operations.c.status == "active").order_by(operations.c.operation_id)
@@ -98,6 +174,14 @@ class OperationJournal:
     ) -> None:
         """持久化已完成阶段，并在提交后触发阶段回调。"""
         with self._engine.begin() as connection:
+            exists = connection.execute(
+                select(operation_phases.c.operation_id).where(
+                    operation_phases.c.operation_id == operation_id,
+                    operation_phases.c.phase == phase,
+                )
+            ).first()
+            if exists is not None:
+                return
             connection.execute(
                 insert(operation_phases).values(
                     operation_id=operation_id,
@@ -125,6 +209,17 @@ class OperationJournal:
         )
         with self._engine.connect() as connection:
             return connection.execute(statement).first() is not None
+
+    def active_for_dataset(self, *, dataset_id: str) -> PendingOperation | None:
+        """返回 Dataset 当前 active operation；不存在时返回 None。"""
+        statement = (
+            select(operations)
+            .where(operations.c.dataset_id == dataset_id, operations.c.status == "active")
+            .order_by(operations.c.operation_id)
+        )
+        with self._engine.connect() as connection:
+            row = connection.execute(statement).mappings().first()
+        return None if row is None else self._pending_operation(row)
 
     def _set_status(self, *, operation_id: str, status: str) -> None:
         with self._engine.begin() as connection:

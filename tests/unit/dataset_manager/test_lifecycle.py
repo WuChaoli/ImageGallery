@@ -249,7 +249,9 @@ def test_plain_commit_recovers_temporary_ref_before_branch_publish(tmp_path: Pat
     interrupted_dataset = interrupted.open_repo(name="Vision").open_dataset(name="Raw")
     interrupted_base = interrupted_dataset.open_branch()
     with pytest.raises(RuntimeError, match="injected"):
-        interrupted_dataset.commit(branch="main", base=interrupted_base, frame=pd.DataFrame([row(b"two")]))
+        interrupted_dataset.commit(
+            branch="main", base=interrupted_base, frame=pd.DataFrame([row(b"two")]), mode="upsert"
+        )
 
     recovered = DatasetManager.local(root=tmp_path / "backend", storage_manager=storage)
     assert recovered.recover_operations() == 1

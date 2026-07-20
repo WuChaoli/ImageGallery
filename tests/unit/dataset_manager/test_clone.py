@@ -64,7 +64,7 @@ def test_clone_copies_physical_schema_and_fixed_source_state(tmp_path: Path) -> 
         }
 
     fixed = source.commit(branch="main", base=base, frame=pd.DataFrame([row(b"one", "train")])).view
-    source.commit(branch="main", base=fixed, frame=pd.DataFrame([row(b"two", "test")]))
+    source.commit(branch="main", base=fixed, frame=pd.DataFrame([row(b"two", "test")]), mode="upsert")
 
     cloned = repo.clone_dataset(source=fixed, name="Clone")
 

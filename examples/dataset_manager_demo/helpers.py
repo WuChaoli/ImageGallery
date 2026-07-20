@@ -9,9 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, cast
 
+import pandas as pd
 from dotenv import dotenv_values
 from PIL import Image
-import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 
@@ -133,7 +133,7 @@ class DemoDatasetImporter:
                     "tag_ids": self.tag_ids,
                 }
             )
-        result = self.dataset.commit(branch=self.base.ref_name, base=self.base, frame=pd.DataFrame(rows))
+        result = self.dataset.commit(branch=self.base.ref_name, base=self.base, frame=pd.DataFrame(rows), mode="upsert")
         return DemoImportResult(result.view, len(rows), tuple(asset_ids))
 
 

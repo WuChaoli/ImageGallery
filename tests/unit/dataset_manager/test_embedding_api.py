@@ -84,7 +84,7 @@ def expand_dataset_to_sixty_five(manager, dataset, view, objects):  # pyright: i
             for item in more
         ]
     )
-    return dataset.commit(branch="main", base=view, frame=rows).view, more
+    return dataset.commit(branch="main", base=view, frame=rows, mode="upsert").view, more
 
 
 def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
@@ -96,6 +96,7 @@ def test_schema_facades_and_dataframe_io(tmp_path: Path) -> None:
         branch="main",
         base=dataset.open_branch(),
         frame=pd.DataFrame([{"asset_id": objects[0].asset_id, "split": "train"}]),
+        mode="patch",
         fields=["split"],
     ).view
     assert list(patched.scan(fields=["asset_id", "split"]).columns) == ["asset_id", "split"]
@@ -248,6 +249,7 @@ def test_generate_embed_rejects_cross_dataset_view_and_direct_vector_commit(tmp_
             branch="main",
             base=view,
             frame=pd.DataFrame([{"asset_id": view.scan().iloc[0]["asset_id"], "embedding": [1.0, 2.0]}]),
+            mode="patch",
             fields=["embedding"],
         )
 

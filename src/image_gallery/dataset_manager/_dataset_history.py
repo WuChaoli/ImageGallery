@@ -15,8 +15,15 @@ from pyiceberg.table.refs import SnapshotRefType
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine
 
-from image_gallery.dataset_manager._operation_journal import OperationJournal
+from image_gallery.dataset_manager._history_lock import DatasetHistoryLock
+from image_gallery.dataset_manager._operation_journal import OperationJournal, PendingOperation
+from image_gallery.dataset_manager._physical_schema import (
+    ColumnSpec,
+    column_spec_from_iceberg,
+    iceberg_type_for_addition,
+)
 from image_gallery.dataset_manager._repository_store import DatasetRecord, RepositoryStore
+from image_gallery.dataset_manager._schema_lock import RepoSchemaLock
 from image_gallery.dataset_manager.control import asset_vectors, datasets, operations, pending_asset_vectors
 from image_gallery.dataset_manager.errors import (
     ConflictError,
@@ -24,7 +31,7 @@ from image_gallery.dataset_manager.errors import (
     ObjectNotFoundError,
     ValidationError,
 )
-from image_gallery.dataset_manager.models import CommitResult, Dataset, DatasetRepo, DatasetView
+from image_gallery.dataset_manager.models import CommitMode, CommitResult, Dataset, DatasetRepo, DatasetView
 from image_gallery.storage_manager import StorageManager, StoredObject
 
 if TYPE_CHECKING:
@@ -43,8 +50,10 @@ class DatasetHistory:
         storage_manager: StorageManager,
         operations: OperationJournal,
         repositories: RepositoryStore,
-        system_schema: Schema,
+        system_schema: Schema,  # pyright: ignore[reportUnknownParameterType]
         system_fields: set[str],
+        history_lock: DatasetHistoryLock,
+        schema_lock: RepoSchemaLock,
     ) -> None:
         self._manager = manager
         self._engine = engine
@@ -54,30 +63,65 @@ class DatasetHistory:
         self._repositories = repositories
         self._system_schema = system_schema
         self._system_fields = system_fields
+        self._history_lock = history_lock
+        self._schema_lock = schema_lock
 
     def recover_operations(self) -> int:
         """幂等恢复全部未完成的 Dataset 历史操作。"""
         recovered = 0
         for operation in self._operations.pending():
-            if operation.kind == "create_dataset":
-                self._recover_create_dataset(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
-            elif operation.kind == "commit":
-                self._recover_commit(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
-            elif operation.kind == "clone":
-                self._recover_clone(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
-            elif operation.kind == "checkpoint":
-                self._recover_checkpoint(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
-            elif operation.kind == "rollback":
-                self._recover_rollback(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
-            elif operation.kind == "branch":
-                self._recover_branch(operation_id=operation.operation_id, intent=operation.intent)
-                recovered += 1
+            if operation.dataset_id is not None:
+                has_schema = operation.kind == "schema" or bool(operation.intent.get("schema_additions"))
+                if has_schema:
+                    with self._schema_lock.hold(repo_id=operation.repo_id):
+                        with self._history_lock.hold(dataset_id=operation.dataset_id):
+                            if self._operations.get_active(operation_id=operation.operation_id) is not None:
+                                self._recover_operation(operation=operation)
+                                recovered += 1
+                else:
+                    with self._history_lock.hold(dataset_id=operation.dataset_id):
+                        if self._operations.get_active(operation_id=operation.operation_id) is not None:
+                            self._recover_operation(operation=operation)
+                            recovered += 1
+                continue
+            self._recover_operation(operation=operation)
+            recovered += 1
         return recovered
+
+    def _recover_operation(self, *, operation: PendingOperation) -> None:
+        """在调用方持有适当锁时恢复一个 operation。"""
+        if operation.kind == "create_dataset":
+            self._recover_create_dataset(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "commit":
+            self._recover_commit(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "clone":
+            self._recover_clone(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "checkpoint":
+            self._recover_checkpoint(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "rollback":
+            self._recover_rollback(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "branch":
+            self._recover_branch(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "schema":
+            self._recover_schema(operation_id=operation.operation_id, intent=operation.intent)
+
+    def _recover_schema(self, *, operation_id: str, intent: dict[str, object]) -> None:
+        """幂等恢复独立物理 Schema 新增列操作。"""
+        table = self.catalog.load_table(str(intent["table_identifier"]))
+        column = ColumnSpec.from_dict(cast(dict[str, object], intent["column"]))
+        existing = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        if column.name in existing:
+            if existing[column.name] != column:
+                self._operations.fail(operation_id=operation_id)
+                raise ConflictError(column.name)
+        else:
+            table.update_schema().add_column(
+                column.name,
+                iceberg_type_for_addition(column.field_type),
+                required=False,
+            ).commit()
+        self._operations.record_phase(operation_id=operation_id, phase="schema_updated")
+        self._operations.finalize(operation_id=operation_id)
 
     def _recover_create_dataset(self, *, operation_id: str, intent: dict[str, object]) -> None:
         table_identifier = str(intent["table_identifier"])
@@ -166,8 +210,22 @@ class DatasetHistory:
             raise ValidationError("Operation intent requires an integer value")
         return value
 
-    def _recover_commit(self, *, operation_id: str, intent: dict[str, object]) -> None:
+    def _recover_commit(  # noqa: C901
+        self, *, operation_id: str, intent: dict[str, object]
+    ) -> None:
         table = self.catalog.load_table(str(intent["table_identifier"]))
+        additions = [
+            ColumnSpec.from_dict(cast(dict[str, object], item))
+            for item in cast(list[object], intent.get("schema_additions", []))
+        ]
+        existing = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        missing = [item for item in additions if item.name not in existing]
+        if missing:
+            update_schema = table.update_schema()
+            for addition in missing:
+                update_schema.add_column(addition.name, iceberg_type_for_addition(addition.field_type), required=False)
+            update_schema.commit()
+            table = self.catalog.load_table(str(intent["table_identifier"]))
         branch = str(intent["branch"])
         candidate = intent.get("candidate_snapshot_id")
         actual = self.branch_snapshot_id(table=table, branch=branch)
@@ -236,15 +294,26 @@ class DatasetHistory:
             table.manage_snapshots().remove_branch(temporary_ref).commit()
         if isinstance(candidate, int):
             self._verify_snapshot_storage(table=table, snapshot_id=candidate)
-        self._publish_pending_vectors_and_finalize(operation_id=operation_id)
+        checkpoint_name = intent.get("checkpoint_name")
+        if isinstance(checkpoint_name, str) and isinstance(candidate, int):
+            table = self.catalog.load_table(str(intent["table_identifier"]))
+            ref = table.refs().get(checkpoint_name)
+            if ref is None:
+                table.manage_snapshots().create_tag(candidate, checkpoint_name).commit()
+            elif ref.snapshot_ref_type != SnapshotRefType.TAG or ref.snapshot_id != candidate:
+                raise ConflictError(checkpoint_name)
+            self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
+        self._publish_pending_vectors(operation_id=operation_id)
+        self._operations.record_phase(operation_id=operation_id, phase="vectors_published")
+        self._operations.finalize(operation_id=operation_id)
 
     def _fail_operation(
         self,
         *,
         operation_id: str,
         temporary_ref: object,
-        table: Table,
-    ) -> None:  # pyright: ignore[reportUnknownParameterType]
+        table: Table,  # pyright: ignore[reportUnknownParameterType]
+    ) -> None:
         if isinstance(temporary_ref, str) and temporary_ref in table.refs():
             table.manage_snapshots().remove_branch(temporary_ref).commit()
         with self._engine.begin() as connection:
@@ -282,6 +351,14 @@ class DatasetHistory:
         """拒绝读取仍在恢复中的 Dataset。"""
         if self._operations.has_active_dataset_operation(dataset_id=dataset_id):
             raise ConflictError(f"Dataset {dataset_id} is reconciling")
+
+    def assert_fixed_view_readable(self, *, dataset_id: str) -> None:
+        """仅在 active operation 可能改变物理 Schema 时阻断固定 View IO。"""
+        operation = self._operations.active_for_dataset(dataset_id=dataset_id)
+        if operation is None:
+            return
+        if operation.kind == "schema" or bool(operation.intent.get("schema_additions")):
+            raise ConflictError(f"Dataset {dataset_id} schema is reconciling")
 
     def clone_dataset(self, *, repo: DatasetRepo, source: DatasetView, name: str) -> Dataset:
         """从固定 View 克隆独立 Dataset 状态。"""
@@ -505,7 +582,7 @@ class DatasetHistory:
     @staticmethod
     def _is_ancestor(  # pyright: ignore[reportUnknownParameterType]
         *,
-        table: Table,
+        table: Table,  # pyright: ignore[reportUnknownParameterType]
         ancestor: int,
         descendant: int,
     ) -> bool:
@@ -526,9 +603,16 @@ class DatasetHistory:
         branch: str,
         base: DatasetView,
         frame: pd.DataFrame,
+        mode: CommitMode,
         fields: list[str] | None,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        checkpoint_name: str | None,
     ) -> CommitResult:
         """规范化 DataFrame 并提交到目标 Branch。"""
+        if mode not in {"replace", "upsert", "patch"}:
+            raise ValidationError(f"Unknown commit mode: {mode}")
+        if (mode == "patch") != (fields is not None):
+            raise ValidationError("Patch mode requires fields, and fields are only valid in patch mode")
         vector_names = {
             item.name for item in self._manager._list_vector_fields(repo=self._manager._repo_by_id(dataset.repo_id))
         }
@@ -536,7 +620,9 @@ class DatasetHistory:
         if requested & vector_names:
             raise ValidationError("Vector fields cannot be committed directly; use dataset.generate_embed()")
         records = cast(list[dict[str, object]], frame.to_dict(orient="records"))
-        if fields is not None:
+        if mode == "patch":
+            if fields is None:
+                raise ValidationError("Patch mode requires fields")
             if "asset_id" not in frame.columns or "asset_id" in fields:
                 raise ValidationError("Patch commit requires asset_id outside fields")
             current = {str(row["asset_id"]): row for row in self._manager._scan_view(view=base, columns=None)}
@@ -550,15 +636,26 @@ class DatasetHistory:
                 rows.append({**current[asset_id], **{name: patch[name] for name in fields}})
         else:
             rows = records
-        return self.commit_rows(dataset=dataset, branch=branch, base=base, rows=rows)
+        return self.commit_rows(
+            dataset=dataset,
+            branch=branch,
+            base=base,
+            rows=rows,
+            mode=mode,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
+        )
 
-    def commit_rows(
+    def commit_rows(  # noqa: C901
         self,
         *,
         dataset: Dataset,
         branch: str,
         base: DatasetView,
         rows: list[dict[str, object]],
+        mode: CommitMode = "upsert",
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        checkpoint_name: str | None = None,
     ) -> CommitResult:
         """以规范化行集合推进目标 Branch。"""
         self._manager._validate_view_dataset(view=base, dataset=dataset)
@@ -568,25 +665,62 @@ class DatasetHistory:
         table = self.catalog.load_table(dataset.table_identifier)
         if self.branch_snapshot_id(table=table, branch=branch) != base.snapshot_id:
             raise ConflictError(branch)
-        allowed_fields = {field.name for field in table.schema().fields}
+        existing_specs = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        addition_names: set[str] = set()
+        additions: list[ColumnSpec] = []
+        for addition in schema_additions:
+            key = addition.name.casefold()
+            if key in addition_names:
+                raise ValidationError(f"Duplicate schema addition: {addition.name}")
+            addition_names.add(key)
+            existing = next((spec for name, spec in existing_specs.items() if name.casefold() == key), None)
+            if existing is not None:
+                if existing != addition:
+                    raise ValidationError(f"Physical Schema column conflicts: {addition.name}")
+                continue
+            if addition.required or addition.name in self._system_fields:
+                raise ValidationError("Business columns must be optional")
+            additions.append(addition)
+        column_specs = {**existing_specs, **{item.name: item for item in additions}}
+        allowed_fields = set(column_specs)
         normalized_rows = [
-            self._manager._normalize_row(repo_id=dataset.repo_id, row=row, allowed_fields=allowed_fields)
+            self._manager._normalize_row(
+                repo_id=dataset.repo_id,
+                row=row,
+                allowed_fields=allowed_fields,
+                column_specs=column_specs,
+            )
             for row in rows
         ]
         asset_ids = [str(row["asset_id"]) for row in normalized_rows]
         if len(asset_ids) != len(set(asset_ids)):
             raise ValidationError("Duplicate asset_id in one change set")
-        current_rows = self._manager._scan_view(view=base, columns=None)
+        current_rows = [
+            self._manager._normalize_row(
+                repo_id=dataset.repo_id,
+                row=row,
+                allowed_fields=allowed_fields,
+                column_specs=column_specs,
+            )
+            for row in self._manager._scan_view(view=base, columns=None)
+        ]
         by_id = {str(row["asset_id"]): row for row in current_rows}
-        inserted = sum(asset_id not in by_id for asset_id in asset_ids)
-        updated = len(asset_ids) - inserted
-        for row in normalized_rows:
-            by_id[str(row["asset_id"])] = row
-        merged_rows = sorted(by_id.values(), key=lambda item: str(item["asset_id"]))
+        submitted = {str(row["asset_id"]): row for row in normalized_rows}
+        if mode == "replace":
+            final_by_id = submitted
+        else:
+            final_by_id = {**by_id, **submitted}
+        merged_rows = sorted(final_by_id.values(), key=lambda item: str(item["asset_id"]))
+        inserted = sum(asset_id not in by_id for asset_id in final_by_id)
+        updated = sum(asset_id in by_id and row != by_id[asset_id] for asset_id, row in final_by_id.items())
+        removed = sum(asset_id not in final_by_id for asset_id in by_id) if mode == "replace" else 0
         pending_vectors: list[dict[str, object]] = []
         data_changed = merged_rows != sorted(current_rows, key=lambda item: str(item["asset_id"]))
-        if not data_changed and not pending_vectors:
-            return CommitResult(base, inserted=0, updated=0, changed=False)
+        schema_changed = bool(additions)
+        if checkpoint_name is not None and checkpoint_name in table.refs():
+            raise NameConflictError(checkpoint_name)
+        if not data_changed and not schema_changed and checkpoint_name is None:
+            return CommitResult(base, inserted=0, updated=0, removed=0, changed=False)
         operation_id = self._operations.start(
             kind="commit",
             repo_id=dataset.repo_id,
@@ -601,22 +735,49 @@ class DatasetHistory:
                 "temporary_ref": None,
                 "rows": merged_rows,
                 "data_changed": data_changed,
+                "schema_additions": [item.to_dict() for item in additions],
+                "checkpoint_name": checkpoint_name,
             },
         )
         self._insert_pending_vectors(operation_id=operation_id, pending=pending_vectors)
         self._operations.record_phase(operation_id=operation_id, phase="pending_vectors_written")
         candidate_snapshot_id = base.snapshot_id
-        if data_changed:
-            arrow_table = pa.Table.from_pylist(merged_rows, schema=table.schema().as_arrow())
+        if data_changed or schema_changed or (base.snapshot_id is None and checkpoint_name is not None):
             if base.snapshot_id is None:
-                table.append(arrow_table, branch=branch)
+                with table.transaction() as transaction:
+                    update_schema = transaction.update_schema()
+                    for addition in additions:
+                        update_schema.add_column(
+                            addition.name,
+                            iceberg_type_for_addition(addition.field_type),
+                            required=False,
+                        )
+                    if additions:
+                        update_schema.commit()
+                    arrow_table = pa.Table.from_pylist(
+                        merged_rows, schema=transaction.table_metadata.schema().as_arrow()
+                    )
+                    transaction.append(arrow_table, branch=branch)
                 table = self.catalog.load_table(dataset.table_identifier)
                 candidate_snapshot_id = self.branch_snapshot_id(table=table, branch=branch)
             else:
                 temporary_ref = f"op_{operation_id}"
                 table.manage_snapshots().create_branch(base.snapshot_id, temporary_ref).commit()
                 table = self.catalog.load_table(dataset.table_identifier)
-                table.overwrite(arrow_table, branch=temporary_ref)
+                with table.transaction() as transaction:
+                    update_schema = transaction.update_schema()
+                    for addition in additions:
+                        update_schema.add_column(
+                            addition.name,
+                            iceberg_type_for_addition(addition.field_type),
+                            required=False,
+                        )
+                    if additions:
+                        update_schema.commit()
+                    arrow_table = pa.Table.from_pylist(
+                        merged_rows, schema=transaction.table_metadata.schema().as_arrow()
+                    )
+                    transaction.overwrite(arrow_table, branch=temporary_ref)
                 table = self.catalog.load_table(dataset.table_identifier)
                 candidate_snapshot_id = self.branch_snapshot_id(table=table, branch=temporary_ref)
                 if candidate_snapshot_id is None:
@@ -650,8 +811,24 @@ class DatasetHistory:
                 phase="candidate_written",
                 details={"snapshot_id": candidate_snapshot_id},
             )
-        self._publish_pending_vectors_and_finalize(operation_id=operation_id)
+        checkpoint: DatasetView | None = None
+        if checkpoint_name is not None:
+            if candidate_snapshot_id is None:
+                raise ConflictError("Checkpoint requires a concrete Snapshot")
+            table = self.catalog.load_table(dataset.table_identifier)
+            table.manage_snapshots().create_tag(candidate_snapshot_id, checkpoint_name).commit()
+            checkpoint = DatasetView(
+                dataset.repo_id,
+                dataset.dataset_id,
+                candidate_snapshot_id,
+                checkpoint_name,
+                "checkpoint",
+                self._manager,
+            )
+            self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
+        self._publish_pending_vectors(operation_id=operation_id)
         self._operations.record_phase(operation_id=operation_id, phase="vectors_published")
+        self._operations.finalize(operation_id=operation_id)
         view = DatasetView(
             dataset.repo_id,
             dataset.dataset_id,
@@ -660,7 +837,14 @@ class DatasetHistory:
             "branch",
             self._manager,
         )
-        return CommitResult(view, inserted=inserted, updated=updated, changed=data_changed)
+        return CommitResult(
+            view,
+            inserted=inserted,
+            updated=updated,
+            removed=removed,
+            changed=data_changed or schema_changed,
+            checkpoint=checkpoint,
+        )
 
     def _insert_pending_vectors(self, *, operation_id: str, pending: list[dict[str, object]]) -> None:
         if not pending:
@@ -671,7 +855,7 @@ class DatasetHistory:
                 [{"operation_id": operation_id, **item} for item in pending],
             )
 
-    def _publish_pending_vectors_and_finalize(self, *, operation_id: str) -> None:
+    def _publish_pending_vectors(self, *, operation_id: str) -> None:
         with self._engine.begin() as connection:
             rows = (
                 connection.execute(
@@ -700,9 +884,6 @@ class DatasetHistory:
                     connection.execute(update(asset_vectors).where(*key).values(value=row["value"]))
             connection.execute(
                 pending_asset_vectors.delete().where(pending_asset_vectors.c.operation_id == operation_id)
-            )
-            connection.execute(
-                update(operations).where(operations.c.operation_id == operation_id).values(status="finalized")
             )
 
     def _publish_candidate(

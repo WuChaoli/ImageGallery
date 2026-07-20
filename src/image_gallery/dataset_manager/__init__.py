@@ -22,6 +22,7 @@ from image_gallery.dataset_manager.errors import (
 )
 from image_gallery.dataset_manager.manager import DatasetManager
 from image_gallery.dataset_manager.models import (
+    CommitMode,
     CommitResult,
     Dataset,
     DatasetRepo,
@@ -36,6 +37,7 @@ from image_gallery.dataset_manager.models import (
 __all__ = [
     "ColumnSpec",
     "CommitResult",
+    "CommitMode",
     "ConflictError",
     "Dataset",
     "DatasetManager",

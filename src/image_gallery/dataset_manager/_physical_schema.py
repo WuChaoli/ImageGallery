@@ -436,7 +436,10 @@ def _canonicalize_primitive(field_type: PrimitiveFieldType, value: object, *, pa
     if isinstance(value, bool) or not isinstance(value, int | float):
         raise ValidationError(f"{path} must be numeric")
     if field_type.name == "double":
-        return float(value)
+        normalized = float(value)
+        if not math.isfinite(normalized):
+            raise ValidationError(f"{path} must be finite")
+        return normalized
     if not isinstance(value, int):
         raise ValidationError(f"{path} must be an integer")
     minimum, maximum = (_INTEGER_MIN, _INTEGER_MAX) if field_type.name == "integer" else (_LONG_MIN, _LONG_MAX)
