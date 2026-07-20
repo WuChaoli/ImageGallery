@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+from image_gallery.cleaning._dataset_compat import read_dataset_fingerprint
 from image_gallery.cleaning.config import ParsedOperatorConfig
 from image_gallery.dataset import Dataset
 
@@ -46,7 +47,7 @@ def create_run_context(
     return CleanerRunContext(
         run_id=run_id,
         dataset=dataset,
-        dataset_fingerprint=dataset.fingerprint(),
+        dataset_fingerprint=read_dataset_fingerprint(dataset),
         cleaner_type=cleaner_type,
         operator_configs=operator_configs,
         paths=paths,

@@ -92,7 +92,7 @@ class CleanerResult:
         """导出只读调试包，包含表、manifest、状态和 relation 副本。"""
         return export_debug_bundle(self._artifacts(), path)
 
-    def export(self, kind: str, path: Path | str) -> Dataset:
+    def export(self, kind: str, path: Path | str, *, review_policy: str = "keep") -> Dataset:
         """按 kind 导出清洗产物并返回 Dataset。"""
         artifacts = self._artifacts()
         tables = CleaningTables(
@@ -105,6 +105,7 @@ class CleanerResult:
             kind=str(kind).strip().lower(),
             tables=tables,
             output_path=str(path),
+            review_policy=review_policy,
         )
         return Dataset.load(str(path))
 

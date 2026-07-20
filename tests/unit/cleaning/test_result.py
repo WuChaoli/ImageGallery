@@ -79,6 +79,31 @@ def test_result_export_full_returns_expected_rows(tmp_path: Path) -> None:
     assert output.to_frame()["image_id"].tolist() == ["img-1", "img-2"]
 
 
+def test_result_export_strict_review_policy(tmp_path: Path) -> None:
+    tables_dir = tmp_path / "run-1" / "tables"
+    tables_dir.mkdir(parents=True, exist_ok=True)
+    pd.DataFrame(
+        {
+            "image_id": ["img-1", "img-2", "img-3"],
+            "image_uri": ["/tmp/one.png", "/tmp/two.png", "/tmp/three.png"],
+            "decode_action": ["keep", "review", "drop"],
+            "final_action": ["keep", "review", "drop"],
+            "final_reason": ["", "pending", ""],
+            "triggered_operator_names": ["", "", ""],
+        }
+    ).to_parquet(tables_dir / "evaluation_table.parquet", index=False)
+    pd.DataFrame(
+        {"image_id": ["img-1", "img-2", "img-3"], "decode_ok": [True, False, False], "decode_error": ["", "", ""]}
+    ).to_parquet(tables_dir / "parameter_table.parquet", index=False)
+
+    result = CleanerResult(run_id="run-1", cache_root=tmp_path)
+    strict = result.export("clean", tmp_path / "clean_strict.parquet", review_policy="strict")
+    normal = result.export("clean", tmp_path / "clean_normal.parquet")
+
+    assert strict.to_frame()["image_id"].tolist() == ["img-1"]
+    assert sorted(normal.to_frame()["image_id"].tolist()) == ["img-1", "img-2"]
+
+
 def test_result_explain_removes_relation_paths_from_public_output(tmp_path: Path) -> None:
     run_dir = tmp_path / "run-1"
     tables_dir = run_dir / "tables"

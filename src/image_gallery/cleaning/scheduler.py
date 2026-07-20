@@ -8,6 +8,11 @@ from typing import cast
 import pandas as pd
 from PIL import Image
 
+from image_gallery.cleaning._dataset_compat import (
+    read_dataset_image_bytes,
+    require_image_id,
+    row_image_uri,
+)
 from image_gallery.cleaning.context import CleanerRunContext
 from image_gallery.cleaning.planner import ParameterExecutionPlan, ParameterExecutionStep
 from image_gallery.cleaning.runtime_state import SQLiteRunStateStore
@@ -121,11 +126,11 @@ class ParameterScheduler:
         """统一读取和解码当前 parameter_table 中的图片。"""
         items: list[ImageBatchItem] = []
         for row in cast(list[dict[str, object]], tables.parameter_table.to_dict(orient="records")):
-            image_id = str(row["image_id"])
-            image_uri = str(row["image_uri"])
+            image_id = require_image_id(row)
+            image_uri = row_image_uri(row)
             try:
                 # 每张图片只读取和解码一次，后续 per-image computer 共享同一个 ImageBatch。
-                data = context.dataset.read_image_bytes(image_uri)
+                data = read_dataset_image_bytes(context.dataset, image_id=image_id, image_uri=image_uri)
                 with Image.open(BytesIO(data)) as opened:
                     opened.load()
                     image = opened.copy()

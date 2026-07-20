@@ -9,6 +9,7 @@ from typing import Any, cast
 
 import pandas as pd
 
+from image_gallery.cleaning._dataset_compat import read_dataset_image
 from image_gallery.cleaning.preview import ACTION_PRIORITY
 from image_gallery.dataset import Dataset
 
@@ -229,9 +230,15 @@ def _render_group(*, group: PreviewGroup, dataset: Dataset, options: PreviewHtml
 def _render_card(*, row: dict[str, Any], dataset: Dataset, options: PreviewHtmlOptions) -> str:
     """渲染单张图片卡片。"""
     image_uri = str(row.get("image_uri", ""))
+    image_id = str(row.get("image_id", image_uri))
     caption_html = "".join(_render_caption(row, column) for column in _caption_columns(row, options))
     try:
-        data_uri = _thumbnail_data_uri(dataset=dataset, image_uri=image_uri, thumbnail_size=options.thumbnail_size)
+        data_uri = _thumbnail_data_uri(
+            dataset=dataset,
+            image_id=image_id,
+            image_uri=image_uri,
+            thumbnail_size=options.thumbnail_size,
+        )
         media_html = f'<img src="{escape(data_uri, quote=True)}" alt="{escape(image_uri, quote=True)}" />'
     # HTML 预览隔离单张图片读取失败，并在卡片内展示错误。
     except Exception as exc:  # noqa: BLE001
@@ -256,9 +263,9 @@ def _render_caption(row: dict[str, Any], column: str) -> str:
     return f"<div>{escape(column)}: {escape(str(value))}</div>"
 
 
-def _thumbnail_data_uri(*, dataset: Dataset, image_uri: str, thumbnail_size: int) -> str:
+def _thumbnail_data_uri(*, dataset: Dataset, image_id: str, image_uri: str, thumbnail_size: int) -> str:
     """读取图片并编码为 HTML 可直接展示的 base64 缩略图。"""
-    image = dataset.read_image(image_uri)
+    image = read_dataset_image(dataset, image_id=image_id, image_uri=image_uri)
     image.thumbnail((thumbnail_size, thumbnail_size))
     if image.mode not in {"RGB", "L"}:
         image = image.convert("RGB")

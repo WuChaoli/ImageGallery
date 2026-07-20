@@ -6,12 +6,17 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import uuid4
 
 import pandas as pd
 
 import image_gallery.cleaning._parameter_config as _parameter_config
+from image_gallery.cleaning._dataset_compat import (
+    normalize_identifier_columns,
+    read_dataset_fingerprint,
+    read_dataset_frame,
+)
 from image_gallery.cleaning.config import OperatorConfigInput
 from image_gallery.cleaning.events import RuntimeEvent
 from image_gallery.cleaning.graph import CleaningStateGraph
@@ -54,10 +59,13 @@ def build_dry_run_result(
     errors: list[str] = []
     warnings: list[str] = []
     if dataset is not None:
-        columns = set(dataset.to_frame().columns)
-        for required in ("image_id", "image_uri"):
-            if required not in columns:
-                errors.append(f"dataset.{required} column is required")
+        frame = normalize_identifier_columns(read_dataset_frame(dataset))
+        required = ["image_id"]
+        if hasattr(dataset, "read_image_bytes"):
+            required.append("image_uri")
+        for required_column in required:
+            if required_column not in frame.columns:
+                errors.append(f"dataset.{required_column} column is required")
     elif dataset is None:
         warnings.append("dataset was not provided; schema validation was skipped")
 
@@ -159,7 +167,7 @@ def _complete_sample_rule(
         return None
     if sample_rule.get("random_state") is not None:
         return sample_rule
-    seed_material = f"{dataset.fingerprint()}:{graph.plan_hash}".encode()
+    seed_material = f"{read_dataset_fingerprint(dataset)}:{graph.plan_hash}".encode()
     seed = int.from_bytes(sha256(seed_material).digest()[:8], "big") % (2**32)
     return {**sample_rule, "random_state": seed}
 
@@ -168,7 +176,7 @@ def _sample_dataset(dataset: Dataset, sample_rule: dict[str, object] | None, out
     """按已归一化规则写入本 run 专属稳定样本 Dataset。"""
     if sample_rule is None:
         return dataset
-    frame = dataset.to_frame()
+    frame = normalize_identifier_columns(read_dataset_frame(dataset))
     raw_size = sample_rule["n"]
     raw_random_state = sample_rule["random_state"]
     if not isinstance(raw_size, int) or isinstance(raw_size, bool):
@@ -177,7 +185,8 @@ def _sample_dataset(dataset: Dataset, sample_rule: dict[str, object] | None, out
         raise TypeError("sample.random_state must be an integer")
     sample_size = min(raw_size, len(frame))
     sampled = frame.sample(n=sample_size, random_state=raw_random_state).sort_index()
-    return Dataset.write(sampled, str(output_path), storage=dataset.storage)
+    storage = cast(Any, dataset).storage if hasattr(dataset, "storage") else None
+    return Dataset.write(sampled, str(output_path), storage=storage)
 
 
 def _coerce_label(run_options: Mapping[str, object]) -> str | None:

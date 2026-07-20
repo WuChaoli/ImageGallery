@@ -4,6 +4,7 @@ from typing import cast
 
 import pandas as pd
 
+from image_gallery.cleaning._dataset_compat import normalize_identifier_columns
 from image_gallery.cleaning.context import CleanerRunPaths
 from image_gallery.dataset import Dataset
 
@@ -20,9 +21,13 @@ class CleaningTables:
 
 def initialize_parameter_table(dataset: Dataset) -> pd.DataFrame:
     """从 raw Dataset 初始化 parameter_table。"""
-    frame = dataset.to_frame()
-    required_columns = ["image_id", "image_uri"]
-    _require_columns(frame, required_columns)
+    frame = normalize_identifier_columns(dataset.to_frame())
+    if "image_id" not in frame.columns:
+        raise ValueError("missing required columns: ['image_id']")
+    if hasattr(dataset, "read_image_bytes") and "image_uri" not in frame.columns:
+        raise ValueError("missing required columns: ['image_uri']")
+    if "image_uri" not in frame.columns:
+        frame["image_uri"] = frame["image_id"].astype(str)
     columns = ["image_id", "image_uri"]
     if "source_uri" in frame.columns:
         columns.append("source_uri")

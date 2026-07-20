@@ -3,7 +3,6 @@ from abc import ABC, abstractmethod
 import pandas as pd
 
 from image_gallery.cleaning.config import OperatorConfigInput
-from image_gallery.dataset import Dataset
 
 
 class Cleaner(ABC):
@@ -20,7 +19,7 @@ class Cleaner(ABC):
     @abstractmethod
     def run(
         self,
-        dataset: Dataset,
+        dataset: object,
         **run_options: object,
     ) -> object:
         """执行当前 Cleaner 配置的全部算子。"""
