@@ -97,6 +97,32 @@ class StorageManager:
         self._register_prefix(prefix)
         return prefix
 
+    def register_sftp_prefix(
+        self,
+        *,
+        name: str,
+        root: str,
+        host: str,
+        credential_ref: str,
+        prefix_id: str | None = None,
+    ) -> StoragePrefix:
+        """注册 SFTP/SSH 远程文件系统 Prefix，host 为远程服务器地址。"""
+        self._ensure_name_available(name)
+        if not root or ".." in PurePosixPath(root).parts:
+            raise PathSecurityError(root)
+        if not host:
+            raise PathSecurityError("host must not be empty")
+        prefix = StoragePrefix(
+            prefix_id=prefix_id or str(uuid.uuid4()),
+            name=name,
+            backend="sftp",
+            root=root.rstrip("/") or "/",
+            credential_ref=credential_ref,
+            endpoint_url=host,
+        )
+        self._register_prefix(prefix)
+        return prefix
+
     def _ensure_name_available(self, name: str) -> None:
         if name.casefold() in self._prefix_names:
             raise ValueError(f"Storage Prefix name already exists: {name}")
