@@ -14,6 +14,7 @@ def upgrade() -> None:
     connection = op.get_bind()
     rows = connection.execute(text("SELECT dataset_id, repo_id, name FROM control.datasets")).mappings().all()
     normalized: dict[tuple[str, str], str] = {}
+    updates: list[dict[str, str]] = []
     for row in rows:
         display_name = str(row["name"]).strip()
         name_key = display_name.casefold()
@@ -21,6 +22,8 @@ def upgrade() -> None:
         if not display_name or identity in normalized:
             raise RuntimeError("Dataset names collide after trim/case normalization")
         normalized[identity] = str(row["dataset_id"])
+        updates.append({"name": display_name, "name_key": name_key, "dataset_id": str(row["dataset_id"])})
+    for update in updates:
         connection.execute(
             text(
                 """
@@ -29,7 +32,7 @@ def upgrade() -> None:
                 WHERE dataset_id = :dataset_id
                 """
             ),
-            {"name": display_name, "name_key": name_key, "dataset_id": str(row["dataset_id"])},
+            update,
         )
     op.execute(
         """
