@@ -262,7 +262,15 @@ def _field_type_to_dict(field_type: FieldType) -> dict[str, object]:
     }
 
 
-def _field_type_from_dict(payload: Mapping[str, object]) -> FieldType:
+def _field_type_from_dict(
+    payload: Mapping[str, object],
+    *,
+    ancestors: frozenset[int] = frozenset(),
+) -> FieldType:
+    identity = id(payload)
+    if identity in ancestors:
+        raise ValidationError("Physical Schema serialized type tree must be finite and acyclic")
+    next_ancestors = ancestors | {identity}
     kind = payload.get("kind")
     if kind == "primitive":
         _require_exact_keys(payload, {"kind", "name"}, path="primitive")
@@ -277,7 +285,10 @@ def _field_type_from_dict(payload: Mapping[str, object]) -> FieldType:
         if not isinstance(element_type, Mapping) or not isinstance(element_required, bool):
             raise ValidationError("Invalid serialized list type")
         return ListFieldType(
-            _field_type_from_dict(cast(Mapping[str, object], element_type)),
+            _field_type_from_dict(
+                cast(Mapping[str, object], element_type),
+                ancestors=next_ancestors,
+            ),
             element_required=element_required,
         )
     if kind != "struct":
@@ -298,7 +309,14 @@ def _field_type_from_dict(payload: Mapping[str, object]) -> FieldType:
         if not isinstance(name, str) or not isinstance(nested, Mapping) or not isinstance(required, bool):
             raise ValidationError("Invalid serialized struct field")
         normalized_fields.append(
-            StructField(name, _field_type_from_dict(cast(Mapping[str, object], nested)), required=required)
+            StructField(
+                name,
+                _field_type_from_dict(
+                    cast(Mapping[str, object], nested),
+                    ancestors=next_ancestors,
+                ),
+                required=required,
+            )
         )
     return StructFieldType(tuple(normalized_fields))
 
@@ -345,10 +363,10 @@ def _field_type_from_arrow(field_type: pa.DataType) -> FieldType:  # pyright: ig
         return PrimitiveFieldType("integer")
     if pa.types.is_int64(field_type):
         return PrimitiveFieldType("long")
-    if pa.types.is_string(field_type):
+    if pa.types.is_string(field_type) or pa.types.is_large_string(field_type):
         return PrimitiveFieldType("string")
-    if pa.types.is_list(field_type):
-        list_type = cast(pa.ListType, field_type)
+    if pa.types.is_list(field_type) or pa.types.is_large_list(field_type):
+        list_type = cast("pa.ListType | pa.LargeListType", field_type)
         return ListFieldType(
             _field_type_from_arrow(list_type.value_type),
             element_required=not list_type.value_field.nullable,

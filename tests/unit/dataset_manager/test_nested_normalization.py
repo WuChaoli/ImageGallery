@@ -57,6 +57,8 @@ def test_canonical_values_keep_null_and_empty_list_distinct() -> None:
         ("integer", 2**31),
         ("long", -(2**63) - 1),
         ("string", 1),
+        ("double", float("inf")),
+        ("double", float("-inf")),
     ],
 )
 def test_canonical_values_reject_invalid_nested_and_scalar_values(field_type, value) -> None:  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]

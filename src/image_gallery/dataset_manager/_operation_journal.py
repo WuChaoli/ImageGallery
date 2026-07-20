@@ -211,15 +211,23 @@ class OperationJournal:
             return connection.execute(statement).first() is not None
 
     def active_for_dataset(self, *, dataset_id: str) -> PendingOperation | None:
-        """返回 Dataset 当前 active operation；不存在时返回 None。"""
+        """优先返回会改变 Schema 的 active operation。"""
         statement = (
             select(operations)
             .where(operations.c.dataset_id == dataset_id, operations.c.status == "active")
             .order_by(operations.c.operation_id)
         )
         with self._engine.connect() as connection:
-            row = connection.execute(statement).mappings().first()
-        return None if row is None else self._pending_operation(row)
+            rows = connection.execute(statement).mappings().all()
+        pending = [self._pending_operation(row) for row in rows]
+        return next(
+            (
+                item
+                for item in pending
+                if item.kind in {"schema", "materialize"} or bool(item.intent.get("schema_additions"))
+            ),
+            pending[0] if pending else None,
+        )
 
     def _set_status(self, *, operation_id: str, status: str) -> None:
         with self._engine.begin() as connection:

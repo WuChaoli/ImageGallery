@@ -31,7 +31,14 @@ from image_gallery.dataset_manager.errors import (
     ObjectNotFoundError,
     ValidationError,
 )
-from image_gallery.dataset_manager.models import CommitMode, CommitResult, Dataset, DatasetRepo, DatasetView
+from image_gallery.dataset_manager.models import (
+    CommitMode,
+    CommitResult,
+    Dataset,
+    DatasetRepo,
+    DatasetView,
+    MaterializeResult,
+)
 from image_gallery.storage_manager import StorageManager, StoredObject
 
 if TYPE_CHECKING:
@@ -71,17 +78,21 @@ class DatasetHistory:
         recovered = 0
         for operation in self._operations.pending():
             if operation.dataset_id is not None:
-                has_schema = operation.kind == "schema" or bool(operation.intent.get("schema_additions"))
+                has_schema = operation.kind in {"schema", "materialize"} or bool(
+                    operation.intent.get("schema_additions")
+                )
                 if has_schema:
                     with self._schema_lock.hold(repo_id=operation.repo_id):
                         with self._history_lock.hold(dataset_id=operation.dataset_id):
-                            if self._operations.get_active(operation_id=operation.operation_id) is not None:
-                                self._recover_operation(operation=operation)
+                            current = self._operations.get_active(operation_id=operation.operation_id)
+                            if current is not None:
+                                self._recover_operation(operation=current)
                                 recovered += 1
                 else:
                     with self._history_lock.hold(dataset_id=operation.dataset_id):
-                        if self._operations.get_active(operation_id=operation.operation_id) is not None:
-                            self._recover_operation(operation=operation)
+                        current = self._operations.get_active(operation_id=operation.operation_id)
+                        if current is not None:
+                            self._recover_operation(operation=current)
                             recovered += 1
                 continue
             self._recover_operation(operation=operation)
@@ -104,6 +115,8 @@ class DatasetHistory:
             self._recover_branch(operation_id=operation.operation_id, intent=operation.intent)
         elif operation.kind == "schema":
             self._recover_schema(operation_id=operation.operation_id, intent=operation.intent)
+        elif operation.kind == "materialize":
+            self._recover_materialize(operation_id=operation.operation_id, intent=operation.intent)
 
     def _recover_schema(self, *, operation_id: str, intent: dict[str, object]) -> None:
         """幂等恢复独立物理 Schema 新增列操作。"""
@@ -147,6 +160,74 @@ class DatasetHistory:
         if current is not None:
             self._verify_snapshot_storage(table=target_table, snapshot_id=current.snapshot_id)
         self._register_dataset_from_intent(operation_id=operation_id, intent=intent)
+
+    def _recover_materialize(self, *, operation_id: str, intent: dict[str, object]) -> None:
+        """幂等补齐物化 Table、Schema、首 Snapshot、Checkpoint 与可见登记。"""
+        table_identifier = str(intent["table_identifier"])
+        target_schema = [
+            ColumnSpec.from_dict(cast(dict[str, object], item)) for item in cast(list[object], intent["target_schema"])
+        ]
+        if not self.catalog.table_exists(table_identifier):
+            self.catalog.create_table(table_identifier, schema=self._system_schema)
+        self._operations.record_phase(operation_id=operation_id, phase="materialize_table_created")
+        table = self.catalog.load_table(table_identifier)
+        existing = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        for column in target_schema:
+            current = existing.get(column.name)
+            if current is not None and current != column:
+                self._operations.fail(operation_id=operation_id)
+                raise ConflictError(f"Materialize Schema conflicts: {column.name}")
+        missing = [column for column in target_schema if column.name not in existing]
+        if missing:
+            update_schema = table.update_schema()
+            for column in missing:
+                if column.name in self._system_fields:
+                    self._operations.fail(operation_id=operation_id)
+                    raise ConflictError(f"Materialize system Schema is incomplete: {column.name}")
+                update_schema.add_column(
+                    column.name,
+                    iceberg_type_for_addition(column.field_type),
+                    required=column.required,
+                )
+            update_schema.commit()
+            table = self.catalog.load_table(table_identifier)
+        self._operations.record_phase(operation_id=operation_id, phase="materialize_schema_created")
+
+        if table.current_snapshot() is None:
+            rows = cast(list[dict[str, object]], intent["rows"])
+            table.append(pa.Table.from_pylist(rows, schema=table.schema().as_arrow()), branch="main")
+            table = self.catalog.load_table(table_identifier)
+        current = table.current_snapshot()
+        if current is None:
+            self._operations.fail(operation_id=operation_id)
+            raise ConflictError("Materialize must create a first Snapshot")
+        self._verify_snapshot_storage(table=table, snapshot_id=current.snapshot_id)
+        self._operations.record_phase(
+            operation_id=operation_id,
+            phase="materialize_snapshot_created",
+            details={"snapshot_id": current.snapshot_id},
+        )
+
+        checkpoint_name = intent.get("checkpoint_name")
+        if isinstance(checkpoint_name, str):
+            ref = table.refs().get(checkpoint_name)
+            if ref is None:
+                table.manage_snapshots().create_tag(current.snapshot_id, checkpoint_name).commit()
+            elif ref.snapshot_ref_type != SnapshotRefType.TAG or ref.snapshot_id != current.snapshot_id:
+                self._operations.fail(operation_id=operation_id)
+                raise ConflictError(checkpoint_name)
+            self._operations.record_phase(operation_id=operation_id, phase="materialize_checkpoint_created")
+
+        self._repositories.register_reserved_dataset(
+            operation_id=operation_id,
+            record=DatasetRecord(
+                dataset_id=str(intent["dataset_id"]),
+                repo_id=str(intent["repo_id"]),
+                name=str(intent["name"]),
+                table_identifier=table_identifier,
+            ),
+            name_key=str(intent["name_key"]),
+        )
 
     def _recover_checkpoint(self, *, operation_id: str, intent: dict[str, object]) -> None:
         table = self.catalog.load_table(str(intent["table_identifier"]))
@@ -233,14 +314,17 @@ class DatasetHistory:
             base = intent.get("base_snapshot_id")
             if actual != base:
                 candidate = actual
-            elif bool(intent.get("data_changed")):
+            elif bool(intent.get("data_changed")) or (base is None and isinstance(intent.get("checkpoint_name"), str)):
                 rows = cast(list[dict[str, object]], intent["rows"])
                 arrow_table = pa.Table.from_pylist(rows, schema=table.schema().as_arrow())
                 if isinstance(base, int):
-                    temporary_ref = f"op_{operation_id}"
-                    table.manage_snapshots().create_branch(base, temporary_ref).commit()
-                    table = self.catalog.load_table(str(intent["table_identifier"]))
-                    table.overwrite(arrow_table, branch=temporary_ref)
+                    temporary_ref = str(intent.get("temporary_ref") or f"op_{operation_id}")
+                    self._operations.update_intent(operation_id=operation_id, values={"temporary_ref": temporary_ref})
+                    if temporary_ref not in table.refs():
+                        table.manage_snapshots().create_branch(base, temporary_ref).commit()
+                        table = self.catalog.load_table(str(intent["table_identifier"]))
+                    if self.branch_snapshot_id(table=table, branch=temporary_ref) == base:
+                        table.overwrite(arrow_table, branch=temporary_ref)
                     table = self.catalog.load_table(str(intent["table_identifier"]))
                     candidate = self.branch_snapshot_id(table=table, branch=temporary_ref)
                     if candidate is None:
@@ -266,6 +350,11 @@ class DatasetHistory:
                     "temporary_ref": intent.get("temporary_ref"),
                 },
             )
+            self._operations.record_phase(
+                operation_id=operation_id,
+                phase="candidate_written",
+                details={"snapshot_id": candidate},
+            )
             actual = self.branch_snapshot_id(
                 table=self.catalog.load_table(str(intent["table_identifier"])),
                 branch=branch,
@@ -290,8 +379,10 @@ class DatasetHistory:
                 candidate_snapshot_id=candidate,
                 temporary_ref=temporary_ref,
             )
-        elif isinstance(temporary_ref, str) and temporary_ref in table.refs():
-            table.manage_snapshots().remove_branch(temporary_ref).commit()
+        elif isinstance(temporary_ref, str):
+            latest = self.catalog.load_table(str(intent["table_identifier"]))
+            if temporary_ref in latest.refs():
+                latest.manage_snapshots().remove_branch(temporary_ref).commit()
         if isinstance(candidate, int):
             self._verify_snapshot_storage(table=table, snapshot_id=candidate)
         checkpoint_name = intent.get("checkpoint_name")
@@ -414,6 +505,129 @@ class DatasetHistory:
         )
         return Dataset(repo.repo_id, dataset_id, name, table_identifier, self._manager)
 
+    def materialize_dataset(  # noqa: C901
+        self,
+        *,
+        repo: DatasetRepo,
+        source: DatasetView,
+        name: str,
+        frame: pd.DataFrame,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        checkpoint_name: str | None,
+    ) -> MaterializeResult:
+        """从固定 View 的 Repo 语义原子物化独立 Dataset。"""
+        if repo._manager is not self._manager:
+            raise ValidationError("Materialize target Repo belongs to another DatasetManager")
+        stored_repo = self._manager._repo_by_id(repo.repo_id)
+        if stored_repo.name != repo.name or stored_repo.namespace != repo.namespace:
+            raise ValidationError("Materialize target Repo identity is invalid")
+        source_dataset = self._manager._view_owner_dataset(view=source)
+        if source.repo_id != repo.repo_id or source_dataset.repo_id != repo.repo_id:
+            raise ValidationError("Materialize source must belong to the target DatasetRepo")
+        if source.snapshot_id is None:
+            raise ValidationError("Materialize source must reference a concrete Snapshot")
+        if checkpoint_name is not None:
+            if not checkpoint_name.strip():
+                raise ValidationError("Checkpoint name cannot be empty")
+            if checkpoint_name == "main":
+                raise NameConflictError(checkpoint_name)
+
+        with self._schema_lock.hold(repo_id=repo.repo_id):
+            self.assert_dataset_visible(dataset_id=source.dataset_id)
+            source_table = self.catalog.load_table(source_dataset.table_identifier)
+            if source_table.snapshot_by_id(source.snapshot_id) is None:
+                raise ValidationError(f"Source Snapshot does not exist: {source.snapshot_id}")
+            source_schema = [column_spec_from_iceberg(field) for field in source_table.schema().fields]
+            by_key = {column.name.casefold(): column for column in source_schema}
+            target_schema = list(source_schema)
+            for addition in schema_additions:
+                key = addition.name.casefold()
+                existing = by_key.get(key)
+                if existing is not None:
+                    if existing != addition:
+                        raise ValidationError(f"Physical Schema column conflicts: {addition.name}")
+                    continue
+                if addition.required or addition.name in self._system_fields:
+                    raise ValidationError("Materialized business columns must be optional")
+                by_key[key] = addition
+                target_schema.append(addition)
+
+            column_specs = {column.name: column for column in target_schema}
+            records = cast(list[dict[str, object]], frame.to_dict(orient="records"))
+            normalized_rows = [
+                self._manager._normalize_row(
+                    repo_id=repo.repo_id,
+                    row=row,
+                    allowed_fields=set(column_specs),
+                    column_specs=column_specs,
+                )
+                for row in records
+            ]
+            asset_ids = [str(row["asset_id"]) for row in normalized_rows]
+            if len(asset_ids) != len(set(asset_ids)):
+                raise ValidationError("Duplicate asset_id in materialized frame")
+            source_asset_ids = {
+                str(row["asset_id"])
+                for row in source_table.scan(
+                    snapshot_id=source.snapshot_id,
+                    selected_fields=("asset_id",),
+                )
+                .to_arrow()
+                .to_pylist()
+            }
+            if not set(asset_ids).issubset(source_asset_ids):
+                raise ValidationError("Materialized frame must be derived from the fixed source View")
+            normalized_rows.sort(key=lambda row: str(row["asset_id"]))
+
+            dataset_id = uuid.uuid4().hex
+            table_identifier = f"{repo.namespace}.d_{dataset_id[:12]}"
+            intent: dict[str, object] = {
+                "dataset_id": dataset_id,
+                "repo_id": repo.repo_id,
+                "name": name,
+                "name_key": name.strip().casefold(),
+                "table_identifier": table_identifier,
+                "source_dataset_id": source.dataset_id,
+                "source_snapshot_id": source.snapshot_id,
+                "target_schema": [column.to_dict() for column in target_schema],
+                "rows": normalized_rows,
+                "checkpoint_name": checkpoint_name,
+            }
+            with self._history_lock.hold(dataset_id=dataset_id):
+                operation_id = self._operations.start_with_dataset_name_reservation(
+                    kind="materialize",
+                    repo_id=repo.repo_id,
+                    dataset_id=dataset_id,
+                    dataset_name=name,
+                    intent=intent,
+                )
+                self._recover_materialize(operation_id=operation_id, intent=intent)
+
+        dataset = Dataset(repo.repo_id, dataset_id, name, table_identifier, self._manager)
+        table = self.catalog.load_table(table_identifier)
+        current = table.current_snapshot()
+        if current is None:
+            raise ConflictError("Materialized Dataset has no current Snapshot")
+        view = self._manager._make_view(
+            repo_id=repo.repo_id,
+            dataset_id=dataset_id,
+            snapshot_id=current.snapshot_id,
+            ref_name="main",
+            ref_type="branch",
+        )
+        checkpoint = (
+            None
+            if checkpoint_name is None
+            else self._manager._make_view(
+                repo_id=repo.repo_id,
+                dataset_id=dataset_id,
+                snapshot_id=current.snapshot_id,
+                ref_name=checkpoint_name,
+                ref_type="checkpoint",
+            )
+        )
+        return MaterializeResult(dataset=dataset, view=view, checkpoint=checkpoint)
+
     def _copy_business_schema(
         self,
         *,
@@ -446,7 +660,13 @@ class DatasetHistory:
             if ref is None or ref.snapshot_ref_type != SnapshotRefType.BRANCH:
                 raise ObjectNotFoundError(name)
             snapshot_id = ref.snapshot_id
-        return DatasetView(dataset.repo_id, dataset.dataset_id, snapshot_id, name, "branch", self._manager)
+        return self._manager._make_view(
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            snapshot_id=snapshot_id,
+            ref_name=name,
+            ref_type="branch",
+        )
 
     def open_checkpoint(self, *, dataset: Dataset, name: str) -> DatasetView:
         """打开 Dataset Checkpoint 的固定 View。"""
@@ -455,7 +675,13 @@ class DatasetHistory:
         ref = table.refs().get(name)
         if ref is None or ref.snapshot_ref_type != SnapshotRefType.TAG:
             raise ObjectNotFoundError(name)
-        return DatasetView(dataset.repo_id, dataset.dataset_id, ref.snapshot_id, name, "checkpoint", self._manager)
+        return self._manager._make_view(
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            snapshot_id=ref.snapshot_id,
+            ref_name=name,
+            ref_type="checkpoint",
+        )
 
     def list_checkpoints(self, *, dataset: Dataset) -> list[str]:
         """列出 Dataset 的全部 Checkpoint 名称。"""
@@ -466,9 +692,13 @@ class DatasetHistory:
     def create_checkpoint(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
         """从固定 View 创建 Checkpoint。"""
         self._manager._validate_view_dataset(view=source, dataset=dataset)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
         if source.snapshot_id is None:
             raise ValidationError("Cannot checkpoint an empty Dataset")
         table = self.catalog.load_table(dataset.table_identifier)
+        if name in table.refs():
+            raise NameConflictError(name)
         if (
             source.ref_type == "branch"
             and self.branch_snapshot_id(table=table, branch=source.ref_name) != source.snapshot_id
@@ -484,16 +714,19 @@ class DatasetHistory:
                 "snapshot_id": source.snapshot_id,
             },
         )
-        table.manage_snapshots().create_tag(source.snapshot_id, name).commit()
+        try:
+            table.manage_snapshots().create_tag(source.snapshot_id, name).commit()
+        except (CommitFailedException, ValueError):
+            self._operations.fail(operation_id=operation_id)
+            raise
         self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
         self._operations.finalize(operation_id=operation_id)
-        return DatasetView(
-            dataset.repo_id,
-            dataset.dataset_id,
-            source.snapshot_id,
-            name,
-            "checkpoint",
-            self._manager,
+        return self._manager._make_view(
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            snapshot_id=source.snapshot_id,
+            ref_name=name,
+            ref_type="checkpoint",
         )
 
     def create_branch(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
@@ -543,6 +776,8 @@ class DatasetHistory:
         """将 Branch 回退到同 lineage 的祖先 Checkpoint。"""
         self._manager._validate_view_dataset(view=base, dataset=dataset)
         self._manager._validate_view_dataset(view=checkpoint, dataset=dataset)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
+        self.assert_dataset_visible(dataset_id=dataset.dataset_id)
         if base.ref_type != "branch" or base.ref_name != branch or checkpoint.ref_type != "checkpoint":
             raise ValidationError("Rollback requires target Branch View and Checkpoint View")
         if base.snapshot_id is None or checkpoint.snapshot_id is None:
@@ -570,13 +805,12 @@ class DatasetHistory:
             snapshots.create_branch(checkpoint.snapshot_id, branch).commit()
         self._operations.record_phase(operation_id=operation_id, phase="rollback_published")
         self._operations.finalize(operation_id=operation_id)
-        return DatasetView(
-            dataset.repo_id,
-            dataset.dataset_id,
-            checkpoint.snapshot_id,
-            branch,
-            "branch",
-            self._manager,
+        return self._manager._make_view(
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            snapshot_id=checkpoint.snapshot_id,
+            ref_name=branch,
+            ref_type="branch",
         )
 
     @staticmethod
@@ -613,6 +847,8 @@ class DatasetHistory:
             raise ValidationError(f"Unknown commit mode: {mode}")
         if (mode == "patch") != (fields is not None):
             raise ValidationError("Patch mode requires fields, and fields are only valid in patch mode")
+        if mode == "patch" and (not fields or set(fields) & self._system_fields):
+            raise ValidationError("Patch fields must be a non-empty set of business fields")
         vector_names = {
             item.name for item in self._manager._list_vector_fields(repo=self._manager._repo_by_id(dataset.repo_id))
         }
@@ -644,6 +880,7 @@ class DatasetHistory:
             mode=mode,
             schema_additions=schema_additions,
             checkpoint_name=checkpoint_name,
+            frame_columns=[str(column) for column in frame.columns],
         )
 
     def commit_rows(  # noqa: C901
@@ -656,6 +893,7 @@ class DatasetHistory:
         mode: CommitMode = "upsert",
         schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
         checkpoint_name: str | None = None,
+        frame_columns: list[str] | None = None,
     ) -> CommitResult:
         """以规范化行集合推进目标 Branch。"""
         self._manager._validate_view_dataset(view=base, dataset=dataset)
@@ -666,6 +904,10 @@ class DatasetHistory:
         if self.branch_snapshot_id(table=table, branch=branch) != base.snapshot_id:
             raise ConflictError(branch)
         existing_specs = {field.name: column_spec_from_iceberg(field) for field in table.schema().fields}
+        vector_keys = {
+            item.name.strip().casefold()
+            for item in self._manager._list_vector_fields(repo=self._manager._repo_by_id(dataset.repo_id))
+        }
         addition_names: set[str] = set()
         additions: list[ColumnSpec] = []
         for addition in schema_additions:
@@ -680,9 +922,13 @@ class DatasetHistory:
                 continue
             if addition.required or addition.name in self._system_fields:
                 raise ValidationError("Business columns must be optional")
+            if key in vector_keys:
+                raise ValidationError(f"Physical Schema column conflicts with VectorField: {addition.name}")
             additions.append(addition)
         column_specs = {**existing_specs, **{item.name: item for item in additions}}
         allowed_fields = set(column_specs)
+        if mode == "replace" and frame_columns is not None and not rows and set(frame_columns) != allowed_fields:
+            raise ValidationError("Empty replace frame must contain every Physical Schema column")
         normalized_rows = [
             self._manager._normalize_row(
                 repo_id=dataset.repo_id,
@@ -717,7 +963,7 @@ class DatasetHistory:
         pending_vectors: list[dict[str, object]] = []
         data_changed = merged_rows != sorted(current_rows, key=lambda item: str(item["asset_id"]))
         schema_changed = bool(additions)
-        if checkpoint_name is not None and checkpoint_name in table.refs():
+        if checkpoint_name is not None and (checkpoint_name == branch or checkpoint_name in table.refs()):
             raise NameConflictError(checkpoint_name)
         if not data_changed and not schema_changed and checkpoint_name is None:
             return CommitResult(base, inserted=0, updated=0, removed=0, changed=False)
@@ -762,6 +1008,7 @@ class DatasetHistory:
                 candidate_snapshot_id = self.branch_snapshot_id(table=table, branch=branch)
             else:
                 temporary_ref = f"op_{operation_id}"
+                self._operations.update_intent(operation_id=operation_id, values={"temporary_ref": temporary_ref})
                 table.manage_snapshots().create_branch(base.snapshot_id, temporary_ref).commit()
                 table = self.catalog.load_table(dataset.table_identifier)
                 with table.transaction() as transaction:
@@ -817,25 +1064,23 @@ class DatasetHistory:
                 raise ConflictError("Checkpoint requires a concrete Snapshot")
             table = self.catalog.load_table(dataset.table_identifier)
             table.manage_snapshots().create_tag(candidate_snapshot_id, checkpoint_name).commit()
-            checkpoint = DatasetView(
-                dataset.repo_id,
-                dataset.dataset_id,
-                candidate_snapshot_id,
-                checkpoint_name,
-                "checkpoint",
-                self._manager,
+            checkpoint = self._manager._make_view(
+                repo_id=dataset.repo_id,
+                dataset_id=dataset.dataset_id,
+                snapshot_id=candidate_snapshot_id,
+                ref_name=checkpoint_name,
+                ref_type="checkpoint",
             )
             self._operations.record_phase(operation_id=operation_id, phase="checkpoint_created")
         self._publish_pending_vectors(operation_id=operation_id)
         self._operations.record_phase(operation_id=operation_id, phase="vectors_published")
         self._operations.finalize(operation_id=operation_id)
-        view = DatasetView(
-            dataset.repo_id,
-            dataset.dataset_id,
-            candidate_snapshot_id,
-            branch,
-            "branch",
-            self._manager,
+        view = self._manager._make_view(
+            repo_id=dataset.repo_id,
+            dataset_id=dataset.dataset_id,
+            snapshot_id=candidate_snapshot_id,
+            ref_name=branch,
+            ref_type="branch",
         )
         return CommitResult(
             view,

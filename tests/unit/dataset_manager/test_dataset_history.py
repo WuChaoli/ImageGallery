@@ -119,13 +119,12 @@ def test_branch_validates_source_and_prechecks_all_ref_names(tmp_path: Path) -> 
     with pytest.raises(ValidationError):
         dataset.create_branch(name="cross-dataset", source=other.open_branch())
 
-    missing_snapshot = DatasetView(
+    missing_snapshot = dataset._manager._make_view(  # pyright: ignore[reportPrivateUsage]
         repo_id=source.repo_id,
         dataset_id=source.dataset_id,
         snapshot_id=source.snapshot_id + 10_000 if source.snapshot_id is not None else 10_000,
         ref_name=source.ref_name,
         ref_type=source.ref_type,
-        _manager=source._manager,  # pyright: ignore[reportPrivateUsage]
     )
     with pytest.raises(ValidationError, match="Snapshot"):
         dataset.create_branch(name="missing-snapshot", source=missing_snapshot)
@@ -139,18 +138,44 @@ def test_view_owner_navigation_uses_immutable_ids_and_visibility(tmp_path: Path)
     assert view.dataset.repo_id == repo.repo_id
     assert view.repo.repo_id == repo.repo_id
 
-    forged = DatasetView(
+    missing = dataset._manager._make_view(  # pyright: ignore[reportPrivateUsage]
         repo_id=repo.repo_id,
         dataset_id="missing",
         snapshot_id=None,
         ref_name="main",
         ref_type="branch",
-        _manager=dataset._manager,  # pyright: ignore[reportPrivateUsage]
     )
     with pytest.raises(ObjectNotFoundError, match="missing"):
-        _ = forged.dataset
+        _ = missing.dataset
     with pytest.raises(ObjectNotFoundError, match="missing"):
+        _ = missing.repo
+
+    forged = DatasetView(
+        repo_id=repo.repo_id,
+        dataset_id=dataset.dataset_id,
+        snapshot_id=view.snapshot_id,
+        ref_name=view.ref_name,
+        ref_type=view.ref_type,
+        _manager=dataset._manager,  # pyright: ignore[reportPrivateUsage]
+    )
+    with pytest.raises(ValidationError, match="DatasetManager"):
+        _ = forged.dataset
+    with pytest.raises(ValidationError, match="DatasetManager"):
         _ = forged.repo
+
+    tampered = DatasetView(
+        repo_id=repo.repo_id,
+        dataset_id=dataset.dataset_id,
+        snapshot_id=view.snapshot_id,
+        ref_name="other",
+        ref_type=view.ref_type,
+        _manager=dataset._manager,  # pyright: ignore[reportPrivateUsage]
+        _provenance=view._provenance,  # pyright: ignore[reportPrivateUsage]
+    )
+    with pytest.raises(ValidationError, match="DatasetManager"):
+        _ = tampered.dataset
+    with pytest.raises(ValidationError, match="DatasetManager"):
+        tampered.scan()
 
 
 def test_branch_rejects_view_bound_to_another_manager(tmp_path: Path) -> None:

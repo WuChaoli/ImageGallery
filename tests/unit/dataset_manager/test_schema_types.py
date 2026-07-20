@@ -100,6 +100,36 @@ def test_column_spec_round_trips_arrow_and_iceberg_without_exposing_ids() -> Non
     assert arrow_field.type.value_field.nullable is False
 
 
+def test_column_spec_from_arrow_accepts_pyiceberg_large_string_and_large_list() -> None:
+    field = pa.field(
+        "labels",
+        pa.large_list(pa.field("element", pa.large_string(), nullable=False)),
+        nullable=True,
+    )
+
+    assert column_spec_from_arrow(field) == ColumnSpec(
+        "labels",
+        ListFieldType("string", element_required=True),
+    )
+
+
+def test_column_spec_from_dict_rejects_recursive_mapping_as_validation_error() -> None:
+    recursive_type: dict[str, object] = {
+        "kind": "list",
+        "element_required": False,
+    }
+    recursive_type["element_type"] = recursive_type
+
+    with pytest.raises(ValidationError, match="finite and acyclic"):
+        ColumnSpec.from_dict(
+            {
+                "name": "recursive",
+                "field_type": recursive_type,
+                "required": False,
+            }
+        )
+
+
 def test_dataset_schema_returns_typed_columns_and_accepts_column_spec(tmp_path: Path) -> None:
     manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=StorageManager())
     dataset = manager.create_repo(name="Vision").create_dataset(name="Raw")
@@ -136,3 +166,22 @@ def test_dataset_schema_preserves_legacy_scalar_add_column_call(tmp_path: Path) 
     )
 
     assert dataset.schema.get_column(name="split") == ColumnSpec("split", PrimitiveFieldType("string"))
+
+
+def test_dataset_schema_rejects_casefold_duplicate_physical_column(tmp_path: Path) -> None:
+    manager = DatasetManager.local(root=tmp_path / "backend", storage_manager=StorageManager())
+    dataset = manager.create_repo(name="Vision").create_dataset(name="Raw")
+    current = dataset.schema.add_column(
+        branch="main",
+        base=dataset.open_branch(),
+        name="split",
+        field_type="string",
+    )
+
+    with pytest.raises(ValidationError):
+        dataset.schema.add_column(
+            branch="main",
+            base=current,
+            name=" Split ",
+            field_type="long",
+        )

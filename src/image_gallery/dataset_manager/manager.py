@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import re
 import uuid
 from collections.abc import Callable
@@ -49,6 +51,7 @@ from image_gallery.dataset_manager.models import (
     DatasetRepo,
     DatasetView,
     EmbedResult,
+    MaterializeResult,
     TagDefinition,
     VectorField,
 )
@@ -94,6 +97,7 @@ class DatasetManager:
         self._owns_catalog = owns_catalog
         self._owns_model_manager = model_manager is None
         self._closed = False
+        self._view_secret = uuid.uuid4().bytes
         if self._engine.dialect.name == "postgresql":
             upgrade_control_database(self._engine)
         else:
@@ -407,6 +411,25 @@ class DatasetManager:
     def _clone_dataset(self, *, repo: DatasetRepo, source: DatasetView, name: str) -> Dataset:
         return self._history.clone_dataset(repo=repo, source=source, name=name)
 
+    def _materialize_dataset(
+        self,
+        *,
+        repo: DatasetRepo,
+        source: DatasetView,
+        name: str,
+        frame: pd.DataFrame,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...],
+        checkpoint_name: str | None,
+    ) -> MaterializeResult:
+        return self._history.materialize_dataset(
+            repo=repo,
+            source=source,
+            name=name,
+            frame=frame,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
+        )
+
     def _get_vector(self, *, field: VectorField, asset_id: str) -> tuple[float, ...] | None:
         return self._vectors.get_current(
             repo_id=field.repo_id,
@@ -437,15 +460,74 @@ class DatasetManager:
         return self._history.list_checkpoints(dataset=dataset)
 
     def _create_checkpoint(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
-        return self._history.create_checkpoint(dataset=dataset, name=name, source=source)
+        with self._history_lock.hold(dataset_id=dataset.dataset_id):
+            return self._history.create_checkpoint(dataset=dataset, name=name, source=source)
 
     def _create_branch(self, *, dataset: Dataset, name: str, source: DatasetView) -> DatasetView:
-        return self._history.create_branch(dataset=dataset, name=name, source=source)
+        with self._history_lock.hold(dataset_id=dataset.dataset_id):
+            return self._history.create_branch(dataset=dataset, name=name, source=source)
+
+    def _make_view(
+        self,
+        *,
+        repo_id: str,
+        dataset_id: str,
+        snapshot_id: int | None,
+        ref_name: str,
+        ref_type: str,
+    ) -> DatasetView:
+        """创建带当前 Manager 不可伪造 provenance 的固定 View。"""
+        provenance = self._view_signature(
+            repo_id=repo_id,
+            dataset_id=dataset_id,
+            snapshot_id=snapshot_id,
+            ref_name=ref_name,
+            ref_type=ref_type,
+        )
+        return DatasetView(
+            repo_id,
+            dataset_id,
+            snapshot_id,
+            ref_name,
+            ref_type,
+            self,
+            provenance,
+        )
+
+    def _view_signature(
+        self,
+        *,
+        repo_id: str,
+        dataset_id: str,
+        snapshot_id: int | None,
+        ref_name: str,
+        ref_type: str,
+    ) -> str:
+        """签名 View 不可变身份，防止复制 Manager 后篡改字段。"""
+        payload = "\0".join((repo_id, dataset_id, str(snapshot_id), ref_name, ref_type)).encode()
+        return hmac.new(self._view_secret, payload, hashlib.sha256).hexdigest()
+
+    def _is_issued_view(self, *, view: DatasetView) -> bool:
+        """返回 View 是否由当前 Manager 按当前字段签发。"""
+        if view._manager is not self or view._provenance is None:
+            return False
+        expected = self._view_signature(
+            repo_id=view.repo_id,
+            dataset_id=view.dataset_id,
+            snapshot_id=view.snapshot_id,
+            ref_name=view.ref_name,
+            ref_type=view.ref_type,
+        )
+        return hmac.compare_digest(view._provenance, expected)
+
+    def _assert_issued_view(self, *, view: DatasetView) -> None:
+        """拒绝非当前 Manager 签发或字段已被篡改的 View。"""
+        if not self._is_issued_view(view=view):
+            raise ValidationError("DatasetView belongs to another DatasetManager")
 
     def _view_owner_dataset(self, *, view: DatasetView) -> Dataset:
         """按 View 的不可变 ID 解析可见 Dataset。"""
-        if view._manager is not self:
-            raise ValidationError("DatasetView belongs to another DatasetManager")
+        self._assert_issued_view(view=view)
         self._assert_dataset_visible(dataset_id=view.dataset_id)
         return self._dataset_by_id(repo_id=view.repo_id, dataset_id=view.dataset_id)
 
@@ -462,7 +544,8 @@ class DatasetManager:
         base: DatasetView,
         checkpoint: DatasetView,
     ) -> DatasetView:
-        return self._history.rollback(dataset=dataset, branch=branch, base=base, checkpoint=checkpoint)
+        with self._history_lock.hold(dataset_id=dataset.dataset_id):
+            return self._history.rollback(dataset=dataset, branch=branch, base=base, checkpoint=checkpoint)
 
     def _commit(
         self,
@@ -663,6 +746,7 @@ class DatasetManager:
         return [column_spec_from_iceberg(field) for field in table.schema().fields]
 
     def _scan_view_frame(self, *, view: DatasetView, fields: list[str] | None) -> pd.DataFrame:
+        self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.scan_frame(view=view, fields=fields)
 
@@ -673,6 +757,7 @@ class DatasetManager:
         asset_id: str,
         fields: list[str] | None,
     ) -> pd.Series:
+        self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.get_row_series(view=view, asset_id=asset_id, fields=fields)
 
@@ -704,17 +789,21 @@ class DatasetManager:
         )
 
     def _scan_view(self, *, view: DatasetView, columns: list[str] | None) -> list[dict[str, object]]:
+        self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.scan(view=view, columns=columns)
 
     def _get_view_row(self, *, view: DatasetView, asset_id: str) -> dict[str, object]:
+        self._assert_issued_view(view=view)
         return self._view_io.get_row(view=view, asset_id=asset_id)
 
     def _read_view_image(self, *, view: DatasetView, asset_id: str) -> bytes:
+        self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.read_image(view=view, asset_id=asset_id)
 
     def _verify_view_image(self, *, view: DatasetView, asset_id: str) -> bool:
+        self._assert_issued_view(view=view)
         self._history.assert_fixed_view_readable(dataset_id=view.dataset_id)
         return self._view_io.verify_image(view=view, asset_id=asset_id)
 
@@ -727,7 +816,11 @@ class DatasetManager:
         return self._history.branch_snapshot_id(table=table, branch=branch)
 
     def _validate_view_dataset(self, *, view: DatasetView, dataset: Dataset) -> None:
-        if view.repo_id != dataset.repo_id or view.dataset_id != dataset.dataset_id or view._manager is not self:
+        if (
+            view.repo_id != dataset.repo_id
+            or view.dataset_id != dataset.dataset_id
+            or not self._is_issued_view(view=view)
+        ):
             raise ValidationError("DatasetView belongs to another Dataset or Repo")
 
     def _repo_has_prefix(self, *, repo_id: str, prefix_id: str) -> bool:

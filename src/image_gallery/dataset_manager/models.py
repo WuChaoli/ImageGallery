@@ -26,6 +26,7 @@ class DatasetView:
     ref_name: str
     ref_type: str
     _manager: DatasetManager
+    _provenance: str | None = None
 
     @property
     def dataset(self) -> Dataset:
@@ -89,6 +90,15 @@ class CommitResult:
     updated: int
     removed: int
     changed: bool
+    checkpoint: DatasetView | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MaterializeResult:
+    """描述一次 Repo 新 Dataset 原子物化的可见结果。"""
+
+    dataset: Dataset
+    view: DatasetView
     checkpoint: DatasetView | None = None
 
 
@@ -270,6 +280,25 @@ class DatasetRepo:
     def clone_dataset(self, *, source: DatasetView, name: str) -> Dataset:
         """从同 Repo 精确 View 克隆当前状态，不继承历史。"""
         return self._manager._clone_dataset(repo=self, source=source, name=name)
+
+    def materialize_dataset(
+        self,
+        *,
+        source: DatasetView,
+        name: str,
+        frame: pd.DataFrame,
+        schema_additions: list[ColumnSpec] | tuple[ColumnSpec, ...] = (),
+        checkpoint_name: str | None = None,
+    ) -> MaterializeResult:
+        """从同 Repo 固定 View 原子创建独立 Dataset 当前状态。"""
+        return self._manager._materialize_dataset(
+            repo=self,
+            source=source,
+            name=name,
+            frame=frame,
+            schema_additions=schema_additions,
+            checkpoint_name=checkpoint_name,
+        )
 
 
 @dataclass(frozen=True, slots=True)
