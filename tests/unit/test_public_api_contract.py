@@ -214,7 +214,7 @@ EXPECTED_SIGNATURE_DIGESTS = {
     "image_gallery.storage.Storage": "29b2d070f1ef36cf",
     "image_gallery.storage.StorageBatchResult": "653885ffd39cdb5c",
     "image_gallery.storage_manager.StorageManager": "a10b277142eca62e",
-    "image_gallery.storage_manager.StoragePrefix": "110ea234dd11238e",
+    "image_gallery.storage_manager.StoragePrefix": "8472335770a442c6",
     "image_gallery.storage_manager.StoredObject": "6f596d71bd0bef7b",
     "image_gallery.visualization.render_image_grid": "9862f10ef6231b22",
     "image_gallery.visualization.show_image_grid": "60c05003541e1874",
