@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from typing import cast, Literal
+from typing import Literal, cast
 
 from sqlalchemy import insert, select, update
 from sqlalchemy.engine import Engine, RowMapping

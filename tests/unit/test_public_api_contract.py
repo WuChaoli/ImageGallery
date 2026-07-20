@@ -417,6 +417,7 @@ EXPECTED_METHOD_SIGNATURE_DIGESTS = {
     "image_gallery.storage_manager.StorageManager.recover_managed": "6a0d58837980ed04",
     "image_gallery.storage_manager.StorageManager.register_file_prefix": "9266f298e66f5424",
     "image_gallery.storage_manager.StorageManager.register_s3_prefix": "b8f6c5252ac9a38c",
+    "image_gallery.storage_manager.StorageManager.register_sftp_prefix": "246e1e421ba51772",
     "image_gallery.storage_manager.StorageManager.restore_prefix": "8c6001f199b20c2b",
     "image_gallery.storage_manager.StorageManager.verify": "0818660363b1645e",
     "image_gallery.storage_manager.StorageManager.verify_external": "14af84a4de4f22ed",
