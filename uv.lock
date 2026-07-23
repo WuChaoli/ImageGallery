@@ -1613,7 +1613,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "s3fs", specifier = ">=2025.3" },
     { name = "sqlalchemy", specifier = ">=2.0,<3" },
-    { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.10,<5" },
+    { name = "testcontainers", extras = ["postgres"], marker = "extra == 'dev'", specifier = ">=4.14.2,<5" },
     { name = "tomli", specifier = ">=2.0" },
     { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
     { name = "zizmor", marker = "extra == 'dev'", specifier = ">=1.27.0" },
