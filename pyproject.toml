@@ -38,7 +38,7 @@ dev = [
   "pytest-cov>=7",
   "pytest-xdist>=3",
   "pytest-socket>=0.7",
-  "ruff>=0.5",
+  "ruff>=0.15.22",
   "pyright>=1.1",
   "pandas-stubs>=2.2,<2.3; python_version < '3.14'",
   "pandas-stubs>=2.3,<3; python_version >= '3.14'",
